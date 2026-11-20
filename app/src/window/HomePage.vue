@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import WindowTools from '../components/tools/WindowTools.vue'
 import WindowTitle from '../components/tools/WindowTitle.vue'
-import { computed, onMounted, ref, watch, reactive } from 'vue'
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch, reactive } from 'vue'
 import PopBox from '../components/tools/PopBox.vue'
 import ProgressBox from '../components/homePage/ProgressBox.vue'
 import AppInfo from '../components/homePage/AppInfo.vue'
@@ -12,6 +12,7 @@ import { useMenuStore } from '../stores/menuStore'
 import { parseMenuConfig, testConnection, sendMenu, sendColorScreen, sendOledScreen, sendConfigData, loadMenu, resetData } from '../utils/dataHandle'
 // import { setItem, getItem } from '@/utils/storage'
 import { XBox } from 'ilx1-x-box'
+import { renderDeviceScreens, type DeviceScreens } from '../utils/deviceScreenFormat'
 
 const router = useRouter()
 const win = window as any
@@ -34,6 +35,8 @@ onMounted(async () => {
   // console.info(jsonStr)
   // 连接硬件
   conState.value = await testConnection()
+  refreshDeviceScreens()
+  screenPoll = setInterval(refreshDeviceScreens, 1800)
   // 主页面监听
   win.myApi.storeChangeListen((objData) => {
     // console.info('homePage listening', objData)
@@ -83,6 +86,8 @@ onMounted(async () => {
     menuStore.setMenuShow(false)
   }
 })
+
+onUnmounted(() => clearInterval(screenPoll))
 
 // 打开键值编辑窗口
 const openConfigWindow = async (index: number) => {
@@ -143,6 +148,7 @@ const stateMes = reactive([
 // 点击标题手动连接
 const titleClick = async () => {
   conState.value = await testConnection()
+  refreshDeviceScreens()
 }
 
 
@@ -167,6 +173,7 @@ const sendFinalData = async () => {
   configStore.setProgressMes(0)
   progressShow.value = true
   try {
+    await screenReadTask
     conState.value = await win.myApi.connectHardware()
     if (!conState.value) {
       XBox.popMes('硬件已经断开连接')
@@ -209,6 +216,7 @@ const setMenu = (index: number) => {
 // 菜单切换
 const menuIndex = computed(() => configStore.curMenu + 1)
 const menuChange = (func: number) => {
+  showDeviceScreens.value = false
   storageCurMenu()
   setMenu((configStore.curMenu + (func ? 1 : 9)) % 10)
 }
@@ -226,13 +234,57 @@ const storageCurMenu = () => {
 
 // 显示屏幕编辑
 const openScreenPage = (curScreen: number) => {
+  showDeviceScreens.value = false
   configStore.setCurScreen(curScreen)
   createWindow('/screen')
 }
 
-const screenPreviews = computed(() => configStore.screenData.map(({ baseData }) =>
-  baseData ? `data:image/png;base64,${baseData}` : ''
-))
+const showDeviceScreens = ref(true)
+const deviceScreens = shallowRef<{ menu: number; generation: number; images: string[] }>()
+const screenReadState = ref<DeviceScreens['state']>('disconnected')
+let screenPoll: ReturnType<typeof setInterval> | undefined
+let screenReadTask: Promise<void> | undefined
+
+async function readDeviceScreens() {
+  try {
+    const result: DeviceScreens = await win.myApi.readDeviceScreens(deviceScreens.value?.generation)
+    screenReadState.value = result.state
+    if (result.state === 'ready') {
+      deviceScreens.value = {
+        menu: result.menu,
+        generation: result.generation,
+        images: renderDeviceScreens(result.pixels)
+      }
+    } else if (result.state !== 'unchanged') {
+      deviceScreens.value = undefined
+      if (result.state === 'disconnected') conState.value = false
+    }
+  } catch (error) {
+    console.error(error)
+    deviceScreens.value = undefined
+    screenReadState.value = 'unavailable'
+  }
+}
+
+function refreshDeviceScreens() {
+  if (!conState.value || progressShow.value || screenReadTask) return
+  screenReadTask = readDeviceScreens().finally(() => { screenReadTask = undefined })
+}
+
+const screenSourceLabel = computed(() => {
+  if (deviceScreens.value) {
+    return showDeviceScreens.value ? `设备画面 · 第 ${deviceScreens.value.menu} 层` : '本机预览'
+  }
+  if (screenReadState.value === 'unsupported') return '当前固件不支持画面回读'
+  if (screenReadState.value === 'empty') return '暂无可读设备画面'
+  if (screenReadState.value === 'unavailable') return '设备画面读取失败'
+  return '正在读取设备画面'
+})
+
+const screenPreviews = computed(() => {
+  if (showDeviceScreens.value && deviceScreens.value) return deviceScreens.value.images
+  return configStore.screenData.map(({ baseData }) => baseData ? `data:image/png;base64,${baseData}` : '')
+})
 const closeStorage = () => {
   // 存储全层菜单
   win.myApi.storageMenu('configData', JSON.stringify(configStore.menuConfig))
@@ -264,6 +316,12 @@ const showAppInfo = () => {
         </div>
       </template>
     </WindowTitle>
+    <button v-if="conState" class="screen-source" type="button"
+      :disabled="!deviceScreens" :aria-pressed="Boolean(deviceScreens && showDeviceScreens)"
+      :title="deviceScreens ? '在设备画面与本机预览间切换' : undefined"
+      @click="showDeviceScreens = !showDeviceScreens">
+      {{ screenSourceLabel }}
+    </button>
     <div id="home-cotent">
       <div class="div1">
         <div @click.stop="openConfigWindow(8)"></div>
@@ -407,6 +465,25 @@ const showAppInfo = () => {
   background-color: #e5eae9;
   background-image: linear-gradient(20deg, #e5eae9 0%, #8f9d9f 100%);
   // -webkit-app-region: drag;
+}
+
+.screen-source {
+  position: absolute;
+  top: 16px;
+  left: 54%;
+  transform: translateX(-50%);
+  -webkit-app-region: no-drag;
+  border: 0;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.5);
+  color: var(--text-color-1);
+  cursor: pointer;
+  white-space: nowrap;
+
+  &:disabled {
+    cursor: default;
+  }
 }
 
 #home-cotent {

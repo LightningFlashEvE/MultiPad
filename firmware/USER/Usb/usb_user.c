@@ -1,4 +1,5 @@
 #include "usb_user.h"
+#include "screen_readback.h"
 #include "oled_user.h"
 #include "flash_user.h"
 #include "usbd_customhid.h"
@@ -39,6 +40,7 @@ static uint8_t rec_buff[RE_BUFF_SIZE];
 // 等待信息
 static uint8_t wait_sign = 0;
 static uint8_t wait_response[1] = {0x33};
+static uint8_t handshake[] = {0xaa, 0xbb, 0xcc, 0x4d, 0x50, 0x53, 0x43, 1};
 
 static void oled_data_handle(void);
 static void color_data_handle(void);
@@ -50,11 +52,15 @@ uint8_t cdc_event_cb(uint8_t *Buf, uint32_t *Len) {
     // 判断越界
     // if (upper_data_p->package_size >= RE_BUFF_SIZE || (*Len > MAX_PACK_SIZE)) return (USBD_FAIL);
 
-    if (Buf[0] == 0xAA && Buf[1] == 0xBB) {
+    if (screen_readback_receive(Buf, *Len)) return USBD_OK;
+
+    if (*Len >= 3 && Buf[0] == 0xAA && Buf[1] == 0xBB) {
         // 测试连接
         if (Buf[2] == 0xCC) {
-            CDC_Transmit_FS(&Buf[0], 3);
+            CDC_Transmit_FS(handshake, sizeof(handshake));
+            return USBD_OK;
         }
+        if (!sign_data_p) return USBD_FAIL;
         // if(Buf[2] == 0x33) {
         //     // HAL_Delay(20);
         //     if(wait_sign == 0xff) {
@@ -64,7 +70,7 @@ uint8_t cdc_event_cb(uint8_t *Buf, uint32_t *Len) {
         //     }
         // }
         // 跳过当前菜单
-        else if (Buf[2] == 0xAA) {
+        if (Buf[2] == 0xAA) {
             set_sign(data_skip, SIGN_SET);
         }
         // 菜单设置
@@ -82,6 +88,7 @@ uint8_t cdc_event_cb(uint8_t *Buf, uint32_t *Len) {
         return (USBD_OK);
     }
     // 存入缓存数组中
+    if (!upper_data_p) return USBD_FAIL;
     memcpy((uint8_t *) (&upper_data_p->rec_buff[0] + (MAX_PACK_SIZE * upper_data_p->package_num)), &Buf[0], *Len);
     upper_data_p->package_num++;
     if (*Len < MAX_PACK_SIZE) {
@@ -162,7 +169,7 @@ void first_load_menu(void) {
 * 加载菜单
 ********************************************************************************/
 void load_menu(uint8_t menu_index) {
-    if (menu_config_arr[menu_index] != 1) return;
+    if (menu_index < 1 || menu_index > 10 || menu_config_arr[menu_index] != 1) return;
     set_menu_lock(1);
     /*// 存储上一次使用的菜单
     uint8_t cur[1] = {menu_index};
@@ -170,6 +177,7 @@ void load_menu(uint8_t menu_index) {
     load_parse_key(menu_index);
     show_menu_oled(menu_index);
     show_menu_color(menu_index);
+    screen_readback_applied(menu_index);
     set_menu_lock(0);
 }
 
@@ -247,6 +255,7 @@ void usb_scan_user(void) {
 * olod 数据处理
 ********************************************************************************/
 static void oled_data_handle(void) {
+    screen_readback_invalidate(write_menu);
     if (upper_data_p->package_size < 5) {
         // 擦除数据
         reset_menu_data(write_menu, 1);
@@ -264,6 +273,7 @@ static void oled_data_handle(void) {
 * color 数据处理
 ********************************************************************************/
 static void color_data_handle(void) {
+    screen_readback_invalidate(write_menu);
     // 处理空图片，并重置内存
     if (upper_data_p->package_size < 5) {
         // 擦除扇区
@@ -272,6 +282,7 @@ static void color_data_handle(void) {
         set_sign(color_mode, SIGN_RESET);
         //                lcd_show_str("Next ...");
         //                load_menu(write_menu);
+        if (screen_readback_needs_refresh(write_menu)) load_menu(write_menu);
         write_menu++;
         turn_next_menu();
     } else {
@@ -289,6 +300,7 @@ static void color_data_handle(void) {
             set_sign(color_mode, SIGN_RESET);
             //                    lcd_show_str("Next ...");
             //                    load_menu(write_menu);
+            if (screen_readback_needs_refresh(write_menu)) load_menu(write_menu);
             write_menu++;
             turn_next_menu();
         }

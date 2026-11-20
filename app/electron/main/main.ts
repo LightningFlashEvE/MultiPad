@@ -77,6 +77,10 @@ ipcMain.handle('connection-state', async () => {
 })
 
 // 发送数据
+ipcMain.handle('device-screens', (_event, knownGeneration?: number) => {
+  return SerialConnect.readDeviceScreens(knownGeneration)
+})
+
 ipcMain.handle('send-data', async (event, data: string | Uint8Array) => {
   return await SerialConnect.sendData(data)
 })

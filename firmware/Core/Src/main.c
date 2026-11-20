@@ -33,6 +33,7 @@
 #include "flash_user.h"
 //#include "usbd_cdc_if.h"
 #include "usb_user.h"
+#include "screen_readback.h"
 
 void SystemClock_Config(void);
 
@@ -69,6 +70,7 @@ int main(void) {
         encoder_scan_user();
         // usb Êý¾ÝÉ¨Ãè
         usb_scan_user();
+        screen_readback_poll();
     }
 }
 
