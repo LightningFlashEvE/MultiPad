@@ -3,10 +3,9 @@ import { XBox } from 'ilx1-x-box'
 
 const configStore = useConfigStore()
 const win = window as any
-let signState = false
 
-const waitSign = async (): Promise<boolean> => {
-  return await win.myApi.waitSign()
+const sendData = async (data: string | Uint8Array) => {
+  if (!await win.myApi.sendData(data)) throw new Error('串口写入失败')
 }
 
 // 测试连接
@@ -23,7 +22,7 @@ export const testConnection = async (): Promise<boolean> => {
 
 // 发送菜单
 export const sendMenu = async () => {
-  await win.myApi.sendData(new Uint8Array([0xaa, 0xbb, 0xdd]))
+  await sendData(new Uint8Array([0xaa, 0xbb, 0xdd]))
   await new Promise((resolve) => setTimeout(resolve, 2))
   let resultArr = new Uint8Array(31)
   resultArr[0] = 1
@@ -49,7 +48,7 @@ export const sendMenu = async () => {
   }
   // console.info(resultArr)
   // console.info(configStore.activeMenu)
-  await win.myApi.sendData(resultArr)
+  await sendData(resultArr)
   await new Promise((resolve) => setTimeout(resolve, 150))
   // signState = await waitSign()
   // if (!signState) return
@@ -68,12 +67,12 @@ export const sendOledScreen = async () => {
   let oledArr = new Uint8Array(oledArr1.concat(oledArr2))
   // console.info(oledArr)
   // 发送单色屏信号
-  await win.myApi.sendData(new Uint8Array([0xaa, 0xbb, 0xee]))
+  await sendData(new Uint8Array([0xaa, 0xbb, 0xee]))
   await new Promise((resolve) => setTimeout(resolve, 1))
   // 分包数据
   await subpackageImageData(oledArr, 62, async (dataArr: any) => {
     for (let i = 0; i < dataArr.length; i++) {
-      await win.myApi.sendData(dataArr[i])
+      await sendData(dataArr[i])
       await new Promise((resolve) => setTimeout(resolve, 1))
     }
   })
@@ -86,11 +85,11 @@ export const sendOledScreen = async () => {
 export const sendColorScreen = async () => {
   let u8Arr = new Uint8Array(configStore.screenData[0].buffData)
   // 发送彩屏信号
-  await win.myApi.sendData(new Uint8Array([0xaa, 0xbb, 0xff]))
+  await sendData(new Uint8Array([0xaa, 0xbb, 0xff]))
   await new Promise((resolve) => setTimeout(resolve, 1))
   // 处理空数据
   if(u8Arr.length == 0) {
-    await win.myApi.sendData(new Uint8Array([0x00, 0x11, 0x22]))
+    await sendData(new Uint8Array([0x00, 0x11, 0x22]))
     await new Promise((resolve) => setTimeout(resolve, 2000))
     return
   }
@@ -101,7 +100,7 @@ export const sendColorScreen = async () => {
       await subpackageImageData(dataArr[i], 62, async (sendArr: Uint8Array) => {
         for (let j = 0; j < sendArr.length; j++) {
           // console.info(sendArr[j])
-          await win.myApi.sendData(sendArr[j])
+          await sendData(sendArr[j])
           await new Promise((resolve) => setTimeout(resolve, 1))
         }
       })
@@ -142,7 +141,7 @@ export const sendConfigData = async () => {
   let dataStr = JSON.stringify(tempObj)
   // console.info('tempObj', dataStr)
   if(dataStr.length < 5) {
-    await win.myApi.sendData(dataStr)
+    await sendData(dataStr)
     await new Promise((resolve) => setTimeout(resolve, 1200))
     return
   }
@@ -150,13 +149,7 @@ export const sendConfigData = async () => {
   await subpackageSend(4096, dataStr, async (reduceStr: string) => {
     // 分包（60）发送
     await subpackageSend(62, reduceStr, async (str: string) => {
-      // console.info(str)
-      let state = await win.myApi.sendData(str)
-      // await new Promise((resolve) => setTimeout(resolve, 1))
-      if (!state) {
-        XBox.popMes('发送数据出错')
-      }
-      // configStore.setProgressMes(Math.ceil((right / dataStr.length) * 100))
+      await sendData(str)
     })
     await new Promise((resolve) => setTimeout(resolve, 1200))
     // signState = await waitSign()
@@ -234,11 +227,4 @@ export const parseMenuConfig = (jsonStr: string) => {
   resetData()
   configStore.setCurMenu(0)
   loadMenu()
-  // 显示图片
-  let img = document.querySelectorAll('img')
-  for (let i = 0; i < 3; i++) {
-    let baseStr = configStore.screenData[i].baseData
-    if (baseStr != '') img[i].src = `data:image/png;base64,${baseStr}`
-    else img[i].src = ''
-  }
 }

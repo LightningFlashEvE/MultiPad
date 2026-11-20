@@ -9,7 +9,7 @@ export default class SerialConnect {
   // 连接状态
   private static connectState: boolean = false
   // 正确的下位机串口
-  private static HardwarePort = {}
+  private static HardwarePort: import('serialport').SerialPort | null = null
   // 连接硬件
   public static connectHardware = async (): Promise<boolean> => {
     if(this.connectState) return new Promise((resolve) => resolve(true))
@@ -20,7 +20,7 @@ export default class SerialConnect {
     } catch (err) {
       console.info(err)
       this.connectState = false
-      this.HardwarePort = {}
+      this.HardwarePort = null
       return new Promise((resolve) => resolve(false))
     }
     if (portLists.length == 0) {
@@ -69,7 +69,7 @@ export default class SerialConnect {
         connectCount--
         // 如果没有连接就关闭
         if (!this.connectState) {
-          this.HardwarePort = {}
+          this.HardwarePort = null
           port.close((err: Error) => {
             if (err) return this.errorHandle(err)
             console.info('close success')
@@ -95,20 +95,24 @@ export default class SerialConnect {
       })
     }
     this.connectState = false
-    this.HardwarePort = {}
+    this.HardwarePort = null
     return new Promise((resolve) => resolve(false))
   }
   // 发送数据
-  public static sendData = async (data: string): Promise<boolean> => {
-    if (this.connectState && Object.keys(this.HardwarePort).length != 0) {
-      this.HardwarePort?.write(Buffer.from(data))
-      this.HardwarePort?.drain((err) => {
-        if (err) return new Promise((resolve) => resolve(false))
-        return new Promise((resolve) => resolve(true))
+  public static sendData = async (data: string | Uint8Array): Promise<boolean> => {
+    const port = this.HardwarePort
+    if (!this.connectState || !port?.isOpen) return false
+
+    const buffer = typeof data === 'string' ? Buffer.from(data, 'utf8') : Buffer.from(data)
+    return new Promise((resolve) => {
+      port.write(buffer, (error) => {
+        if (error) {
+          resolve(false)
+          return
+        }
+        port.drain((error) => resolve(!error))
       })
-      return new Promise((resolve) => resolve(true))
-    }
-    return new Promise((resolve) => resolve(false))
+    })
   }
   // 数据处理
   private static dataHandle = (buff: Buffer) => {
