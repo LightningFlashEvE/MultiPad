@@ -1,0 +1,6 @@
+{
+  "files.associations": {
+    "oled_user.h": "c",
+    "usbd_cdc.h": "c"
+  }
+}
