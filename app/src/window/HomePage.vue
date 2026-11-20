@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import WindowTools from '../components/tools/WindowTools.vue'
 import WindowTitle from '../components/tools/WindowTitle.vue'
-import { onMounted, nextTick, ref, watch, reactive } from 'vue'
+import { computed, onMounted, ref, watch, reactive } from 'vue'
 import PopBox from '../components/tools/PopBox.vue'
 import ProgressBox from '../components/homePage/ProgressBox.vue'
 import AppInfo from '../components/homePage/AppInfo.vue'
@@ -55,6 +55,10 @@ onMounted(async () => {
       for (let key of keys) {
         // 设置对应 store 的值
         configStore[`set${key.replace(key.charAt(0), key.charAt(0).toUpperCase())}`](objData[key])
+      }
+      if ('screenData' in objData) {
+        storageCurMenu()
+        closeStorage()
       }
     } catch (error) {
       console.error(error)
@@ -158,48 +162,41 @@ watch(
 const progressShow = ref<boolean>(false)
 // 发送最终数据
 const sendFinalData = async () => {
+  if (progressShow.value) return
+  const curMenu = configStore.curMenu
   configStore.setProgressMes(0)
   progressShow.value = true
-  // 测试连接
-  conState.value = await win.myApi.connectHardware()
-  if (!conState.value) {
-    XBox.popMes('硬件已经断开连接')
-    configStore.setProgressMes(0)
-    progressShow.value = false
-    return
-  }
-  await new Promise((resolve) => setTimeout(resolve, 1))
-  // 显示过程页面，发送到硬件
-  progressShow.value = true
-  // 记录当前菜单
-  let curMenu = configStore.curMenu
-  // 发送菜单
-  await sendMenu()
-  let activerNum = configStore.activeMenu.filter((o) => o).length
-  let count = 0
-  // console.info(configStore.activeMenu)
-
-  for (let i = 0; i < 10; i++) {
-    if (configStore.activeMenu[i]) {
+  try {
+    conState.value = await win.myApi.connectHardware()
+    if (!conState.value) {
+      XBox.popMes('硬件已经断开连接')
+      return
+    }
+    await sendMenu()
+    const activeCount = configStore.activeMenu.filter(Boolean).length
+    let count = 0
+    for (let i = 0; i < 10; i++) {
+      if (!configStore.activeMenu[i]) continue
       setMenu(i)
-      // 发送键值
       await sendConfigData()
       count += 3
-      configStore.setProgressMes(Math.ceil((count / activerNum) * 10))
-      // 发送单色屏幕
+      configStore.setProgressMes(Math.ceil((count / activeCount) * 10))
       await sendOledScreen()
       count += 3
-      configStore.setProgressMes(Math.ceil((count / activerNum) * 10))
-      // 发送彩色屏幕
+      configStore.setProgressMes(Math.ceil((count / activeCount) * 10))
       await sendColorScreen()
       count += 4
-      configStore.setProgressMes(Math.ceil((count / activerNum) * 10))
+      configStore.setProgressMes(Math.ceil((count / activeCount) * 10))
     }
+    configStore.setProgressMes(100)
+    await new Promise((resolve) => setTimeout(resolve, 110))
+  } catch (error) {
+    console.error(error)
+    XBox.popMes('发送中断，请检查 USB 连接后重试')
+  } finally {
+    if (configStore.curMenu !== curMenu) setMenu(curMenu)
+    progressShow.value = false
   }
-  configStore.setProgressMes(100)
-  await new Promise((resolve) => setTimeout(resolve, 110))
-  progressShow.value = false
-  setMenu(curMenu)
 }
 
 // 切换菜单
@@ -210,30 +207,10 @@ const setMenu = (index: number) => {
 }
 
 // 菜单切换
-const menuIndex = ref<number>(1)
+const menuIndex = computed(() => configStore.curMenu + 1)
 const menuChange = (func: number) => {
-  // 存储当前菜单
   storageCurMenu()
-  // 重置数据
-  resetData()
-  // console.info(configStore.menuConfig)
-  if (func) {
-    // 修改菜单索引
-    menuIndex.value >= 10 ? (menuIndex.value = 1) : (menuIndex.value += 1)
-  } else {
-    menuIndex.value <= 1 ? (menuIndex.value = 10) : (menuIndex.value -= 1)
-  }
-  configStore.setCurMenu(menuIndex.value - 1)
-  // 赋值数据
-  loadMenu()
-  // console.info(configStore.layerKeyConfig)
-  // 显示图片
-  const imgList: HTMLElement[] = new Array(imgOneRef.value, imgTwoRef.value, imgThreeRef.value)
-  for (let i = 0; i < 3; i++) {
-    let baseStr = configStore.screenData[i].baseData
-    if (baseStr != '') imgList[i].src = `data:image/png;base64,${baseStr}`
-    else imgList[i].src = ''
-  }
+  setMenu((configStore.curMenu + (func ? 1 : 9)) % 10)
 }
 
 // 存储当前菜单配置
@@ -253,23 +230,9 @@ const openScreenPage = (curScreen: number) => {
   createWindow('/screen')
 }
 
-// 屏幕图片组件
-const imgOneRef = ref<HTMLElement | null>(null)
-const imgTwoRef = ref<HTMLElement | null>(null)
-const imgThreeRef = ref<HTMLElement | null>(null)
-
-watch( configStore.screenData,
-  () => {
-    const imgList: HTMLElement[] = new Array(imgOneRef.value, imgTwoRef.value, imgThreeRef.value)
-    let baseStr = configStore.screenData[configStore.curScreen].baseData
-    if (imgList[configStore.curScreen] != null && baseStr != '' && baseStr != undefined) imgList[configStore.curScreen].src = `data:image/png;base64,${baseStr}`
-    else imgList[configStore.curScreen].src = ''
-    storageCurMenu()
-  },
-  {
-    deep: true
-  }
-)
+const screenPreviews = computed(() => configStore.screenData.map(({ baseData }) =>
+  baseData ? `data:image/png;base64,${baseData}` : ''
+))
 const closeStorage = () => {
   // 存储全层菜单
   win.myApi.storageMenu('configData', JSON.stringify(configStore.menuConfig))
@@ -290,7 +253,7 @@ const showAppInfo = () => {
   <ContextMenu />
   <PopBox ref="popBoxRef" />
   <div class="container">
-    <WindowTitle @click="closeStorage">
+    <WindowTitle fixed-size @click="closeStorage">
       <template #title>
         <div id="window-title">
           <div @click="showAppInfo">MultiPad</div>
@@ -309,17 +272,17 @@ const showAppInfo = () => {
       <div class="div2">
         <div class="div5">
           <div @click="openScreenPage(0)">
-            <img src="" alt="" ref="imgOneRef" />
+            <img v-if="screenPreviews[0]" :src="screenPreviews[0]" alt="" />
           </div>
         </div>
         <div class="div6">
           <div @click="openScreenPage(1)">
-            <img src="" alt="" ref="imgTwoRef" />
+            <img v-if="screenPreviews[1]" :src="screenPreviews[1]" alt="" />
           </div>
         </div>
         <div class="div7">
           <div @click="openScreenPage(2)">
-            <img src="" alt="" ref="imgThreeRef" />
+            <img v-if="screenPreviews[2]" :src="screenPreviews[2]" alt="" />
           </div>
         </div>
         <div class="div8">
@@ -472,9 +435,6 @@ const showAppInfo = () => {
   }
   img {
     @include global.full_wh;
-  }
-  img[src=''] {
-    opacity: 0;
   }
   .div5 {
     grid-area: 1 / 1 / 4 / 4;

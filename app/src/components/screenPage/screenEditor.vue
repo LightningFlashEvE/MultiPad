@@ -45,30 +45,30 @@ const switchBack = () => {
 
 // 编辑信息提交
 const editorCommit = async () => {
-  const picBase64Str = (instance as any).value.toDataURL()
-  let data, arrData
+  if (!instance.value || coverShow.value) return
   XBox.popMes('处理数据中...')
   coverShow.value = true
-  if(configStore.curScreen < 1) {
-    // 缩放图片（1 为单色屏幕）
-    data = await win.myApi.resizeImage(320, 172, picBase64Str, 0)
-    // 获取取模数据
-    arrData = await win.myApi.generateResultArray(data, 120, 1, 2, 0, 0, 0)
-  } else {
-    // 缩放图片（1 为单色屏幕）
-    data = await win.myApi.resizeImage(72, 40, picBase64Str, 1)
-    // 获取取模数据
-    arrData = await win.myApi.generateResultArray(data, 120, 1, 2, 0, 0, 1)
+  try {
+    const picBase64Str = (instance as any).value.toDataURL()
+    const monochrome = configStore.curScreen !== 0
+    const width = monochrome ? 72 : 320
+    const height = monochrome ? 40 : 172
+    const mode = Number(monochrome)
+    const data = await win.myApi.resizeImage(width, height, picBase64Str, mode)
+    const arrData = await win.myApi.generateResultArray(data, 120, 1, 2, 0, 0, mode)
+    if (arrData.length !== width * height * (monochrome ? 1 / 8 : 2)) {
+      throw new Error('Unexpected screen data size')
+    }
+    win.myApi.setConfigStore({
+      screenData: JSON.stringify({ baseData: data, buffData: arrData })
+    })
+    win.myApi.closeWindow()
+  } catch (error) {
+    console.error(error)
+    XBox.popMes('屏幕图片处理失败，请重新选图')
+  } finally {
+    coverShow.value = false
   }
-  console.info(arrData) 
-  let tempObj: object = {}
-  tempObj['screenData'] = JSON.stringify({
-    baseData: data,
-    buffData: arrData
-  })
-  win.myApi.setConfigStore(tempObj)
-  coverShow.value = false
-  win.myApi.closeWindow()
 }
 
 const closeWindow = () => {

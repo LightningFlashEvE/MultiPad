@@ -77,8 +77,8 @@ ipcMain.handle('connection-state', async () => {
 })
 
 // 发送数据
-ipcMain.handle('send-data', async (event, dataStr: string) => {
-  return await SerialConnect.sendData(dataStr)
+ipcMain.handle('send-data', async (event, data: string | Uint8Array) => {
+  return await SerialConnect.sendData(data)
 })
 
 // 创建主窗口
@@ -92,6 +92,11 @@ const createMainWindow = async () => {
     height: 500,
     maxWidth: 680,
     maxHeight: 500,
+    resizable: false,
+    maximizable: false,
+    thickFrame: false,
+    hasShadow: false,
+    roundedCorners: false,
   })
 }
 

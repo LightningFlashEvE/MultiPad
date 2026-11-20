@@ -3,6 +3,7 @@ import { onMounted, ref, onUnmounted } from 'vue'
 // const { ipcRenderer } = require('electron')
 // import os from 'os'
 const win = window as any
+defineProps<{ fixedSize?: boolean }>()
 
 // let isMac = ref<boolean>(os.platform() == 'darwin')
 
@@ -27,7 +28,7 @@ let minimizeMainWindow = () => {
       <div @click="minimizeMainWindow">
         <div class="window-tools tool1"></div>
       </div>
-      <div @click="maximizeMainWin">
+      <div v-if="!fixedSize" @click="maximizeMainWin">
         <div class="window-tools tool3"></div>
       </div>
       <div @click="closeWindow">

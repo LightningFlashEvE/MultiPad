@@ -2,6 +2,7 @@
 import WindowTools from './WindowTools.vue'
 
 const win = window as any
+defineProps<{ fixedSize?: boolean }>()
 
 </script>
 
@@ -9,7 +10,7 @@ const win = window as any
   <div class="top-title">
     <div id="window-sign"></div>
     <slot name="title"> </slot>
-    <WindowTools />
+    <WindowTools :fixed-size="fixedSize" />
   </div>
 </template>
 

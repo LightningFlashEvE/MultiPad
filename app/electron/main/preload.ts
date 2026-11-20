@@ -54,8 +54,8 @@ const connectHardware = async () => {
 }
 
 // 发送数据
-const sendData = async (dataStr: string) => {
-  return await ipcRenderer.invoke('send-data', dataStr)
+const sendData = async (data: string | Uint8Array) => {
+  return await ipcRenderer.invoke('send-data', data)
 }
 
 // 打开新窗口
