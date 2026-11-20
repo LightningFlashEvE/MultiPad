@@ -166,9 +166,28 @@ watch(
 
 // 数据上传页面显示
 const progressShow = ref<boolean>(false)
+const firmwareUpdating = ref(false)
+const updateFirmware = async () => {
+  if (firmwareUpdating.value || progressShow.value) return
+  firmwareUpdating.value = true
+  try {
+    await screenReadTask
+    const result = await win.myApi.updateFirmware()
+    if (result.state === 'cancelled') return
+    deviceScreens.value = undefined
+    conState.value = await win.myApi.connectHardware()
+    XBox.popMes(result.state === 'updated' ? '固件升级完成' : result.message)
+  } catch (error) {
+    console.error(error)
+    XBox.popMes('USB 固件升级失败')
+  } finally {
+    firmwareUpdating.value = false
+    refreshDeviceScreens()
+  }
+}
 // 发送最终数据
 const sendFinalData = async () => {
-  if (progressShow.value) return
+  if (progressShow.value || firmwareUpdating.value) return
   const curMenu = configStore.curMenu
   configStore.setProgressMes(0)
   progressShow.value = true
@@ -267,7 +286,7 @@ async function readDeviceScreens() {
 }
 
 function refreshDeviceScreens() {
-  if (!conState.value || progressShow.value || screenReadTask) return
+  if (!conState.value || progressShow.value || firmwareUpdating.value || screenReadTask) return
   screenReadTask = readDeviceScreens().finally(() => { screenReadTask = undefined })
 }
 
@@ -321,6 +340,9 @@ const showAppInfo = () => {
       :title="deviceScreens ? '在设备画面与本机预览间切换' : undefined"
       @click="showDeviceScreens = !showDeviceScreens">
       {{ screenSourceLabel }}
+    </button>
+    <button class="firmware-update" type="button" :disabled="firmwareUpdating || progressShow" @click="updateFirmware">
+      {{ firmwareUpdating ? '升级中' : 'USB 升级' }}
     </button>
     <div id="home-cotent">
       <div class="div1">
@@ -467,7 +489,7 @@ const showAppInfo = () => {
   // -webkit-app-region: drag;
 }
 
-.screen-source {
+.screen-source, .firmware-update {
   position: absolute;
   top: 16px;
   left: 54%;
@@ -484,6 +506,10 @@ const showAppInfo = () => {
   &:disabled {
     cursor: default;
   }
+}
+
+.firmware-update {
+  left: 73%;
 }
 
 #home-cotent {

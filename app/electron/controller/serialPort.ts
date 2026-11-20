@@ -11,8 +11,10 @@ export default class SerialConnect {
   private static connectionAttempt?: Promise<boolean>
   private static screenReadback?: ScreenReadback
   private static waitState = false
+  private static upgrading = false
 
   static connectHardware(): Promise<boolean> {
+    if (this.upgrading) return Promise.resolve(false)
     if (this.port?.isOpen) return Promise.resolve(true)
     if (!this.connectionAttempt) {
       this.connectionAttempt = this.findHardware().finally(() => { this.connectionAttempt = undefined })
@@ -20,9 +22,35 @@ export default class SerialConnect {
     return this.connectionAttempt
   }
 
+  static async withFirmwareUpdate<T>(run: () => Promise<T>): Promise<T> {
+    if (this.upgrading) throw Error('固件升级正在进行')
+    this.upgrading = true
+    try {
+      await this.connectionAttempt
+      const port = this.port
+      this.screenReadback?.close()
+      this.screenReadback = undefined
+      this.port = undefined
+      this.waitState = false
+      if (port?.isOpen) await new Promise<void>((resolve, reject) =>
+        port.close(error => error ? reject(error) : resolve()))
+      return await run()
+    } finally {
+      this.upgrading = false
+    }
+  }
+
   private static async findHardware() {
     try {
-      const candidates = await SerialPort.list()
+      const ports = await SerialPort.list()
+      const address = (port: (typeof ports)[number]) =>
+        `${port.vendorId}:${port.productId}`.toUpperCase()
+      const knownKeyboards = ports.filter(port => ['07CF:4F0F', '5688:5966'].includes(address(port)))
+      if (!knownKeyboards.length && ports.some(port => address(port) === '07CF:4F10')) {
+        // A bootloader connection belongs to the updater, even during recovery.
+        return false
+      }
+      const candidates = knownKeyboards.length ? knownKeyboards : ports
       // Try USB devices before virtual serial ports.
       candidates.sort((a, b) => Number(Boolean(b.vendorId)) - Number(Boolean(a.vendorId)))
       for (const candidate of candidates) {

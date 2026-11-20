@@ -1,5 +1,6 @@
 #include "usb_user.h"
 #include "screen_readback.h"
+#include "usb_update.h"
 #include "oled_user.h"
 #include "flash_user.h"
 #include "usbd_customhid.h"
@@ -40,7 +41,11 @@ static uint8_t rec_buff[RE_BUFF_SIZE];
 // 等待信息
 static uint8_t wait_sign = 0;
 static uint8_t wait_response[1] = {0x33};
-static uint8_t handshake[] = {0xaa, 0xbb, 0xcc, 0x4d, 0x50, 0x53, 0x43, 1};
+static uint8_t handshake[] = {0xaa, 0xbb, 0xcc, 0x4d, 0x50, 0x53, 0x43, 1
+#ifdef MULTIPAD_USB_APP
+    , 0x55
+#endif
+};
 
 static void oled_data_handle(void);
 static void color_data_handle(void);
@@ -52,6 +57,12 @@ uint8_t cdc_event_cb(uint8_t *Buf, uint32_t *Len) {
     // 判断越界
     // if (upper_data_p->package_size >= RE_BUFF_SIZE || (*Len > MAX_PACK_SIZE)) return (USBD_FAIL);
 
+#ifdef MULTIPAD_USB_APP
+    if (*Len == 4 && Buf[0] == 0xaa && Buf[1] == 0xbb && Buf[2] == 0xf1 && Buf[3] == 0x55) {
+        usb_update_enter();
+        return USBD_OK;
+    }
+#endif
     if (screen_readback_receive(Buf, *Len)) return USBD_OK;
 
     if (*Len >= 3 && Buf[0] == 0xAA && Buf[1] == 0xBB) {

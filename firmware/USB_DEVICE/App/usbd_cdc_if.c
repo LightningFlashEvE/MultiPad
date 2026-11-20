@@ -258,11 +258,18 @@ static int8_t CDC_Control_FS(uint8_t cmd, uint8_t *pbuf, uint16_t length) {
   * @retval Result of the operation: USBD_OK if all operations are OK else USBD_FAIL
   */
 
+#include "usb_update.h"
+
 static int8_t CDC_Receive_FS(uint8_t *Buf, uint32_t *Len) {
     /* USER CODE BEGIN 6 */
     USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
     USBD_CDC_ReceivePacket(&hUsbDeviceFS);
+#ifdef MULTIPAD_BOOTLOADER
+    usb_update_receive(Buf, *Len);
+    return USBD_OK;
+#else
     return cdc_event_cb(Buf, Len);
+#endif
 }
 
 /**

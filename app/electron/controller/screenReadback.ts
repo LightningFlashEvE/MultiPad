@@ -3,7 +3,7 @@ import { DEVICE_SCREEN_SIZES, type DeviceScreens } from '../../src/utils/deviceS
 const REQUEST_MAGIC = Buffer.from([0xaa, 0xbb, 0xc1, 0x53])
 const RESPONSE_MAGIC = Buffer.from([0x4d, 0x50, 0x53, 1])
 const HEADER_SIZE = 19
-const MAX_CHUNK = 1024
+const MAX_CHUNK = 224
 const INFO = 0xff
 const STATUS_OK = 0
 const STATUS_EMPTY = 1

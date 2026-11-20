@@ -7,7 +7,7 @@ enum {
     REQUEST_SIZE = 17,
     HEADER_SIZE = 19,
     CHECKSUM_SIZE = 2,
-    MAX_CHUNK = 1024,
+    MAX_CHUNK = 224,
     COLOR_SIZE = 320 * 172 * 2,
     OLED_SIZE = 72 * 40 / 8,
     SCREEN_INFO = 0xff,

@@ -34,15 +34,28 @@
 //#include "usbd_cdc_if.h"
 #include "usb_user.h"
 #include "screen_readback.h"
+#include "usb_update.h"
 
 void SystemClock_Config(void);
 
 int main(void) {
+#ifndef MULTIPAD_BOOTLOADER
     RetargetInit(&huart1);
+#endif
     HAL_Init();
+#ifdef MULTIPAD_BOOTLOADER
+    usb_update_boot();
+    SystemClock_Config();
+    usb_update_reenumerate();
+    MX_USB_DEVICE_Init();
+    while (1) usb_update_poll();
+#else
     SystemClock_Config();
     MX_GPIO_Init();
     MX_USART1_UART_Init();
+#ifdef MULTIPAD_USB_APP
+    usb_update_reenumerate();
+#endif
     MX_USB_DEVICE_Init();
     // flash
     if(flash_init_user() == 0) return 0;
@@ -72,6 +85,7 @@ int main(void) {
         usb_scan_user();
         screen_readback_poll();
     }
+#endif
 }
 
 /**

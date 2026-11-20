@@ -11,6 +11,7 @@
     "build": "run-p type-check \"build-only {@}\" --",
     "preview": "vite preview",
     "build-only": "vite build",
+    "firmware:update": "node scripts/firmware-update.cjs",
     "type-check": "vue-tsc --noEmit -p tsconfig.app.json --composite false",
     "electron:build": "rimraf dist && vite build && electron-builder"
   },
@@ -125,7 +126,8 @@
     "files": [
       "./dist",
       "./electron",
-      "./appDir"
+      "./appDir",
+      "./scripts/firmware-update.cjs"
     ],
     "asar": false,
     "nsis": {

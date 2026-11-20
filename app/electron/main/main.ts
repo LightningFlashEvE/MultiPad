@@ -81,6 +81,24 @@ ipcMain.handle('device-screens', (_event, knownGeneration?: number) => {
   return SerialConnect.readDeviceScreens(knownGeneration)
 })
 
+ipcMain.handle('update-firmware', async (event) => {
+  const options = {
+    title: '选择 MultiPad USB 升级固件',
+    filters: [{ name: 'USB 升级固件', extensions: ['bin'] }],
+    properties: ['openFile']
+  }
+  const window = BrowserWindow.fromWebContents(event.sender)
+  const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
+  if (result.canceled) return { state: 'cancelled' }
+  try {
+    const { updateFirmware } = require(path.join(__dirname, '../../scripts/firmware-update.cjs'))
+    await SerialConnect.withFirmwareUpdate(() => updateFirmware(result.filePaths[0], console.info))
+    return { state: 'updated' }
+  } catch (error) {
+    return { state: 'failed', message: error instanceof Error ? error.message : String(error) }
+  }
+})
+
 ipcMain.handle('send-data', async (event, data: string | Uint8Array) => {
   return await SerialConnect.sendData(data)
 })
