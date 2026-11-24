@@ -1005,8 +1005,8 @@ const showAppInfo = () => {
 
 <style lang="scss" scoped>
 .mode-switch { -webkit-app-region: no-drag; display: inline-flex; gap: 2px; margin-left: auto; padding: 2px; background: #dce5e8; border-radius: 8px; }
-.mode-switch button { padding: 4px 7px; border: 0; border-radius: 6px; font: inherit; font-size: 12px; white-space: nowrap; color: #263d46; background: transparent; cursor: pointer; }
-.mode-switch button[aria-pressed="true"] { color: white; background: #263d46; }
+.home-toolbar .mode-switch button { padding: 5px 7px; border: 0; border-radius: 6px; font-size: 13px; white-space: nowrap; color: #263d46; background: transparent; cursor: pointer; }
+.home-toolbar .mode-switch button[aria-pressed="true"] { color: white; background: #263d46; }
 .mode-status { grid-column: 1 / -1; align-self: center; font-size: 12px; color: #405058; }
 .firmware-hint { position: absolute; bottom: 0; left: 22px; margin: 0; font-size: 12px; }
 .pet-dialog { box-sizing: border-box; width: min(640px, 96%); max-height: calc(100vh - 28px); overflow: auto; margin: auto; padding: 18px; color: #24323a; border: 1px solid #aab7bd; border-radius: 14px; background: #f7fafb; }
@@ -1060,7 +1060,7 @@ const showAppInfo = () => {
 .home-toolbar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   width: 100%;
   white-space: nowrap;
 }
@@ -1081,6 +1081,8 @@ const showAppInfo = () => {
 }
 
 .home-toolbar button {
+  flex: none;
+  font-size: 13px;
   -webkit-app-region: no-drag;
 }
 
@@ -1127,6 +1129,9 @@ const showAppInfo = () => {
 
 .readback-state {
   margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: #334b4a;
   font-size: 12px;
 }
