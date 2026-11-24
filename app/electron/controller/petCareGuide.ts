@@ -1,0 +1,62 @@
+import { hutchBounds, petFruitLabels, petScenes } from '../../src/utils/petCatalog'
+
+export const petServerInstructions = '你控制的是实体键盘上的宠物兔。先读 pet_get_care_guide 了解动作和属性，再读 pet_get_state。' +
+  '依据 availableNow 选择当前可执行的操作。按钮和兔子的自主行为也会改变状态。工作模式是否切换由主人决定。' +
+  '在取食、靠近玩具或回窝时可以等待。为确认一次操作，事先读取 pet_get_events 至 hasMore=false 并保存 cursor，' +
+  '再执行一次操作，用该游标读取后续事件。没有收到写入回执时先确认状态或事件，避免重复投喂或收回刚放好的玩具。'
+
+// Nominal times and stat changes are defined by pet_mode.c and pet_care.c.
+// Travel time, natural metabolism and interrupted activities are separate.
+export const petCareGuide = {
+  stats: {
+    range: [0, 100],
+    satiety: '越高越饱。养宠模式累计每分钟 −1。第 3 代起达到 100 时暂停吃水果，剩下的留在原场景。',
+    sleepiness: '越高越困。清醒每满 60 秒 +1，睡着每满 20 秒 −1。',
+    mood: '越高越开心。每个代谢周期开始时，若饱食度低于 25 或困意高于 85，心情 −1。',
+    affection: '越高越亲近主人。吃完水果、玩完玩具和回应主人的注视可增加好感。'
+  },
+  actions: {
+    idle: '待机，长睡时可叫醒。约 1.7 秒后可能自行散步。',
+    blink: '眨眼，约 0.125 秒。', walk: '散步，到边界或约 3.6 秒后会自行停下。',
+    run: '奔跑，约 2.3 秒。', jump: '跳一下，约 0.5 秒。', daydream: '做白日梦，约 1.75 秒。',
+    flee: '受惊逃跑，约 2.3 秒。', eat: '仅播放约 2.1 秒的进食动作，没有水果和饱食度收益。',
+    trip_angry: '绊脚生气，约 2.05 秒。自然结束时困意 +1、心情 −4。',
+    gaze_owner: '面向主人发呆，约 3 秒。由 MCP 发起且自然结束时心情 +1、好感 +1。',
+    sleep: '持续睡眠，无固定时长。第 3 代起会从花园走到宝宝房兔窝。到达前可以同时是 action=walk、bedtime=true。'
+  },
+  food: {
+    tool: 'pet_feed', fruits: petFruitLabels,
+    timing: '投下一份水果，掉落约 0.65 秒。兔子走到食物旁后吃约 0.85 秒。第 3 代起每场景可同时放八份，按投放顺序每次吃一份。',
+    result: '从第 2 代起，每份吃完增加饱食度 12、心情 3、好感 2，各项最高 100。八种水果效果相同。',
+    confirmation: '收到 fruit_eaten 才是吃完。fruit_queued 是已接收，fruit_landed 是已落地。相同来源连续投放同种水果时，事件没有单份标识。'
+  },
+  interactions: {
+    carrot_toy: '第 3 代起两个场景各有一个玩具位。pet_place_toy 幂等放置，落地后兔子有空就去玩，玩完留在原处。' +
+      'pet_interact_with_toy 可再玩一次，pet_use_toy 会切换放下或收回。走到玩具旁后玩约 2.4 秒，' +
+      '自然结束时困意 +2、心情 +6、好感 +2。玩具期间的 eat 动作没有吃下水果。',
+    rabbit_hutch: '第 4 代起是宝宝房的常驻装饰，可与胡萝卜共存。pet_interact_with_decoration 从任一场景前往兔窝，' +
+      '到达后小憩约 4.5 秒，自然结束时困意 −12、心情 +5、好感 +2。长睡使用 pet_play_action(sleep)，' +
+      '按睡眠时间恢复困意。pet_move_decoration 在养宠模式中设置窝的底边中心，键盘保存位置。',
+    hutchBounds
+  },
+  scenes: {
+    ids: petScenes, garden: '花园', nursery: '宝宝房',
+    scope: 'foods 与 toyDropProgress 描述当前场景。deployedToys 记录每个场景的玩具。' +
+      '第 3 代起切换场景会打断当前互动，留下该场景的水果和玩具。切换到宝宝房时花园地上的水果仍可能存在。'
+  },
+  compatibility: {
+    1: '基础动作、按队列投喂、时间和季节。没有属性、玩具和场景读数。fall、fetch 是设备内部动作。',
+    2: '增加四项属性、trip_angry、gaze_owner 和场景；宝宝房兔窝通过 pet_use_toy 短暂互动。',
+    3: '增加多份地面食物、玩具放置和重玩、回窝长睡、跟随时间与按键绑定。此代兔窝仍占用宝宝房玩具位。',
+    4: '兔窝成为独立可移动装饰。使用 activeDecoration、decorationPhase 和 hutchPosition 读取回窝状态。'
+  },
+  observation: {
+    inputs: { actions: 'pet_play_action(action)', feed: 'pet_feed(fruit)', useToys: 'pet_use_toy(toy)',
+      placeToys: 'pet_place_toy(toy)', interactToys: 'pet_interact_with_toy(toy)',
+      visitDecorations: 'pet_interact_with_decoration(decoration)', moveDecorations: 'pet_move_decoration(decoration,x,y)',
+      scenes: 'pet_set_scene(scene)', setHour: 'pet_set_time(hour)', setSeason: 'pet_set_season(season)', setMode: 'pet_set_mode(enabled)' },
+    state: 'availableNow 是读取瞬间设备能接受的输入。feed=true 仅代表还有空位。已吃饱或地上有剩余水果时可以等待。',
+    events: '使用返回的 cursor 分页，每页最多 16 条，设备保留最近 64 条。reset 表示连接改变，overrun 表示历史不完整。' +
+      '只有相同 session 且游标连续时才可关联操作。toy_finished 和 decoration_finished 的 interrupted=false 表示自然结束。'
+  }
+}

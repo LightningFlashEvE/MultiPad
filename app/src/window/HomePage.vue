@@ -727,8 +727,7 @@ const openScreenPage = (curScreen: number) => {
   createWindow(`/screen?screen=${curScreen}&menu=${configStore.curMenu}`)
 }
 
-const deviceScreens = shallowRef<{ menu: number; generation: number; images: string[] }>()
-const screenReadState = ref<DeviceScreens['state']>('disconnected')
+const deviceScreens = shallowRef<{ generation: number; images: string[] }>()
 let screenPoll: ReturnType<typeof setInterval> | undefined
 let screenReadTask: Promise<void> | undefined
 
@@ -736,10 +735,8 @@ async function readDeviceScreens() {
   try {
     const result: DeviceScreens = await win.myApi.readDeviceScreens(deviceScreens.value?.generation)
     if (result.state === 'busy') return
-    screenReadState.value = result.state
     if (result.state === 'ready') {
       deviceScreens.value = {
-        menu: result.menu,
         generation: result.generation,
         images: renderDeviceScreens(result.pixels)
       }
@@ -750,7 +747,6 @@ async function readDeviceScreens() {
   } catch (error) {
     console.error(error)
     deviceScreens.value = undefined
-    screenReadState.value = 'unavailable'
   }
 }
 
@@ -758,16 +754,6 @@ function refreshDeviceScreens() {
   if (!conState.value || appMode.value === 'pet' || progressShow.value || firmwareUpdating.value || screenReadTask) return
   screenReadTask = readDeviceScreens().finally(() => { screenReadTask = undefined })
 }
-
-const screenSourceLabel = computed(() => {
-  if (deviceScreens.value) {
-    return `设备画面 · 第 ${deviceScreens.value.menu} 层`
-  }
-  if (screenReadState.value === 'unsupported') return '固件不支持回读'
-  if (screenReadState.value === 'empty') return '暂无设备画面'
-  if (screenReadState.value === 'unavailable') return '画面读取失败'
-  return '正在读取画面'
-})
 
 const screenPreviews = computed(() => {
   if (conState.value && deviceScreens.value) return deviceScreens.value.images
@@ -800,7 +786,6 @@ async function readDeviceButtons() {
     if (result.state === 'disconnected') {
       conState.value = false
       deviceScreens.value = undefined
-      screenReadState.value = 'disconnected'
     }
     return
   }
@@ -855,9 +840,6 @@ const showAppInfo = () => {
             title="重新连接键盘" @click="titleClick">
             {{ conState ? '已连接' : '未连接' }}
           </button>
-          <span v-if="conState && appMode === 'work'" class="readback-state" role="status">
-            {{ screenSourceLabel }}
-          </span>
           <button class="firmware-update" type="button" :disabled="firmwareUpdating || progressShow"
             title="通过 USB 升级键盘固件" @click="updateFirmware">
             {{ firmwareUpdating ? '升级中' : 'USB 升级' }}
@@ -1004,7 +986,7 @@ const showAppInfo = () => {
 </template>
 
 <style lang="scss" scoped>
-.mode-switch { -webkit-app-region: no-drag; display: inline-flex; gap: 2px; margin-left: auto; padding: 2px; background: #dce5e8; border-radius: 8px; }
+.mode-switch { -webkit-app-region: no-drag; display: inline-flex; gap: 2px; padding: 2px; background: #dce5e8; border-radius: 8px; }
 .home-toolbar .mode-switch button { padding: 5px 7px; border: 0; border-radius: 6px; font-size: 13px; white-space: nowrap; color: #263d46; background: transparent; cursor: pointer; }
 .home-toolbar .mode-switch button[aria-pressed="true"] { color: white; background: #263d46; }
 .mode-status { grid-column: 1 / -1; align-self: center; font-size: 12px; color: #405058; }
@@ -1127,21 +1109,8 @@ const showAppInfo = () => {
   }
 }
 
-.readback-state {
-  margin-left: auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: #334b4a;
-  font-size: 12px;
-}
-
 .firmware-update {
   background: #dbe3e4;
-}
-
-.home-toolbar .connection-state + .firmware-update {
-  margin-left: auto;
 }
 
 #home-content {

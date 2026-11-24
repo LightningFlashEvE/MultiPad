@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { defaultRabbitPersonality, personalityLimit } from '../../utils/petPersonality'
 
 defineProps<{ deviceReady: boolean }>()
 
 interface AiState {
   apiUrl: string
   model: string
+  personality: string
   enabled: boolean
   hasKey: boolean
   running: boolean
@@ -16,11 +18,13 @@ const current = ref<AiState>()
 const model = ref('')
 const apiUrl = ref('')
 const apiKey = ref('')
+const personality = ref(defaultRabbitPersonality)
 const enabled = ref(false)
 const localOperation = ref(false)
 const error = ref('')
 const dirty = computed(() => apiUrl.value.trim() !== current.value?.apiUrl || model.value.trim() !== current.value?.model ||
-  !!apiKey.value || enabled.value !== current.value?.enabled)
+  !!apiKey.value || enabled.value !== current.value?.enabled ||
+  (personality.value.trim() || defaultRabbitPersonality) !== current.value?.personality)
 let timer: number | undefined
 
 function load(state: AiState) {
@@ -28,6 +32,7 @@ function load(state: AiState) {
   apiUrl.value = state.apiUrl
   model.value = state.model
   enabled.value = state.enabled
+  personality.value = state.personality || defaultRabbitPersonality
 }
 
 async function run(operation: () => Promise<void>) {
@@ -56,7 +61,8 @@ onMounted(() => {
 onUnmounted(() => window.clearInterval(timer))
 
 const save = () => run(async () => {
-  load(await api.savePetAi({ apiUrl: apiUrl.value, model: model.value, apiKey: apiKey.value, enabled: enabled.value }))
+  load(await api.savePetAi({ apiUrl: apiUrl.value, model: model.value, apiKey: apiKey.value, enabled: enabled.value,
+    personality: personality.value }))
   apiKey.value = ''
 })
 const test = (kind: 'connection' | 'feed') => run(async () => { current.value = await api.testPetAi(kind) })
@@ -74,6 +80,11 @@ const test = (kind: 'connection' | 'feed') => run(async () => { current.value = 
     <label>API Key
       <input v-model="apiKey" type="password" maxlength="4096" autocomplete="new-password" :placeholder="current?.hasKey ? '已加密保存，留空沿用' : '填写模型服务的 Key'">
     </label>
+    <label>兔子的角色设定
+      <textarea v-model="personality" rows="3" :maxlength="personalityLimit" :placeholder="defaultRabbitPersonality"></textarea>
+    </label>
+    <button v-if="personality !== defaultRabbitPersonality" class="reset-personality" type="button"
+      @click="personality = defaultRabbitPersonality">恢复默认性格</button>
     <label class="activation">
       <input v-model="enabled" type="checkbox"> 启用兔子自主动作
     </label>
@@ -94,7 +105,9 @@ const test = (kind: 'connection' | 'feed') => run(async () => { current.value = 
 .pet-ai { display: grid; gap: 12px; }
 .pet-ai p { margin: 0; font-size: 13px; }
 .pet-ai label { display: grid; gap: 4px; font-size: 13px; }
-.pet-ai input:not([type=checkbox]) { padding: 6px 8px; border: 1px solid #aab7bd; border-radius: 6px; font: inherit; width: 100%; box-sizing: border-box; }
+.pet-ai input:not([type=checkbox]), .pet-ai textarea { padding: 6px 8px; border: 1px solid #aab7bd; border-radius: 6px; font: inherit; width: 100%; box-sizing: border-box; }
+.pet-ai textarea { resize: vertical; }
+.reset-personality { justify-self:start; border:0; padding:0; background:transparent; color:#2c665b; cursor:pointer; }
 .pet-ai .activation { display: flex; align-items: center; }
 .actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .actions button { padding: 5px 8px; color: #203438; border: 1px solid #aab7bd; border-radius: 6px; background: #fff; }

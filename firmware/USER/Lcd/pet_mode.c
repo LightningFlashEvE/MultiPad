@@ -547,7 +547,6 @@ static void update_action(uint32_t now, uint32_t step_ms) {
             }
         } else if (!bedtime && elapsed >= active_toy->duration_ms) {
             pet_care_adjust(0, active_toy->fatigue_delta, active_toy->mood_delta, active_toy->affection_delta);
-            pet_care_save();
             end_toy(false, toy_source, now);
         }
         return;
@@ -583,13 +582,11 @@ static void update_action(uint32_t now, uint32_t step_ms) {
             if (elapsed >= (fruit ? FRUIT_EAT_MS : 2100u)) {
                 if (fruit) {
                     pet_care_adjust(12, 0, 3, 2);
-                    pet_care_save();
                     record_event(PET_EVENT_FRUIT_EATEN, fruit, floor->foods[0].source, pet_care_get()->scene);
                     floor->count--;
                     memmove(floor->foods, floor->foods + 1, floor->count * sizeof(FloorFood));
                 } else if (action_source == SOURCE_PHYSICAL) {
                     pet_care_adjust(4, 0, 1, 1);
-                    pet_care_save();
                 }
                 fruit = 0;
                 last_input = now;
@@ -601,7 +598,6 @@ static void update_action(uint32_t now, uint32_t step_ms) {
             if (elapsed >= (action == PET_TRIP_ANGRY ? 2050u : 3000u)) {
                 if (action == PET_TRIP_ANGRY) pet_care_adjust(0, 1, -4, 0);
                 else pet_care_adjust(0, 0, 1, action_source == SOURCE_MCP ? 1 : 0);
-                pet_care_save();
                 set_action(PET_IDLE, now);
             }
             return;
@@ -1026,8 +1022,10 @@ void pet_mode_poll(void) {
         encoder_toggled = true;
         set_mode(!active, SOURCE_PHYSICAL, now);
     }
-    if (!active) return;
-
+    if (!active) {
+        pet_care_save(); /* Retry any interrupted write without advancing the pet's clock. */
+        return;
+    }
     const uint32_t step_ms = now - last_motion;
     last_motion = now;
     pet_care_tick(step_ms, action == PET_SLEEP);

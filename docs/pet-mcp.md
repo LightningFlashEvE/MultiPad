@@ -19,8 +19,13 @@ $env:MULTIPAD_PET_MCP_TOKEN = [guid]::NewGuid().ToString('N')
 
 ## 工具
 
+连接后，MCP 初始化响应会说明如何读取键盘实况。第一次使用时，先调用 `pet_get_care_guide({})`，了解属性的方向、各个动作的时长和收益，以及必须等到哪个事件才能确认完成。该手册可离线读取。随后调用 `pet_get_state({})`。`generation` 是实际协商出的固件能力，`availableNow` 给出这一刻设备接受的动作参数、玩具、装饰与设置，`careNote` 解释当前的取食、睡眠或玩耍状态。
+
+例如，`availableNow.feed` 为真表示还能接收一份水果。如果饱食度已经达到 100 或地面还有食物，可以让兔子等待。要确认一次操作，先把 `pet_get_events` 读到 `hasMore=false` 并保存游标，执行一次操作，再用游标读取后续事件。实体按键与自主动作都可能在两次读取之间改变状态。
+
 | 工具 | 参数 | 效果 |
 | --- | --- | --- |
+| `pet_get_care_guide` | 空 | 读取属性、动作和互动的规则，了解不同固件支持的能力及事件含义 |
 | `pet_get_state` | 空 | 返回模式、动作、位置、水果、排队数、时刻、季节、四项属性、背景和玩具互动进度 |
 | `pet_set_mode` | `enabled` | 进入桌宠模式，或退出并恢复当前层彩屏 |
 | `pet_play_action` | `action` | `trip_angry` 绊脚生气、`gaze_owner` 面向主人发呆，以及原有的 `idle`、`blink`、`walk`、`run`、`jump`、`sleep`、`daydream`、`eat`、`flee` |

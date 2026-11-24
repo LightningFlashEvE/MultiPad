@@ -100,7 +100,7 @@ void read_flash(uint8_t *read_buff, uint32_t address, uint16_t length) {
  * @param       length : 要写入的字节数(最大256),该数不应该超过该页的剩余字节数!!!
  * @retval      无
 ********************************************************************************/
-static void write_flash_page(uint8_t *write_buff, uint32_t address, uint16_t length) {
+void write_flash_page(uint8_t *write_buff, uint32_t address, uint16_t length) {
     // 写使能
     enable_flash_write();
 
