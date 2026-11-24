@@ -10,6 +10,7 @@ enum {
     MAX_CHUNK = 224,
     COLOR_SIZE = 320 * 172 * 2,
     OLED_SIZE = 72 * 40 / 8,
+    BUTTON_STATE = 0xfe,
     SCREEN_INFO = 0xff,
     STATUS_OK = 0,
     STATUS_EMPTY,
@@ -25,6 +26,18 @@ static uint8_t response[HEADER_SIZE + MAX_CHUNK + CHECKSUM_SIZE];
 static uint8_t active_menu;
 static bool pixels_dirty;
 static uint32_t generation;
+static uint16_t held_buttons;
+static uint16_t pressed_buttons;
+
+void button_readback_record(uint8_t index, bool down) {
+    uint16_t bit = (uint16_t)(1u << index);
+    if (down) {
+        held_buttons |= bit;
+        pressed_buttons |= bit;
+    } else {
+        held_buttons &= (uint16_t)~bit;
+    }
+}
 
 static uint16_t read_u16(const uint8_t *data) {
     return (uint16_t)(data[0] | (uint16_t)data[1] << 8);
@@ -94,7 +107,15 @@ void screen_readback_poll(void) {
     uint8_t status = STATUS_OK;
     uint8_t *pixels = response + HEADER_SIZE;
 
-    if (active_menu == 0 || pixels_dirty) {
+    if (screen == BUTTON_STATE) {
+        if (offset != 0 || length != 0) {
+            status = STATUS_INVALID;
+        } else {
+            write_u16(pixels, held_buttons);
+            write_u16(pixels + 2, pressed_buttons);
+            length = 4;
+        }
+    } else if (active_menu == 0 || pixels_dirty) {
         status = STATUS_EMPTY;
     } else if (screen == SCREEN_INFO) {
         if (offset != 0 || length != 0) status = STATUS_INVALID;
@@ -126,5 +147,8 @@ void screen_readback_poll(void) {
     response[18] = active_menu;
     uint16_t size = HEADER_SIZE + length;
     write_u16(response + size, crc16(response, size));
-    if (CDC_Transmit_FS(response, size + CHECKSUM_SIZE) == USBD_OK) request_pending = false;
+    if (CDC_Transmit_FS(response, size + CHECKSUM_SIZE) == USBD_OK) {
+        if (screen == BUTTON_STATE && status == STATUS_OK) pressed_buttons = 0;
+        request_pending = false;
+    }
 }

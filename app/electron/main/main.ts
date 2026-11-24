@@ -81,6 +81,8 @@ ipcMain.handle('device-screens', (_event, knownGeneration?: number) => {
   return SerialConnect.readDeviceScreens(knownGeneration)
 })
 
+ipcMain.handle('device-buttons', () => SerialConnect.readDeviceButtons())
+
 ipcMain.handle('update-firmware', async (event) => {
   const options = {
     title: '选择 MultiPad USB 升级固件',

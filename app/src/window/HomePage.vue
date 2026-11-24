@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import WindowTools from '../components/tools/WindowTools.vue'
 import WindowTitle from '../components/tools/WindowTitle.vue'
-import { computed, onMounted, onUnmounted, ref, shallowRef, watch, reactive } from 'vue'
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import PopBox from '../components/tools/PopBox.vue'
 import ProgressBox from '../components/homePage/ProgressBox.vue'
 import AppInfo from '../components/homePage/AppInfo.vue'
@@ -13,6 +12,7 @@ import { parseMenuConfig, testConnection, sendMenu, sendColorScreen, sendOledScr
 // import { setItem, getItem } from '@/utils/storage'
 import { XBox } from 'ilx1-x-box'
 import { renderDeviceScreens, type DeviceScreens } from '../utils/deviceScreenFormat'
+import type { DeviceButtons } from '../utils/deviceButtonState'
 
 const router = useRouter()
 const win = window as any
@@ -37,6 +37,7 @@ onMounted(async () => {
   conState.value = await testConnection()
   refreshDeviceScreens()
   screenPoll = setInterval(refreshDeviceScreens, 1800)
+  buttonPoll = setInterval(refreshDeviceButtons, 45)
   // 主页面监听
   win.myApi.storeChangeListen((objData) => {
     // console.info('homePage listening', objData)
@@ -87,7 +88,11 @@ onMounted(async () => {
   }
 })
 
-onUnmounted(() => clearInterval(screenPoll))
+onUnmounted(() => {
+  clearInterval(screenPoll)
+  clearInterval(buttonPoll)
+  clearButtonHighlights()
+})
 
 // 打开键值编辑窗口
 const openConfigWindow = async (index: number) => {
@@ -134,19 +139,9 @@ const createWindow = (route: string) => {
 
 // 连接状态
 const conState = ref<boolean>(false)
-const stateMes = reactive([
-  {
-    text: '未连接',
-    bgStyle: 'rgba(51, 51, 51, 0.2)'
-  },
-  {
-    text: '已连接',
-    bgStyle: 'rgba(171, 242, 187, 0.3)'
-  }
-])
-
-// 点击标题手动连接
+// 手动重新连接
 const titleClick = async () => {
+  buttonSyncUnsupported = false
   conState.value = await testConnection()
   refreshDeviceScreens()
 }
@@ -171,9 +166,11 @@ const updateFirmware = async () => {
   if (firmwareUpdating.value || progressShow.value) return
   firmwareUpdating.value = true
   try {
-    await screenReadTask
+    await Promise.all([screenReadTask, buttonReadTask])
+    clearButtonHighlights()
     const result = await win.myApi.updateFirmware()
     if (result.state === 'cancelled') return
+    buttonSyncUnsupported = false
     deviceScreens.value = undefined
     conState.value = await win.myApi.connectHardware()
     XBox.popMes(result.state === 'updated' ? '固件升级完成' : result.message)
@@ -192,7 +189,7 @@ const sendFinalData = async () => {
   configStore.setProgressMes(0)
   progressShow.value = true
   try {
-    await screenReadTask
+    await Promise.all([screenReadTask, buttonReadTask])
     conState.value = await win.myApi.connectHardware()
     if (!conState.value) {
       XBox.popMes('硬件已经断开连接')
@@ -233,6 +230,9 @@ const setMenu = (index: number) => {
 }
 
 // 菜单切换
+const screenLabels = ['彩屏', '左侧 OLED', '右侧 OLED']
+const keyOrder = [0, 2, 4, 6, 1, 3, 5, 7]
+
 const menuIndex = computed(() => configStore.curMenu + 1)
 const menuChange = (func: number) => {
   showDeviceScreens.value = false
@@ -294,16 +294,67 @@ const screenSourceLabel = computed(() => {
   if (deviceScreens.value) {
     return showDeviceScreens.value ? `设备画面 · 第 ${deviceScreens.value.menu} 层` : '本机预览'
   }
-  if (screenReadState.value === 'unsupported') return '当前固件不支持画面回读'
-  if (screenReadState.value === 'empty') return '暂无可读设备画面'
-  if (screenReadState.value === 'unavailable') return '设备画面读取失败'
-  return '正在读取设备画面'
+  if (screenReadState.value === 'unsupported') return '固件不支持回读'
+  if (screenReadState.value === 'empty') return '暂无设备画面'
+  if (screenReadState.value === 'unavailable') return '画面读取失败'
+  return '正在读取画面'
 })
 
 const screenPreviews = computed(() => {
   if (showDeviceScreens.value && deviceScreens.value) return deviceScreens.value.images
   return configStore.screenData.map(({ baseData }) => baseData ? `data:image/png;base64,${baseData}` : '')
 })
+
+const heldButtons = ref(0)
+const pulsingButtons = ref(0)
+const pulseTimers = new Map<number, ReturnType<typeof setTimeout>>()
+let buttonPoll: ReturnType<typeof setInterval>
+let buttonReadTask: Promise<void> | undefined
+let buttonSyncUnsupported = false
+
+function clearButtonHighlights() {
+  heldButtons.value = 0
+  pulsingButtons.value = 0
+  for (const timer of pulseTimers.values()) clearTimeout(timer)
+  pulseTimers.clear()
+}
+
+async function readDeviceButtons() {
+  const result: DeviceButtons = await win.myApi.readDeviceButtons()
+  if (result.state === 'busy') return
+  if (result.state !== 'ready') {
+    clearButtonHighlights()
+    buttonSyncUnsupported = result.state === 'unsupported'
+    if (result.state === 'disconnected') {
+      conState.value = false
+      deviceScreens.value = undefined
+      screenReadState.value = 'disconnected'
+    }
+    return
+  }
+
+  heldButtons.value = result.held
+  for (let index = 0; index < 11; index++) {
+    const bit = 1 << index
+    if (!(result.pressed & bit)) continue
+    clearTimeout(pulseTimers.get(index))
+    pulsingButtons.value |= bit
+    // Keep taps visible even when the key is released between two USB reads.
+    pulseTimers.set(index, setTimeout(() => {
+      pulsingButtons.value &= ~bit
+      pulseTimers.delete(index)
+    }, 125))
+  }
+}
+
+function refreshDeviceButtons() {
+  if (!conState.value || buttonSyncUnsupported || progressShow.value || firmwareUpdating.value || buttonReadTask) return
+  buttonReadTask = readDeviceButtons().catch(clearButtonHighlights).finally(() => { buttonReadTask = undefined })
+}
+
+function isDeviceButtonActive(index: number) {
+  return Boolean((heldButtons.value | pulsingButtons.value) & (1 << index))
+}
 const closeStorage = () => {
   // 存储全层菜单
   win.myApi.storageMenu('configData', JSON.stringify(configStore.menuConfig))
@@ -323,318 +374,369 @@ const showAppInfo = () => {
   </div>
   <ContextMenu />
   <PopBox ref="popBoxRef" />
-  <div class="container">
-    <WindowTitle fixed-size @click="closeStorage">
+  <div class="container multipad-home">
+    <WindowTitle fixed-size @before-close="closeStorage">
       <template #title>
-        <div id="window-title">
-          <div @click="showAppInfo">MultiPad</div>
-          <div id="con-state" @click.stop="titleClick" :style="{ background: conState ? stateMes[1].bgStyle : stateMes[0].bgStyle }">
-            {{ conState ? stateMes[1].text : stateMes[0].text }}
-            <div id="mes-box">点击连接状态或窗口标题可以手动连接</div>
-          </div>
+        <div class="home-toolbar">
+          <button class="app-name" type="button" title="关于 MultiPad" @click="showAppInfo">MultiPad</button>
+          <button class="connection-state" :class="{ connected: conState }" type="button"
+            title="重新连接键盘" @click="titleClick">
+            {{ conState ? '已连接' : '未连接' }}
+          </button>
+          <button v-if="conState" class="screen-source" type="button"
+            :disabled="!deviceScreens" :aria-pressed="Boolean(deviceScreens && showDeviceScreens)"
+            :title="deviceScreens ? '切换设备画面与本机预览' : undefined"
+            @click="showDeviceScreens = !showDeviceScreens">
+            {{ screenSourceLabel }}
+          </button>
+          <button class="firmware-update" type="button" :disabled="firmwareUpdating || progressShow"
+            title="通过 USB 升级键盘固件" @click="updateFirmware">
+            {{ firmwareUpdating ? '升级中' : 'USB 升级' }}
+          </button>
         </div>
       </template>
     </WindowTitle>
-    <button v-if="conState" class="screen-source" type="button"
-      :disabled="!deviceScreens" :aria-pressed="Boolean(deviceScreens && showDeviceScreens)"
-      :title="deviceScreens ? '在设备画面与本机预览间切换' : undefined"
-      @click="showDeviceScreens = !showDeviceScreens">
-      {{ screenSourceLabel }}
-    </button>
-    <button class="firmware-update" type="button" :disabled="firmwareUpdating || progressShow" @click="updateFirmware">
-      {{ firmwareUpdating ? '升级中' : 'USB 升级' }}
-    </button>
-    <div id="home-cotent">
-      <div class="div1">
-        <div @click.stop="openConfigWindow(8)"></div>
-        <div @click.stop="openConfigWindow(9)"></div>
+    <div id="home-content">
+      <div class="rotary-pair">
+        <button class="rotary" :class="{ 'device-active': isDeviceButtonActive(8) }"
+          type="button" title="配置旋钮 1" @click.stop="openConfigWindow(8)">旋钮 1</button>
+        <button class="rotary" :class="{ 'device-active': isDeviceButtonActive(9) }"
+          type="button" title="配置旋钮 2" @click.stop="openConfigWindow(9)">旋钮 2</button>
       </div>
-      <div class="div2">
-        <div class="div5">
-          <div @click="openScreenPage(0)">
-            <img v-if="screenPreviews[0]" :src="screenPreviews[0]" alt="" />
-          </div>
-        </div>
-        <div class="div6">
-          <div @click="openScreenPage(1)">
-            <img v-if="screenPreviews[1]" :src="screenPreviews[1]" alt="" />
-          </div>
-        </div>
-        <div class="div7">
-          <div @click="openScreenPage(2)">
-            <img v-if="screenPreviews[2]" :src="screenPreviews[2]" alt="" />
-          </div>
-        </div>
-        <div class="div8">
-          <div id="send-box" @click="sendFinalData">发送</div>
-          <div id="menu-box">
-            <div @click="menuChange(0)">
-              <svg t="1710603270811" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="7687" width="20" height="20">
-                <path
-                  d="M659.748571 245.272381l-51.687619-51.687619-318.439619 318.585905 318.415238 318.268952 51.712-51.736381-266.703238-266.556952z"
-                  p-id="7688"
-                  class="sweezy-custom-cursor-hover"
-                  style='null;cursor: url("data:image/png;base64,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") 7 1, pointer !important;'
-                  data-spm-anchor-id="a313x.collections_detail.0.i0.62783a81stkprB"
-                  fill="#e6e6e6"
-                ></path>
-              </svg>
-            </div>
-            <div>
-              <span>{{ menuIndex }}</span>
-              <div id="menu-text">MENU</div>
-            </div>
-            <div @click="menuChange(1)">
-              <svg t="1710603414798" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="8201" width="20" height="20">
-                <path d="M605.086476 512.146286L338.358857 245.272381l51.760762-51.687619 318.415238 318.585905L390.095238 830.415238l-51.687619-51.736381z" p-id="8202" fill="#e6e6e6"></path>
-              </svg>
-            </div>
+      <div class="screen-panel">
+        <button v-for="(label, index) in screenLabels" :key="label" class="screen-card" type="button"
+          :title="`编辑${label}图片`" @click="openScreenPage(index)">
+          <span class="screen-image">
+            <img v-if="screenPreviews[index]" :src="screenPreviews[index]" alt="" />
+          </span>
+          <span>{{ label }}</span>
+        </button>
+        <div class="layer-actions">
+          <button id="send-box" type="button" :disabled="progressShow || firmwareUpdating"
+            @click="sendFinalData">发送到键盘</button>
+          <div id="menu-box" role="group" aria-label="本机配置层">
+            <button class="layer-arrow" type="button" title="上一层" aria-label="上一层"
+              @click="menuChange(0)"></button>
+            <span aria-live="polite">本机第 {{ menuIndex }} 层</span>
+            <button class="layer-arrow next" type="button" title="下一层" aria-label="下一层"
+              @click="menuChange(1)"></button>
           </div>
         </div>
       </div>
-      <div class="div3">
-        <div>
-          <div @click.stop="openConfigWindow(0)"></div>
-          <div @click.stop="openConfigWindow(2)"></div>
-          <div @click.stop="openConfigWindow(4)"></div>
-          <div @click.stop="openConfigWindow(6)"></div>
-
-          <div @click.stop="openConfigWindow(1)"></div>
-          <div @click.stop="openConfigWindow(3)"></div>
-          <div @click.stop="openConfigWindow(5)"></div>
-          <div @click.stop="openConfigWindow(7)"></div>
-        </div>
+      <div class="key-panel">
+        <button v-for="index in keyOrder" :key="index" class="key-button" type="button"
+          :class="{ 'device-active': isDeviceButtonActive(index) }"
+          :title="`配置 K${index + 1}`" @click.stop="openConfigWindow(index)">K{{ index + 1 }}</button>
       </div>
-      <div class="div4" @click.stop="openConfigWindow(10)"></div>
+      <button class="rotary rotary-large" type="button" title="配置旋钮 3"
+        :class="{ 'device-active': isDeviceButtonActive(10) }"
+        @click.stop="openConfigWindow(10)">旋钮 3</button>
     </div>
     <ProgressBox v-if="progressShow" />
   </div>
 </template>
 
-<style lang="scss">
+<style lang="scss" scoped>
 #app-info {
   @include global.full_wh;
   @include global.pos_ab;
-  // @include global.style_common(12px, rgba(51, 51, 51, 0.2));
   z-index: 88;
 }
-#window-title {
-  width: 30%;
-  height: 100%;
-  display: flex;
-  justify-content: space-between;
-  // align-items: center;
-  -webkit-app-region: drag;
-  font-size: 20px;
-  -webkit-app-region: no-drag !important;
-  cursor: pointer;
-}
-#con-state {
-  width: 80px;
-  height: 30px;
-  word-break: keep-all;
-  @include global.flex_center;
-  @include global.style_common(12px, rgba(51, 51, 51, 0.2));
-  font-size: 17px;
-  position: relative;
-  #mes-box {
-    width: 150px;
-    height: 70px;
-    @include global.pos_ab(-84px, 50%, 3);
-    transform: translateX(-50%);
 
-    padding: 10px;
-    word-break: break-all;
-    display: none;
-    @include global.style_common(9px, rgba(103, 109, 115, 1));
-  }
-  #mes-box::after {
-    content: '';
-    width: 30px;
-    height: 10px;
-    transform: translateX(-50%);
-    @include global.pos_ab(-10px, 50%, 0);
-    background: rgba(103, 109, 115, 1);
-    clip-path: polygon(0 100%, 50% 0, 100% 100%, 0 100%);
-  }
-}
-#con-state:hover {
-  #mes-box {
-    display: block;
-  }
-}
-
-#cover {
-  @include global.full_wh;
-  @include global.ab_center;
-  @include global.style_common(15px, rgba(51, 51, 51, 0.2));
-  z-index: 998;
-}
-
-.container {
+.multipad-home {
   width: 95%;
   height: 100%;
   @include global.pos_ab(50%, 50%, 0);
   transform: translate(-52%, -50%);
-  border: 10px solid rgba(15, 16, 23, 1);
+  border: 10px solid #0f1017;
   border-radius: 4em;
-  // overflow: hidden;
   box-sizing: border-box;
-  padding: 10px;
+  padding: 10px 10px 12px;
   z-index: 2;
-  color: var(--text-color-1);
-  padding-bottom: 12px;
-  background-color: #e5eae9;
-  background-image: linear-gradient(20deg, #e5eae9 0%, #8f9d9f 100%);
-  // -webkit-app-region: drag;
+  color: #17272d;
+  font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  background: #e5eae9 linear-gradient(20deg, #e5eae9 0%, #8f9d9f 100%);
 }
 
-.screen-source, .firmware-update {
-  position: absolute;
-  top: 16px;
-  left: 54%;
-  transform: translateX(-50%);
-  -webkit-app-region: no-drag;
-  border: 0;
-  padding: 5px 8px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.5);
-  color: var(--text-color-1);
-  cursor: pointer;
+.home-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
   white-space: nowrap;
+}
+
+.home-toolbar button, #home-content button {
+  font: inherit;
+  border: 0;
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 2px solid #fff;
+    box-shadow: 0 0 0 4px #164d64;
+  }
 
   &:disabled {
     cursor: default;
   }
 }
 
-.firmware-update {
-  left: 73%;
+.home-toolbar button {
+  -webkit-app-region: no-drag;
 }
 
-#home-cotent {
+.home-toolbar .app-name {
+  padding: 3px 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #15272d;
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.connection-state, .screen-source, .firmware-update {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 9px;
+  border-radius: 8px;
+  background: #edf1f0;
+  color: #233a42;
+}
+
+.home-toolbar .connection-state,
+.home-toolbar .screen-source,
+.home-toolbar .firmware-update {
+  font-size: 13px;
+  font-weight: 600;
+
+  &:hover:not(:disabled) {
+    background: #fff;
+  }
+}
+
+.connection-state {
+  gap: 6px;
+
+  &::before {
+    content: '';
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #607078;
+  }
+
+  &.connected::before {
+    background: #247351;
+  }
+}
+
+.screen-source {
+  margin-left: auto;
+
+  &[aria-pressed='true'] {
+    background: #dcebe6;
+    color: #234936;
+  }
+}
+
+.firmware-update {
+  background: #dbe3e4;
+}
+
+.home-toolbar .connection-state + .firmware-update {
+  margin-left: auto;
+}
+
+#home-content {
   @include global.wh(100%, 400px);
   @include global.grid_config(repeat(7, 1fr), repeat(5, 1fr));
   overflow: hidden;
+
+  button {
+    min-width: 0;
+  }
 }
-.div1 {
+
+.rotary-pair {
   grid-area: 1 / 1 / 3 / 2;
   @include global.flex_config(1, space-around);
-  div {
-    width: 75px;
-    height: 75px;
-    @include global.style_common(50%, rgba(12, 14, 20, 1));
-    cursor: pointer;
+  align-items: center;
+
+  .rotary {
+    width: 72px;
+    height: 72px;
   }
 }
-.div2 {
+
+#home-content .rotary {
+  border-radius: 50%;
+  background: #18232b;
+  color: #e4edea;
+  font-size: 13px;
+  font-weight: 600;
+
+  &:hover {
+    background: #2b404b;
+  }
+}
+
+.screen-panel {
   grid-area: 1 / 2 / 3 / 8;
-  @include global.grid_config(repeat(7, 1fr), repeat(3, 1fr), 16px, 16px);
-
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+  gap: 8px 12px;
   padding-left: 10px;
-  div {
-    background: rgba(255, 255, 255, 0.6);
-    cursor: pointer;
-  }
-  img {
-    @include global.full_wh;
-  }
-  .div5 {
-    grid-area: 1 / 1 / 4 / 4;
-    div {
-      width: 200px;
-      height: 108px;
-      margin: 10px auto;
-      background: rgba(255, 255, 255, 0.7);
-      box-shadow: 0.1px 0px 5.3px rgba(0, 0, 0, 0.016), 0.4px 0px 17.9px rgba(0, 0, 0, 0.027), 2px 0px 80px rgba(0, 0, 0, 0.05);
-    }
-  }
-  .div6 {
-    grid-area: 1 / 4 / 3 / 6;
-    div {
-      width: 120px;
-      height: 66px;
-      margin: 10px auto;
-      background: rgba(255, 255, 255, 0.7);
-      box-shadow: 0.1px 0px 5.3px rgba(0, 0, 0, 0.016), 0.4px 0px 17.9px rgba(0, 0, 0, 0.027), 2px 0px 80px rgba(0, 0, 0, 0.05);
-    }
-  }
-  .div7 {
-    grid-area: 1 / 6 / 3 / 8;
-    div {
-      width: 120px;
-      height: 66px;
-      margin: 10px auto;
-      background: rgba(255, 255, 255, 0.7);
-      box-shadow: 0.1px 0px 5.3px rgba(0, 0, 0, 0.016), 0.4px 0px 17.9px rgba(0, 0, 0, 0.027), 2px 0px 80px rgba(0, 0, 0, 0.05);
-    }
-  }
-  .div8 {
-    grid-area: 3 / 4 / 4 / 8;
-    @include global.flex_config(0, flex-start);
-    padding: 5px;
-    color: rgba(255, 255, 255, 1);
-    user-select: none;
-    #send-box {
-      width: 90px;
-      height: 100%;
-      @include global.style_common(2px, rgba(191, 205, 211, 0.909));
-      word-break: keep-all;
-      @include global.flex_center;
-      font-size: 15px;
-      margin-right: 15px;
-    }
-    #menu-box {
-      width: 170px;
-      height: 100%;
-      background: rgba(191, 205, 211, 0.7);
-      @include global.flex_config(0, space-between);
-      > div {
-        width: 30%;
-        height: 100%;
-        background: rgba(51, 51, 51, 0.4);
-        @include global.flex_center;
-        font-size: 20px;
-        position: relative;
-      }
-      #menu-text {
-        // width: 40px;
-        // height: 20px;
-        font-size: 9px;
-        transform: rotate(-90deg);
-        @include global.pos_ab(11px, -5px, 3);
-        background: rgba(51, 51, 51, 0);
-      }
-    }
-  }
 }
-.div3 {
-  grid-area: 3 / 1 / 6 / 6;
-  padding-top: 15px;
-  @include global.flex_config(0, flex-start);
 
-  > div {
-    width: 100%;
-    height: 210px;
-    @include global.grid_config(repeat(4, 1fr), repeat(2, 1fr), 15px, 15px);
-    // background: rgba($color: #000000, $alpha: 0.4);
-    background-color: #cfaaac;
-    background-image: linear-gradient(62deg, #cfaaac 0%, #a9b7c0 100%);
-    border-radius: 12px;
-    div {
-      cursor: pointer;
-      @include global.style_common(12px, rgba($color: #000000, $alpha: 0.4));
-    }
+#home-content .screen-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border-radius: 10px;
+  background: #e9efed;
+  color: #314750;
+  font-size: 12px;
+  font-weight: 600;
+
+  &:hover {
+    background: #f6f9f8;
   }
 }
-.div4 {
+
+.screen-card:nth-child(1) { grid-area: 1 / 1 / 4 / 4; }
+.screen-card:nth-child(2) { grid-area: 1 / 4 / 3 / 6; }
+.screen-card:nth-child(3) { grid-area: 1 / 6 / 3 / 8; }
+
+.screen-image {
+  display: block;
+  width: min(100%, 120px);
+  aspect-ratio: 72 / 40;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #17242b;
+
+  img {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: contain;
+  }
+}
+
+.screen-card:first-child .screen-image {
+  width: min(100%, 200px);
+  aspect-ratio: 320 / 172;
+}
+
+.layer-actions {
+  grid-area: 3 / 4 / 4 / 8;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#home-content #send-box {
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 8px;
+  background: #244c49;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+
+  &:hover:not(:disabled) { background: #32645e; }
+  &:disabled { background: #506a68; }
+}
+
+#menu-box {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  border-radius: 8px;
+  padding: 2px;
+  background: #e9efed;
+  color: #273d45;
+  font-size: 13px;
+  white-space: nowrap;
+
+  span {
+    min-width: 6.5em;
+    text-align: center;
+  }
+}
+
+#home-content .layer-arrow {
+  display: grid;
+  width: 26px;
+  height: 30px;
+  place-items: center;
+  border-radius: 6px;
+  background: transparent;
+  color: #273d45;
+
+  &:hover { background: #d4e1de; }
+
+  &::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border: solid currentColor;
+    border-width: 0 2px 2px 0;
+    transform: rotate(135deg);
+  }
+
+  &.next::before { transform: rotate(-45deg); }
+}
+
+.key-panel {
+  grid-area: 3 / 1 / 6 / 6;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 15px;
+  height: 210px;
+  margin-top: 15px;
+  border-radius: 12px;
+  background: linear-gradient(62deg, #cfaaac 0%, #a9b7c0 100%);
+}
+
+#home-content .key-button {
+  border-radius: 12px;
+  background: #3d454f;
+  color: #f4f6f7;
+  font-size: 17px;
+  font-weight: 600;
+
+  &:hover { background: #4c5965; }
+}
+
+#home-content .rotary-large {
   grid-area: 3 / 6 / 6 / 8;
   width: 210px;
   height: 210px;
-  @include global.style_common(50%, rgba(12, 14, 20, 1));
   position: fixed;
   right: -40px;
   bottom: 20px;
-  cursor: pointer;
+  padding-right: 32px;
+
+  &:focus-visible {
+    outline-offset: -5px;
+  }
+}
+
+#home-content button.device-active,
+#home-content button.device-active:hover {
+  background: #236250;
+  color: #fff;
+  outline: 3px solid #bcebd2;
+  outline-offset: -5px;
 }
 </style>

@@ -1,9 +1,11 @@
 import { DEVICE_SCREEN_SIZES, type DeviceScreens } from '../../src/utils/deviceScreenFormat'
+import type { DeviceButtons } from '../../src/utils/deviceButtonState'
 
 const REQUEST_MAGIC = Buffer.from([0xaa, 0xbb, 0xc1, 0x53])
 const RESPONSE_MAGIC = Buffer.from([0x4d, 0x50, 0x53, 1])
 const HEADER_SIZE = 19
 const MAX_CHUNK = 224
+const BUTTON_STATE = 0xfe
 const INFO = 0xff
 const STATUS_OK = 0
 const STATUS_EMPTY = 1
@@ -24,11 +26,17 @@ export default class ScreenReadback {
   private reading = false
   private closed = false
   private delivered?: number
+  private buttonSampleRequested = false
+  private heldButtons?: number
+  private pressedButtons = 0
 
-  constructor(private readonly write: (data: Buffer) => Promise<boolean>) {}
+  constructor(
+    private readonly write: (data: Buffer) => Promise<boolean>,
+    private readonly supportsButtons = false
+  ) {}
 
   get busy() {
-    return this.reading
+    return this.reading || this.pending !== undefined
   }
 
   close() {
@@ -91,9 +99,40 @@ export default class ScreenReadback {
     })
   }
 
+  private async sampleButtons() {
+    this.buttonSampleRequested = false
+    const frame = await this.exchange(BUTTON_STATE)
+    if (!frame || frame[6] !== STATUS_OK || frame[7] !== BUTTON_STATE || frame.length !== HEADER_SIZE + 4) {
+      this.heldButtons = undefined
+      this.pressedButtons = 0
+      return
+    }
+    // Ignore historical taps in the first sample after connecting, but report held keys.
+    if (this.heldButtons !== undefined) this.pressedButtons |= frame.readUInt16LE(HEADER_SIZE + 2)
+    this.heldButtons = frame.readUInt16LE(HEADER_SIZE)
+  }
+
+  async readButtons(): Promise<DeviceButtons> {
+    if (!this.supportsButtons) return { state: 'unsupported' }
+    if (this.closed) return { state: 'disconnected' }
+    if (this.reading) {
+      this.buttonSampleRequested = true
+      if (this.heldButtons === undefined) return { state: 'busy' }
+    } else if (this.pending) {
+      return { state: 'busy' }
+    } else {
+      await this.sampleButtons()
+      if (this.closed) return { state: 'disconnected' }
+      if (this.heldButtons === undefined) return { state: 'unavailable' }
+    }
+    const pressed = this.pressedButtons
+    this.pressedButtons = 0
+    return { state: 'ready', held: this.heldButtons, pressed }
+  }
+
   async read(knownGeneration?: number): Promise<DeviceScreens> {
     if (this.closed) return { state: 'disconnected' }
-    if (this.reading) return { state: 'busy' }
+    if (this.busy) return { state: 'busy' }
     this.reading = true
     try {
       const info = await this.exchange(INFO)
@@ -108,6 +147,7 @@ export default class ScreenReadback {
       for (const [screen, { bytes }] of DEVICE_SCREEN_SIZES.entries()) {
         const image = new Uint8Array(bytes)
         for (let offset = 0; offset < bytes; offset += MAX_CHUNK) {
+          if (this.buttonSampleRequested) await this.sampleButtons()
           const length = Math.min(MAX_CHUNK, bytes - offset)
           const frame = await this.exchange(screen, generation, offset, length)
           if (!frame) return { state: this.closed ? 'disconnected' : 'unavailable' }

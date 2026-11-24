@@ -1,6 +1,7 @@
 #include "key_user.h"
 #include "oled_user.h"
 #include "usbd_cdc_if.h"
+#include "screen_readback.h"
 
 // 键盘初始状态
 static uint16_t state = 0xffff;
@@ -23,6 +24,7 @@ void key_scan_user() {
 void key_up_callback(uint8_t row, uint8_t col) {
     uint8_t key_value = (col * ROW_NUM) + row;
 //    printf("key_value -> %d\n\r", (key_value << 1) + 1);
+    button_readback_record(key_value, false);
     parse_json_value((key_value << 1) + 1);
     holding_flag = 0;
 }
@@ -33,6 +35,7 @@ void key_up_callback(uint8_t row, uint8_t col) {
 void key_down_callback(uint8_t row, uint8_t col) {
     uint8_t key_value = (col * ROW_NUM) + row;
 //    printf("key_value -> %d\n\r", key_value << 1);
+    button_readback_record(key_value, true);
     parse_json_value(key_value << 1);
 }
 

@@ -14,6 +14,7 @@
 #include "oled_user.h"
 #include "oled_42.h"
 #include "lcd_user.h"
+#include "screen_readback.h"
 
 static struct menu_sign menu_state = {.pre_menu = UINT8_MAX};
 static p_menu_sign_t const menu_sign_p = &menu_state;
@@ -94,6 +95,9 @@ static void keyboard_menu_change(void) {
 ********************************************************************************/
 // 编码器 1
 void encoder1_callback(uint8_t encoder_value) {
+    if (encoder_value == ENCODER_DOWN || encoder_value == ENCODER_UP) {
+        button_readback_record(8, encoder_value == ENCODER_DOWN);
+    }
 //    if(menu_config_arr[menu_index + 1] == 0x00) {
     if(encoder_value == 4) {
         menu_sign_p->menu_index <= 0 ? menu_sign_p->menu_index = 9 : menu_sign_p->menu_index--;
@@ -111,12 +115,18 @@ void encoder1_callback(uint8_t encoder_value) {
 
 // 编码器 2
 void encoder2_callback(uint8_t encoder_value) {
+    if (encoder_value == ENCODER_DOWN || encoder_value == ENCODER_UP) {
+        button_readback_record(9, encoder_value == ENCODER_DOWN);
+    }
 //    printf("encoder_value -> %d\n\r", (ENCODER_EVENT_NUM * 1) + encoder_value + 16);
     parse_json_value( (ENCODER_EVENT_NUM * 1) + encoder_value + 16);
 }
 
 // 编码器 3
 void encoder3_callback(uint8_t encoder_value) {
+    if (encoder_value == ENCODER_DOWN || encoder_value == ENCODER_UP) {
+        button_readback_record(10, encoder_value == ENCODER_DOWN);
+    }
 //    printf("encoder_value -> %d\n\r", (ENCODER_EVENT_NUM * 2) + encoder_value + 16);
     parse_json_value( (ENCODER_EVENT_NUM * 2) + encoder_value + 16);
 }

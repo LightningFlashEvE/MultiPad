@@ -34,7 +34,7 @@ onMounted(() => {
   <div class="container">
     <WindowTitle>
       <template #title>
-        ScreenEditor
+        屏幕图片
       </template>
     </WindowTitle>
     <div id="key-config-content">

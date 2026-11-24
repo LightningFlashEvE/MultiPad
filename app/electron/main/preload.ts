@@ -107,6 +107,7 @@ contextBridge.exposeInMainWorld('myApi', {
   waitSign,
   connectHardware,
   readDeviceScreens: (knownGeneration?: number) => ipcRenderer.invoke('device-screens', knownGeneration),
+  readDeviceButtons: () => ipcRenderer.invoke('device-buttons'),
   updateFirmware: () => ipcRenderer.invoke('update-firmware'),
   sendData,
   resizeImage,

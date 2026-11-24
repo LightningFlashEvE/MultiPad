@@ -1,10 +1,13 @@
 import type { SerialPort as SerialPortInstance } from 'serialport'
+import type { DeviceButtons } from '../../src/utils/deviceButtonState'
 import type { DeviceScreens } from '../../src/utils/deviceScreenFormat'
 import ScreenReadback from './screenReadback'
 
 const { SerialPort }: typeof import('serialport') = require('serialport')
 const HANDSHAKE = Buffer.from([0xaa, 0xbb, 0xcc])
 const READBACK_CAPABILITY = Buffer.from([0xaa, 0xbb, 0xcc, 0x4d, 0x50, 0x53, 0x43, 1])
+const BUTTON_CAPABILITY = 0x4b
+const UPDATE_CAPABILITY = 0x55
 
 export default class SerialConnect {
   private static port?: SerialPortInstance
@@ -84,8 +87,13 @@ export default class SerialConnect {
         }
 
         this.port = port
-        if (reply.includes(READBACK_CAPABILITY)) {
-          this.screenReadback = new ScreenReadback((data) => this.writePort(port, data))
+        const capabilityStart = reply.indexOf(READBACK_CAPABILITY)
+        if (capabilityStart !== -1) {
+          const suffix = reply.subarray(capabilityStart + READBACK_CAPABILITY.length)
+          const buttonFlag = suffix[0] === UPDATE_CAPABILITY ? suffix[1] : suffix[0]
+          this.screenReadback = new ScreenReadback(
+            (data) => this.writePort(port, data), buttonFlag === BUTTON_CAPABILITY
+          )
         }
         port.on('data', (chunk: Buffer) => {
           if (this.port !== port) return
@@ -105,6 +113,12 @@ export default class SerialConnect {
     if (!this.port?.isOpen) return { state: 'disconnected' }
     if (!this.screenReadback) return { state: 'unsupported' }
     return this.screenReadback.read(knownGeneration)
+  }
+
+  static async readDeviceButtons(): Promise<DeviceButtons> {
+    if (!this.port?.isOpen) return { state: 'disconnected' }
+    if (!this.screenReadback) return { state: 'unsupported' }
+    return this.screenReadback.readButtons()
   }
 
   static async sendData(data: string | Uint8Array): Promise<boolean> {
