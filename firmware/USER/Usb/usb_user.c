@@ -1,5 +1,6 @@
 #include "usb_user.h"
 #include "screen_readback.h"
+#include "live_oled.h"
 #include "usb_update.h"
 #include "oled_user.h"
 #include "flash_user.h"
@@ -45,7 +46,7 @@ static uint8_t handshake[] = {0xaa, 0xbb, 0xcc, 0x4d, 0x50, 0x53, 0x43, 1
 #ifdef MULTIPAD_USB_APP
     , 0x55
 #endif
-    , BUTTON_READBACK_CAPABILITY
+    , BUTTON_READBACK_CAPABILITY, LIVE_OLED_CAPABILITY
 };
 
 static void oled_data_handle(void);
@@ -64,6 +65,7 @@ uint8_t cdc_event_cb(uint8_t *Buf, uint32_t *Len) {
         return USBD_OK;
     }
 #endif
+    if (live_oled_receive(Buf, *Len)) return USBD_OK;
     if (screen_readback_receive(Buf, *Len)) return USBD_OK;
 
     if (*Len >= 3 && Buf[0] == 0xAA && Buf[1] == 0xBB) {
@@ -190,6 +192,7 @@ void load_menu(uint8_t menu_index) {
     show_menu_oled(menu_index);
     show_menu_color(menu_index);
     screen_readback_applied(menu_index);
+    live_oled_menu_applied(menu_index);
     set_menu_lock(0);
 }
 
@@ -222,6 +225,7 @@ static void set_sign(uint8_t shift, uint8_t value) {
 * USB 扫描
 ********************************************************************************/
 void usb_scan_user(void) {
+    live_oled_poll();
     if(get_sign(data_skip) == SIGN_SET) {
         set_sign(data_skip, SIGN_RESET);
         write_menu++;
@@ -236,6 +240,8 @@ void usb_scan_user(void) {
             set_sign(menu_config, SIGN_RESET);
             storage_config(upper_data_p->rec_buff, 31);
             load_menu_config();
+            write_menu = 1;
+            while (write_menu <= 10 && !menu_config_arr[write_menu]) write_menu++;
 //            lcd_show_str("menu config done");
             receive_reset();
             return;
@@ -355,13 +361,10 @@ void load_menu_config(void) {
 * 跳转到有内容的下一级菜单
 ********************************************************************************/
 void turn_next_menu(void) {
-    while (menu_config_arr[write_menu] == 0x00) {
-        if (write_menu > 10) {
-            write_menu = 1;
-            load_menu(1);
-            return;
-        }
-        write_menu += 1;
+    while (write_menu <= 10 && !menu_config_arr[write_menu]) write_menu++;
+    if (write_menu > 10) {
+        write_menu = 1;
+        load_menu(menu_config_arr[0]);
     }
 }
 

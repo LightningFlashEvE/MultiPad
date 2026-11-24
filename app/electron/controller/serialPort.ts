@@ -2,12 +2,14 @@ import type { SerialPort as SerialPortInstance } from 'serialport'
 import type { DeviceButtons } from '../../src/utils/deviceButtonState'
 import type { DeviceScreens } from '../../src/utils/deviceScreenFormat'
 import ScreenReadback from './screenReadback'
+import { exchangeLiveOled } from './liveOled'
 
 const { SerialPort }: typeof import('serialport') = require('serialport')
 const HANDSHAKE = Buffer.from([0xaa, 0xbb, 0xcc])
 const READBACK_CAPABILITY = Buffer.from([0xaa, 0xbb, 0xcc, 0x4d, 0x50, 0x53, 0x43, 1])
 const BUTTON_CAPABILITY = 0x4b
 const UPDATE_CAPABILITY = 0x55
+const LIVE_OLED_CAPABILITY = 0x4c
 
 export default class SerialConnect {
   private static port?: SerialPortInstance
@@ -15,6 +17,8 @@ export default class SerialConnect {
   private static screenReadback?: ScreenReadback
   private static waitState = false
   private static upgrading = false
+  private static liveOledSupported = false
+  private static liveOledTask?: Promise<Awaited<ReturnType<typeof exchangeLiveOled>>>
 
   static connectHardware(): Promise<boolean> {
     if (this.upgrading) return Promise.resolve(false)
@@ -30,9 +34,11 @@ export default class SerialConnect {
     this.upgrading = true
     try {
       await this.connectionAttempt
+      await this.liveOledTask?.catch(() => undefined)
       const port = this.port
       this.screenReadback?.close()
       this.screenReadback = undefined
+      this.liveOledSupported = false
       this.port = undefined
       this.waitState = false
       if (port?.isOpen) await new Promise<void>((resolve, reject) =>
@@ -63,6 +69,7 @@ export default class SerialConnect {
           this.screenReadback?.close()
           this.port = undefined
           this.screenReadback = undefined
+          this.liveOledSupported = false
           this.waitState = false
           if (port.isOpen) port.close(() => {})
         }
@@ -91,6 +98,7 @@ export default class SerialConnect {
         if (capabilityStart !== -1) {
           const suffix = reply.subarray(capabilityStart + READBACK_CAPABILITY.length)
           const buttonFlag = suffix[0] === UPDATE_CAPABILITY ? suffix[1] : suffix[0]
+          this.liveOledSupported = suffix.includes(LIVE_OLED_CAPABILITY)
           this.screenReadback = new ScreenReadback(
             (data) => this.writePort(port, data), buttonFlag === BUTTON_CAPABILITY
           )
@@ -112,18 +120,35 @@ export default class SerialConnect {
   static async readDeviceScreens(knownGeneration?: number): Promise<DeviceScreens> {
     if (!this.port?.isOpen) return { state: 'disconnected' }
     if (!this.screenReadback) return { state: 'unsupported' }
+    if (this.liveOledTask) return { state: 'busy' }
     return this.screenReadback.read(knownGeneration)
   }
 
   static async readDeviceButtons(): Promise<DeviceButtons> {
     if (!this.port?.isOpen) return { state: 'disconnected' }
     if (!this.screenReadback) return { state: 'unsupported' }
+    if (this.liveOledTask) return { state: 'busy' }
     return this.screenReadback.readButtons()
   }
 
   static async sendData(data: string | Uint8Array): Promise<boolean> {
-    if (!this.port?.isOpen || this.screenReadback?.busy) return false
+    if (!this.port?.isOpen || this.screenReadback?.busy || this.liveOledTask) return false
     return this.writePort(this.port, typeof data === 'string' ? Buffer.from(data, 'utf8') : Buffer.from(data))
+  }
+
+  static async liveOled(operation?: Parameters<typeof exchangeLiveOled>[1]) {
+    if (this.upgrading || !this.port?.isOpen) return { state: 'disconnected' }
+    if (!this.liveOledSupported) return { state: 'unsupported' }
+    if (this.liveOledTask || this.screenReadback?.busy) return { state: 'busy' }
+    const task = exchangeLiveOled(this.port, operation)
+    this.liveOledTask = task
+    try {
+      return { state: 'ready', ...await task }
+    } catch (error) {
+      return { state: 'error', message: error instanceof Error ? error.message : String(error) }
+    } finally {
+      this.liveOledTask = undefined
+    }
   }
 
   private static writePort(port: SerialPortInstance, data: Buffer): Promise<boolean> {

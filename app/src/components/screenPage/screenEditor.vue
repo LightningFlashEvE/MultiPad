@@ -1,23 +1,32 @@
-<script setup="{ emit }" lang="ts">
-import { onMounted, nextTick, ref } from 'vue'
+<script setup lang="ts">
+import { onMounted, onUnmounted, shallowRef, ref } from 'vue'
 
 import { editorConfig } from '../../utils/theme'
 import 'tui-image-editor/dist/tui-image-editor.css'
-import { useConfigStore } from '../../stores/configStore'
 import ImageEditor from 'tui-image-editor/dist/tui-image-editor.js'
-import { config } from 'process'
 import { XBox } from 'ilx1-x-box'
+import type { ScreenFrame } from './screenContent'
 
 const win = window as any
-const emits = defineEmits(['editorCancle', 'editorCommit'])
-const configStore = useConfigStore()
+const props = defineProps<{ screen: number; initialImage?: string }>()
+const emit = defineEmits<{ save: [frame: ScreenFrame] }>()
+const instance = shallowRef<{
+  loadImageFromURL: (url: string, name: string) => Promise<unknown>
+  addText: (text: string, options: object) => Promise<unknown>
+  toDataURL: () => string
+  destroy: () => void
+}>()
 
 onMounted(() => {
-  nextTick(() => {
-    instance.value = new ImageEditor(document.querySelector('#editor'), editorConfig)
-  })
+  const editor = new ImageEditor(document.querySelector('#editor'), editorConfig)
+  instance.value = editor
+  if (props.initialImage) {
+    editor.loadImageFromURL(`data:image/png;base64,${props.initialImage}`, 'screen').catch(() => {
+      XBox.popMes('读取原屏幕图片失败')
+    })
+  }
 })
-let instance = ref(null)
+onUnmounted(() => instance.value?.destroy())
 
 const imgArr: Array<string> = ['./img/black.png', './img/blank.png', './img/1.jpg', './img/2.png', './img/3.png', './img/4.png', './img/5.png' ]
 const curImg = ref<number>(0)
@@ -28,8 +37,9 @@ const switchBack = () => {
   let img = imgArr[curImg.value]
   let color = curImg.value == 1 ? '#000000' : '#ffffff';
 
-  (instance as any).value.loadImageFromURL(img, 'blank').then((result) => {
-    (instance as any).value.addText('', {
+  const editor = instance.value
+  editor?.loadImageFromURL(img, 'blank').then(() => {
+    return editor.addText('', {
       position: {},
       styles: {
         fill: color,
@@ -40,7 +50,7 @@ const switchBack = () => {
         underline: ''
       }
     })
-  })
+  }).catch(() => XBox.popMes('切换背景失败'))
 }
 
 // 编辑信息提交
@@ -49,8 +59,8 @@ const editorCommit = async () => {
   XBox.popMes('处理数据中...')
   coverShow.value = true
   try {
-    const picBase64Str = (instance as any).value.toDataURL()
-    const monochrome = configStore.curScreen !== 0
+    const picBase64Str = instance.value.toDataURL()
+    const monochrome = props.screen !== 0
     const width = monochrome ? 72 : 320
     const height = monochrome ? 40 : 172
     const mode = Number(monochrome)
@@ -59,10 +69,7 @@ const editorCommit = async () => {
     if (arrData.length !== width * height * (monochrome ? 1 / 8 : 2)) {
       throw new Error('Unexpected screen data size')
     }
-    win.myApi.setConfigStore({
-      screenData: JSON.stringify({ baseData: data, buffData: arrData })
-    })
-    win.myApi.closeWindow()
+    emit('save', { baseData: data, buffData: arrData })
   } catch (error) {
     console.error(error)
     XBox.popMes('屏幕图片处理失败，请重新选图')

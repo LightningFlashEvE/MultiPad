@@ -7,6 +7,12 @@ Windows 上位机和 STM32 固件在同一仓库维护。涉及 USB 协议的改
 | [app](app/) | Electron / Vue 上位机 | [iLx11/key-pad-application](https://github.com/iLx11/key-pad-application) · `e2844bf` |
 | [firmware](firmware/) | STM32F103VETx 固件 | [iLx11/multi-pad](https://github.com/iLx11/multi-pad) · `78c1ee5` |
 
+## 桌宠与小屏
+
+长按大旋钮约 1.2 秒可以进出键盘彩屏的桌宠模式。K1–K8 投喂不同水果，左上小旋钮调时间，右上小旋钮切换季节。上位机的「桌宠」按钮可以预览同一套原创垂耳兔动作。
+
+两块 OLED 支持独立配置图片、文字、时间、日期和 API 数据。动态内容由运行中的上位机通过 USB 刷新，需要配套固件。
+
 ## 本地构建
 
 - 上位机在 `app/` 运行 `pnpm install` 后，可用 `pnpm start` 启动开发窗口，或用 `pnpm electron:build` 打包。仓库导入前，本机已成功打包 Windows x64 并连接实机。上游 TypeScript 全量检查仍有历史报错。

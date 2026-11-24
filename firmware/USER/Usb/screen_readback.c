@@ -1,5 +1,7 @@
 #include "screen_readback.h"
 #include "flash_user.h"
+#include "live_oled.h"
+#include "pet_mode.h"
 #include "usbd_cdc_if.h"
 #include <string.h>
 
@@ -10,6 +12,8 @@ enum {
     MAX_CHUNK = 224,
     COLOR_SIZE = 320 * 172 * 2,
     OLED_SIZE = 72 * 40 / 8,
+    MENU_CONFIG = 0xfc,
+    PET_STATE = 0xfd,
     BUTTON_STATE = 0xfe,
     SCREEN_INFO = 0xff,
     STATUS_OK = 0,
@@ -85,6 +89,10 @@ void screen_readback_applied(uint8_t menu) {
     generation++;
 }
 
+void screen_readback_overlay_changed(void) {
+    generation++;
+}
+
 void screen_readback_invalidate(uint8_t menu) {
     if (menu == active_menu && !pixels_dirty) {
         pixels_dirty = true;
@@ -115,6 +123,26 @@ void screen_readback_poll(void) {
             write_u16(pixels + 2, pressed_buttons);
             length = 4;
         }
+    } else if (screen == MENU_CONFIG) {
+        if (offset != 0 || length != 0) {
+            status = STATUS_INVALID;
+        } else {
+            length = 31;
+            load_config(pixels, length);
+        }
+    } else if (screen == PET_STATE) {
+        if (offset != 0 || length != 0) {
+            status = STATUS_INVALID;
+        } else {
+            pixels[0] = pet_mode_is_active();
+            pixels[1] = pet_mode_action();
+            write_u16(pixels + 2, pet_mode_x());
+            write_u32(pixels + 4, pet_mode_frames());
+            pixels[8] = pet_mode_fruit();
+            pixels[9] = pet_mode_hour();
+            pixels[10] = pet_mode_season();
+            length = 11;
+        }
     } else if (active_menu == 0 || pixels_dirty) {
         status = STATUS_EMPTY;
     } else if (screen == SCREEN_INFO) {
@@ -129,7 +157,7 @@ void screen_readback_poll(void) {
             status = STATUS_INVALID;
         } else if (screen == 0) {
             read_color_screen(active_menu, offset, pixels, length);
-        } else {
+        } else if (!live_oled_read(screen, offset, pixels, length)) {
             uint8_t oled[2 * OLED_SIZE];
             load_menu_from_flash(active_menu, oled, sizeof(oled), 1);
             memcpy(pixels, oled + (screen - 1) * OLED_SIZE + offset, length);

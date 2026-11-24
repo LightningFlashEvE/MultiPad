@@ -13,12 +13,15 @@ import { parseMenuConfig, testConnection, sendMenu, sendColorScreen, sendOledScr
 import { XBox } from 'ilx1-x-box'
 import { renderDeviceScreens, type DeviceScreens } from '../utils/deviceScreenFormat'
 import type { DeviceButtons } from '../utils/deviceButtonState'
+import { createLiveScreens } from '../components/screenPage/liveScreens'
+import type { ScreenFrame } from '../components/screenPage/screenContent'
 
 const router = useRouter()
 const win = window as any
 const configStore = useConfigStore()
 const menuStore = useMenuStore()
 const popBoxRef = ref<HTMLElement | null>(null)
+let liveTimer: ReturnType<typeof setInterval> | undefined
 
 const test = async () => {
   console.info('test begin')
@@ -38,6 +41,8 @@ onMounted(async () => {
   refreshDeviceScreens()
   screenPoll = setInterval(refreshDeviceScreens, 1800)
   buttonPoll = setInterval(refreshDeviceButtons, 45)
+  liveScreens.tick()
+  liveTimer = setInterval(() => liveScreens.tick(), 2000)
   // 主页面监听
   win.myApi.storeChangeListen((objData) => {
     // console.info('homePage listening', objData)
@@ -54,6 +59,21 @@ onMounted(async () => {
       return
     }
     try {
+      if (objData.screenFrame) {
+        const { menu, screen, frame } = objData.screenFrame as { menu: number; screen: number; frame: ScreenFrame }
+        if (menu === configStore.curMenu) {
+          configStore.screenData[screen] = frame
+          storageCurMenu()
+        } else {
+          const saved = configStore.menuConfig[menu]
+          const screenConfig = [0, 1, 2].map(index => index === screen ? frame :
+            saved.screenConfig[index] ?? { baseData: '', buffData: [] })
+          configStore.menuConfig[menu] = { ...saved, screenConfig }
+        }
+        closeStorage()
+        liveScreens.tick()
+        return
+      }
       // 同步信息
       const keys = Object.keys(objData)
       for (let key of keys) {
@@ -89,6 +109,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  clearInterval(liveTimer)
   clearInterval(screenPoll)
   clearInterval(buttonPoll)
   clearButtonHighlights()
@@ -121,7 +142,7 @@ const openConfigWindow = async (index: number) => {
   // await new Promise(resolve => setTimeout(resolve, 1000));
 }
 
-const createWindow = (route: string) => {
+const createWindow = (route: string, windowOptions = {}) => {
   // console.log(router)
   // console.log(router.currentRoute.value.path)
   win.myApi.createNewWindow(
@@ -132,10 +153,21 @@ const createWindow = (route: string) => {
       width: 900,
       height: 700,
       minWidth: 800,
-      minHeight: 630
+      minHeight: 630,
+      ...windowOptions
     }
   )
 }
+
+const openPetPreview = () => createWindow('/pet', {
+  title: 'MultiPad 桌宠',
+  width: 680,
+  height: 520,
+  minWidth: 680,
+  minHeight: 520,
+  resizable: false,
+  maximizable: false
+})
 
 // 连接状态
 const conState = ref<boolean>(false)
@@ -143,6 +175,8 @@ const conState = ref<boolean>(false)
 const titleClick = async () => {
   buttonSyncUnsupported = false
   conState.value = await testConnection()
+  liveScreens.forgetDevice()
+  liveScreens.tick()
   refreshDeviceScreens()
 }
 
@@ -162,23 +196,30 @@ watch(
 // 数据上传页面显示
 const progressShow = ref<boolean>(false)
 const firmwareUpdating = ref(false)
+const hasDynamicScreens = () => configStore.menuConfig.some(menu => menu.screenConfig.some((screen: ScreenFrame) =>
+  screen?.content && screen.content.mode !== 'text'))
+const liveScreens = createLiveScreens(menu => configStore.menuConfig[menu]?.screenConfig,
+  () => progressShow.value || firmwareUpdating.value, hasDynamicScreens,
+  connected => { conState.value = connected })
 const updateFirmware = async () => {
   if (firmwareUpdating.value || progressShow.value) return
   firmwareUpdating.value = true
   try {
-    await Promise.all([screenReadTask, buttonReadTask])
+    await Promise.all([screenReadTask, buttonReadTask, liveScreens.wait()])
     clearButtonHighlights()
     const result = await win.myApi.updateFirmware()
     if (result.state === 'cancelled') return
     buttonSyncUnsupported = false
     deviceScreens.value = undefined
     conState.value = await win.myApi.connectHardware()
+    liveScreens.forgetDevice()
     XBox.popMes(result.state === 'updated' ? '固件升级完成' : result.message)
   } catch (error) {
     console.error(error)
     XBox.popMes('USB 固件升级失败')
   } finally {
     firmwareUpdating.value = false
+    liveScreens.tick()
     refreshDeviceScreens()
   }
 }
@@ -189,7 +230,7 @@ const sendFinalData = async () => {
   configStore.setProgressMes(0)
   progressShow.value = true
   try {
-    await Promise.all([screenReadTask, buttonReadTask])
+    await Promise.all([screenReadTask, buttonReadTask, liveScreens.wait()])
     conState.value = await win.myApi.connectHardware()
     if (!conState.value) {
       XBox.popMes('硬件已经断开连接')
@@ -212,6 +253,10 @@ const sendFinalData = async () => {
       configStore.setProgressMes(Math.ceil((count / activeCount) * 10))
     }
     configStore.setProgressMes(100)
+    if (hasDynamicScreens()) {
+      const live = await win.myApi.liveOled().catch(() => undefined)
+      if (live?.state === 'unsupported') XBox.popMes('当前固件需要升级后才能自动刷新小屏')
+    }
     await new Promise((resolve) => setTimeout(resolve, 110))
   } catch (error) {
     console.error(error)
@@ -219,6 +264,7 @@ const sendFinalData = async () => {
   } finally {
     if (configStore.curMenu !== curMenu) setMenu(curMenu)
     progressShow.value = false
+    liveScreens.tick()
   }
 }
 
@@ -254,8 +300,9 @@ const storageCurMenu = () => {
 // 显示屏幕编辑
 const openScreenPage = (curScreen: number) => {
   showDeviceScreens.value = false
-  configStore.setCurScreen(curScreen)
-  createWindow('/screen')
+  storageCurMenu()
+  closeStorage()
+  createWindow(`/screen?screen=${curScreen}&menu=${configStore.curMenu}`)
 }
 
 const showDeviceScreens = ref(true)
@@ -267,6 +314,7 @@ let screenReadTask: Promise<void> | undefined
 async function readDeviceScreens() {
   try {
     const result: DeviceScreens = await win.myApi.readDeviceScreens(deviceScreens.value?.generation)
+    if (result.state === 'busy') return
     screenReadState.value = result.state
     if (result.state === 'ready') {
       deviceScreens.value = {
@@ -302,7 +350,10 @@ const screenSourceLabel = computed(() => {
 
 const screenPreviews = computed(() => {
   if (showDeviceScreens.value && deviceScreens.value) return deviceScreens.value.images
-  return configStore.screenData.map(({ baseData }) => baseData ? `data:image/png;base64,${baseData}` : '')
+  return configStore.screenData.map((saved, screen) => {
+    const baseData = liveScreens.current(configStore.curMenu, screen, saved)?.frame?.baseData ?? saved.baseData
+    return baseData ? `data:image/png;base64,${baseData}` : ''
+  })
 })
 
 const heldButtons = ref(0)
@@ -393,6 +444,7 @@ const showAppInfo = () => {
             title="通过 USB 升级键盘固件" @click="updateFirmware">
             {{ firmwareUpdating ? '升级中' : 'USB 升级' }}
           </button>
+          <button class="pet-preview-button" type="button" @click="openPetPreview">桌宠</button>
         </div>
       </template>
     </WindowTitle>
@@ -405,7 +457,7 @@ const showAppInfo = () => {
       </div>
       <div class="screen-panel">
         <button v-for="(label, index) in screenLabels" :key="label" class="screen-card" type="button"
-          :title="`编辑${label}图片`" @click="openScreenPage(index)">
+          :title="`编辑${label}内容`" @click="openScreenPage(index)">
           <span class="screen-image">
             <img v-if="screenPreviews[index]" :src="screenPreviews[index]" alt="" />
           </span>
@@ -494,7 +546,7 @@ const showAppInfo = () => {
   font-weight: 700;
 }
 
-.connection-state, .screen-source, .firmware-update {
+.connection-state, .screen-source, .firmware-update, .pet-preview-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -507,7 +559,8 @@ const showAppInfo = () => {
 
 .home-toolbar .connection-state,
 .home-toolbar .screen-source,
-.home-toolbar .firmware-update {
+.home-toolbar .firmware-update,
+.home-toolbar .pet-preview-button {
   font-size: 13px;
   font-weight: 600;
 

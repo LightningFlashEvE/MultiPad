@@ -15,6 +15,7 @@
 #include "oled_42.h"
 #include "lcd_user.h"
 #include "screen_readback.h"
+#include "pet_mode.h"
 
 static struct menu_sign menu_state = {.pre_menu = UINT8_MAX};
 static p_menu_sign_t const menu_sign_p = &menu_state;
@@ -97,6 +98,9 @@ static void keyboard_menu_change(void) {
 void encoder1_callback(uint8_t encoder_value) {
     if (encoder_value == ENCODER_DOWN || encoder_value == ENCODER_UP) {
         button_readback_record(8, encoder_value == ENCODER_DOWN);
+    } else if (pet_mode_is_active() && (encoder_value == ANTICLOCKWISE || encoder_value == CLOCKWISE)) {
+        pet_mode_adjust_scene(encoder_value == CLOCKWISE ? 1 : -1, false);
+        return;
     }
 //    if(menu_config_arr[menu_index + 1] == 0x00) {
     if(encoder_value == 4) {
@@ -117,6 +121,9 @@ void encoder1_callback(uint8_t encoder_value) {
 void encoder2_callback(uint8_t encoder_value) {
     if (encoder_value == ENCODER_DOWN || encoder_value == ENCODER_UP) {
         button_readback_record(9, encoder_value == ENCODER_DOWN);
+    } else if (pet_mode_is_active() && (encoder_value == ANTICLOCKWISE || encoder_value == CLOCKWISE)) {
+        pet_mode_adjust_scene(encoder_value == CLOCKWISE ? 1 : -1, true);
+        return;
     }
 //    printf("encoder_value -> %d\n\r", (ENCODER_EVENT_NUM * 1) + encoder_value + 16);
     parse_json_value( (ENCODER_EVENT_NUM * 1) + encoder_value + 16);
@@ -126,6 +133,9 @@ void encoder2_callback(uint8_t encoder_value) {
 void encoder3_callback(uint8_t encoder_value) {
     if (encoder_value == ENCODER_DOWN || encoder_value == ENCODER_UP) {
         button_readback_record(10, encoder_value == ENCODER_DOWN);
+        if (pet_mode_encoder_button(encoder_value == ENCODER_DOWN)) return;
+    } else {
+        pet_mode_encoder_rotated();
     }
 //    printf("encoder_value -> %d\n\r", (ENCODER_EVENT_NUM * 2) + encoder_value + 16);
     parse_json_value( (ENCODER_EVENT_NUM * 2) + encoder_value + 16);

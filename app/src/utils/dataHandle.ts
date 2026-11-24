@@ -1,5 +1,6 @@
 import { useConfigStore } from '../stores/configStore'
 import { XBox } from 'ilx1-x-box'
+import type { ScreenFrame } from '../components/screenPage/screenContent'
 
 const configStore = useConfigStore()
 const win = window as any
@@ -27,25 +28,17 @@ export const sendMenu = async () => {
   let resultArr = new Uint8Array(31)
   resultArr[0] = 1
   // 获取是否配置数据
-  let isData = 0
   for (let i = 0; i < 10; i++) {
-    if (configStore.menuConfig[i].keyConfig.length == 0 || configStore.menuConfig[i].screenConfig.length == 0) {
-      resultArr[i + 1] = 0
-    } else {
-      configStore.menuConfig[i].keyConfig.forEach((o) => {
-        o.forEach((x) => {
-          if (x.userKey != '' || x.genKey != '') isData = 1
-        })
-      })
-      // console.info(configStore.menuConfig[i].screenConfig)
-      configStore.menuConfig[i].screenConfig.forEach((o) => {
-        if (o.baseData != '' || o.buffData.length != 0) isData = 1
-      })
-    }
+    const { keyConfig, screenConfig } = configStore.menuConfig[i]
+    const hasKeys = keyConfig.some((events: { userKey: string; genKey: string }[]) =>
+      events?.some(event => event?.userKey || event?.genKey))
+    const hasScreens = screenConfig.some((screen: ScreenFrame) => screen?.content || screen?.baseData || screen?.buffData?.length)
+    const isData = Number(hasKeys || hasScreens)
     resultArr[i + 1] = isData
     configStore.setActiveMenu(i, isData)
-    isData = 0
   }
+  const firstMenu = configStore.activeMenu.findIndex(Boolean)
+  if (firstMenu !== -1) resultArr[0] = firstMenu + 1
   // console.info(resultArr)
   // console.info(configStore.activeMenu)
   await sendData(resultArr)
@@ -64,13 +57,13 @@ export const sendOledScreen = async () => {
   if(oledArr2.length == 0) {
     oledArr2 = new Array(360).fill(0)
   }
-  let oledArr = new Uint8Array(oledArr1.concat(oledArr2))
+  let oledArr = Uint8Array.from(oledArr1.concat(oledArr2), Number)
   // console.info(oledArr)
   // 发送单色屏信号
   await sendData(new Uint8Array([0xaa, 0xbb, 0xee]))
   await new Promise((resolve) => setTimeout(resolve, 1))
   // 分包数据
-  await subpackageImageData(oledArr, 62, async (dataArr: any) => {
+  await subpackageImageData(oledArr, 62, async dataArr => {
     for (let i = 0; i < dataArr.length; i++) {
       await sendData(dataArr[i])
       await new Promise((resolve) => setTimeout(resolve, 1))
@@ -83,7 +76,7 @@ export const sendOledScreen = async () => {
 
 // 发送彩色屏幕
 export const sendColorScreen = async () => {
-  let u8Arr = new Uint8Array(configStore.screenData[0].buffData)
+  let u8Arr = Uint8Array.from(configStore.screenData[0].buffData, Number)
   // 发送彩屏信号
   await sendData(new Uint8Array([0xaa, 0xbb, 0xff]))
   await new Promise((resolve) => setTimeout(resolve, 1))
@@ -94,10 +87,10 @@ export const sendColorScreen = async () => {
     return
   }
   // 分包数据
-  await subpackageImageData(u8Arr, 4096, async (dataArr: any) => {
+  await subpackageImageData(u8Arr, 4096, async dataArr => {
     for (let i = 0; i < dataArr.length; i++) {
       // console.info(dataArr[i])
-      await subpackageImageData(dataArr[i], 62, async (sendArr: Uint8Array) => {
+      await subpackageImageData(dataArr[i], 62, async sendArr => {
         for (let j = 0; j < sendArr.length; j++) {
           // console.info(sendArr[j])
           await sendData(sendArr[j])
@@ -113,7 +106,9 @@ export const sendColorScreen = async () => {
 }
 
 // 分包图片数据(4096) -> (60)
-const subpackageImageData = async (dataArr: Uint8Array, subSize: number, callBack: Function) => {
+const subpackageImageData = async (
+  dataArr: Uint8Array, subSize: number, callBack: (chunks: Uint8Array[]) => Promise<void>
+) => {
   let tempArr: Uint8Array[] = []
   for (let i = 0; i < dataArr.length; i += subSize) {
     tempArr.push(dataArr.slice(i, i + subSize))
@@ -197,7 +192,7 @@ export const loadMenu = () => {
     if (temp.screenData.length != 0) {
       for (let i = 0; i < 3; i++) {
         configStore.setCurScreen(i)
-        let curScreen = temp.screenData[i]
+        const curScreen = temp.screenData[i] ?? { baseData: '', buffData: [] }
         configStore.setScreenData(JSON.stringify(curScreen))
       }
     }

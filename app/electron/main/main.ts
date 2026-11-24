@@ -9,6 +9,7 @@ import SerialConnect from '../controller/serialPort'
 import { picDataListener } from '../controller/picDataEditor'
 import { setItem, getItem, delItem } from "../controller/storage"
 import { fileReadListener } from "../controller/fileRead"
+import { fetchScreenValue } from '../controller/screenApi'
 // 窗口监听
 windowControlListener()
 // 图片处理监听
@@ -82,6 +83,8 @@ ipcMain.handle('device-screens', (_event, knownGeneration?: number) => {
 })
 
 ipcMain.handle('device-buttons', () => SerialConnect.readDeviceButtons())
+ipcMain.handle('live-oled', (_event, operation) => SerialConnect.liveOled(operation))
+ipcMain.handle('screen-api-value', (_event, url: unknown, field: unknown) => fetchScreenValue(url, field))
 
 ipcMain.handle('update-firmware', async (event) => {
   const options = {
