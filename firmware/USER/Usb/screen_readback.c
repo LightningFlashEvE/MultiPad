@@ -4,6 +4,7 @@
 #include "lcd_user.h"
 #include <stdio.h>
 #include "pet_mode.h"
+#include "pet_care.h"
 #include "usbd_cdc_if.h"
 #include <string.h>
 
@@ -221,6 +222,17 @@ void screen_readback_poll(void) {
             pixels[10] = pet_mode_season();
             pixels[11] = pet_mode_queue_depth();
             length = screen == PET_STATE ? 11 : 12;
+            if (screen == PET_CONTROL && requested_generation == 2) {
+                const PetCare *care = pet_care_get();
+                pixels[12] = care->satiety;
+                pixels[13] = care->sleepiness;
+                pixels[14] = care->mood;
+                pixels[15] = care->affection;
+                pixels[16] = care->scene;
+                pixels[17] = pet_mode_active_toy();
+                pixels[18] = pet_mode_toy_phase();
+                length = 19;
+            }
         }
     } else if (active_menu == 0 || pixels_dirty) {
         status = STATUS_EMPTY;

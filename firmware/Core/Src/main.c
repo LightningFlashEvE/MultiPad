@@ -30,6 +30,7 @@
 #include "oled_user.h"
 #include "lcd_user.h"
 #include "pet_mode.h"
+#include "pet_care.h"
 #include "encoder_user.h"
 #include "flash_user.h"
 //#include "usbd_cdc_if.h"
@@ -59,7 +60,9 @@ int main(void) {
 #endif
     MX_USB_DEVICE_Init();
     // flash
-    if(flash_init_user() == 0) return 0;
+    uint16_t flash_id = flash_init_user();
+    if (flash_id == 0) return 0;
+    pet_care_init(flash_id);
     // usb
     usb_init_user();
     // json ½âÎö

@@ -5,17 +5,13 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { setTimeout as delay } from 'node:timers/promises'
 import { z } from 'zod'
 import { createPetMcp } from './petMcp'
+import { petActionLabels, petActions, playableActions, petScenes, petToyIds, petToyPhases, petToys } from '../../src/utils/petCatalog'
 
-const allowedTools = ['pet_play_action', 'pet_feed'] as const
+const allowedTools = ['pet_play_action', 'pet_feed', 'pet_use_toy'] as const
 const fruits = ['apple', 'banana', 'orange', 'grape', 'strawberry', 'pear', 'cherry', 'watermelon'] as const
 const fruitLabel: Record<typeof fruits[number], string> = {
   apple: '苹果', banana: '香蕉', orange: '橙子', grape: '葡萄', strawberry: '草莓',
   pear: '梨', cherry: '樱桃', watermelon: '西瓜'
-}
-const actions = ['idle', 'blink', 'walk', 'run', 'jump', 'sleep', 'daydream', 'flee', 'eat'] as const
-const actionLabel: Record<typeof actions[number], string> = {
-  idle: '待机', blink: '眨眼', walk: '散步', run: '奔跑', jump: '跳跃', sleep: '睡觉',
-  daydream: '发呆', flee: '受惊逃跑', eat: '做进食动作'
 }
 const settingsSchema = z.object({
   apiUrl: z.string().trim().min(1).max(2048),
@@ -23,10 +19,16 @@ const settingsSchema = z.object({
   apiKey: z.string().trim().max(4096).regex(/^[\x21-\x7e]*$/),
   enabled: z.boolean()
 })
+const stat = z.number().int().min(0).max(100)
 const stateSchema = z.object({
   session: z.string(), active: z.boolean(), action: z.string().nullable(), fruit: z.enum(fruits).nullable(),
-  queuedFruit: z.number().int().nonnegative(), hour: z.number(), season: z.string()
+  queuedFruit: z.number().int().nonnegative(), hour: z.number(), season: z.string(),
+  stats: z.object({ satiety: stat, sleepiness: stat, mood: stat, affection: stat }).nullable(),
+  scene: z.enum(petScenes).nullable(), activeToy: z.enum(petToyIds).nullable(),
+  toyPhase: z.enum(petToyPhases).nullable(), availableToys: z.array(z.enum(petToyIds))
 })
+type PetState = z.infer<typeof stateSchema>
+const usingToy = (pet: PetState) => !!pet.activeToy || pet.toyPhase === 'using' || pet.toyPhase === 'approaching'
 const eventsSchema = z.object({
   cursor: z.string(), reset: z.boolean(), overrun: z.boolean(), hasMore: z.boolean(),
   events: z.array(z.object({
@@ -128,9 +130,19 @@ async function callPet(client: Client, name: string, args: Record<string, unknow
   return result.structuredContent
 }
 
-async function decide(provider: Provider, client: Client, prompt: string, feedOnly = false) {
+async function decide(provider: Provider, client: Client, prompt: string, pet?: PetState) {
   const { tools } = await client.listTools()
-  const allowed = feedOnly ? ['pet_feed'] : allowedTools
+  const actions = playableActions.filter(action => pet?.stats || petActions.indexOf(action) <= petActions.indexOf('blink'))
+  const toys = pet?.availableToys ?? []
+  const offered = tools.filter(tool => tool.name === 'pet_feed' || (pet && tool.name === 'pet_play_action') ||
+    (toys.length && tool.name === 'pet_use_toy')).map(tool => {
+    const { $schema: _schema, ...parameters } = tool.inputSchema
+    if (tool.name === 'pet_play_action' || tool.name === 'pet_use_toy') {
+      parameters.properties = tool.name === 'pet_play_action'
+        ? { action: { type: 'string', enum: actions } } : { toy: { type: 'string', enum: toys } }
+    }
+    return { type: 'function', function: { name: tool.name, description: tool.description, parameters } }
+  })
   const response = await fetch(provider.endpoint, {
     method: 'POST', redirect: 'error', signal: AbortSignal.timeout(25_000),
     headers: { Authorization: 'Bearer ' + provider.key, 'Content-Type': 'application/json' },
@@ -140,10 +152,7 @@ async function decide(provider: Provider, client: Client, prompt: string, feedOn
         { role: 'system', content: '你自主控制键盘上的宠物兔。根据给定状态最多调用一个工具一次。只使用给定工具；想保持当前行为时无需调用。投喂只排队，进食结束以设备事件为准。' },
         { role: 'user', content: prompt }
       ],
-      tools: tools.filter(tool => allowed.some(name => name === tool.name)).map(tool => {
-        const { $schema: _schema, ...parameters } = tool.inputSchema
-        return { type: 'function', function: { name: tool.name, description: tool.description, parameters } }
-      })
+      tools: offered
     })
   }).catch(() => { throw Error('无法连接模型 API，或请求超时') })
   if (!response.ok) {
@@ -159,26 +168,35 @@ async function decide(provider: Provider, client: Client, prompt: string, feedOn
   if (calls.length > 1) throw Error('模型一次请求了多个动作，本轮已跳过')
   const call = calls[0]?.function
   if (!call) return undefined
+  if (!offered.some(tool => tool.function.name === call.name)) throw Error('模型选择的工具当前不可用')
   const args: unknown = JSON.parse(call.arguments)
   if (call.name === 'pet_feed') {
     return { name: call.name, fruit: z.object({ fruit: z.enum(fruits) }).strict().parse(args).fruit } as const
   }
-  if (feedOnly) throw Error('模型未选择测试投喂工具')
-  return { name: call.name, action: z.object({ action: z.enum(actions) }).strict().parse(args).action } as const
+  if (call.name === 'pet_use_toy') {
+    const { toy } = z.object({ toy: z.enum(petToyIds) }).strict().parse(args)
+    if (!toys.includes(toy)) throw Error('模型选择的玩具不在当前场景中')
+    return { name: call.name, toy } as const
+  }
+  const { action } = z.object({ action: z.enum(playableActions) }).strict().parse(args)
+  if (!actions.includes(action)) throw Error('当前固件不支持所选动作')
+  return { name: call.name, action } as const
 }
 
 const readState = async (client: Client) => stateSchema.parse(await callPet(client, 'pet_get_state'))
 const readEvents = async (client: Client, cursor?: string) =>
   eventsSchema.parse(await callPet(client, 'pet_get_events', cursor ? { cursor } : {}))
 
-async function feedAndObserve(client: Client, fruit: typeof fruits[number], stillEnabled: () => boolean) {
+async function feedAndObserve(client: Client, fruit: typeof fruits[number], expectedSession: string, stillEnabled: () => boolean) {
   let page = await readEvents(client)
   for (let i = 0; page.hasMore && i < 5; i++) page = await readEvents(client, page.cursor)
   if (page.hasMore) throw Error('桌宠事件正在快速变化，请稍后重试')
   let cursor = page.cursor
   const before = await readState(client)
+  if (before.session !== expectedSession) throw Error('键盘连接已改变')
   if (!before.active) throw Error('请先让键盘进入养宠模式')
   if (before.fruit || before.queuedFruit) throw Error('兔子正在处理上一份水果')
+  if (usingToy(before)) throw Error('兔子正在使用玩具')
   if (!cursor.startsWith(before.session + ':')) throw Error('键盘连接已改变')
   if (!stillEnabled()) return
   const label = fruitLabel[fruit]
@@ -238,12 +256,18 @@ async function run(kind: 'auto' | 'connection' | 'feed') {
         if (kind === 'feed') throw Error('兔子正在处理上一份水果')
         return
       }
+      if (pet && usingToy(pet)) {
+        if (kind === 'feed') throw Error('请等兔子使用完玩具再测试投喂')
+        status = { phase: 'idle', message: '等待兔子使用完玩具' }
+        return
+      }
       status = { phase: 'thinking', message: kind === 'connection' ? '正在测试模型工具调用' : 'AI 正在选择兔子的动作' }
       const { active: _active, session: _session, ...scene } = pet ?? { active: false, session: '' }
       const request = kind === 'auto'
-        ? '当前宠物状态：' + JSON.stringify(scene) + '。如果兔子清醒、有空，请主动选择一个与当前动作不同的自然动作，例如眨眼、跳跃或发呆，并调用工具。睡着时可以保持原状。'
+        ? '当前宠物状态：' + JSON.stringify(scene) +
+          '。四项属性范围 0–100。饱食度低时可投喂，困意高时可睡觉或进兔窝休息。参考心情和好感度，在兔子清醒时选一个自然动作或使用场景中可用的玩具，例如面向主人发呆。睡着时可以保持原状。'
         : '这是 MultiPad 的投喂测试，请调用 pet_feed，参数 fruit 为 apple。'
-      const decision = await decide(providerFor(saved), client, request, kind !== 'auto')
+      const decision = await decide(providerFor(saved), client, request, kind === 'auto' ? pet : undefined)
       if (!stillEnabled()) {
         status = { phase: 'idle', message: '模型设置已更新，本轮没有执行动作' }
         return
@@ -253,17 +277,29 @@ async function run(kind: 'auto' | 'connection' | 'feed') {
       }
       if (kind === 'connection') {
         status = { phase: 'idle', message: '模型连接正常，已验证工具调用' }
-      } else if (decision?.name === 'pet_feed') {
-        await feedAndObserve(client, decision.fruit, stillEnabled)
-      } else if (decision?.name === 'pet_play_action') {
+      } else if (pet && decision?.name === 'pet_feed') {
+        await feedAndObserve(client, decision.fruit, pet.session, stillEnabled)
+      } else if (pet && decision) {
         const fresh = await readState(client)
-        if (fresh.session !== pet?.session || !fresh.active || !stillEnabled()) return
+        if (fresh.session !== pet.session || !fresh.active || fresh.fruit || fresh.queuedFruit || usingToy(fresh) ||
+          fresh.scene !== pet.scene || !stillEnabled()) {
+          status = { phase: 'idle', message: '兔子状态已改变，等待下次决策' }
+          return
+        }
+        if (decision.name === 'pet_use_toy') {
+          if (!fresh.availableToys.includes(decision.toy)) throw Error('玩具已不可用')
+          const receipt = stateSchema.parse(await callPet(client, 'pet_use_toy', { toy: decision.toy }))
+          status = receipt.session === fresh.session && receipt.activeToy === decision.toy && usingToy(receipt)
+            ? { phase: 'action', message: 'AI 让兔子去使用' + petToys.find(toy => toy.id === decision.toy)!.label }
+            : { phase: 'unconfirmed', message: '未能确认兔子已开始使用玩具' }
+          return
+        }
         const receipt = stateSchema.parse(await callPet(client, 'pet_play_action', { action: decision.action }))
         if (receipt.session !== fresh.session || receipt.action !== decision.action) {
           status = { phase: 'unconfirmed', message: '未能确认兔子已开始所选动作' }
           return
         }
-        status = { phase: 'action', message: 'AI 让兔子' + actionLabel[decision.action] }
+        status = { phase: 'action', message: 'AI 让兔子' + petActionLabels[decision.action] }
       } else {
         status = { phase: 'idle', message: 'AI 让兔子保持当前状态' }
       }

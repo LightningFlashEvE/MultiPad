@@ -18,7 +18,8 @@ import { renderScreenContent, type ScreenFrame } from '../components/screenPage/
 import PetDisplay from '../components/screenPage/PetDisplay.vue'
 import PetAiSettings from '../components/screenPage/PetAiSettings.vue'
 import PerformanceDisplay from '../components/screenPage/PerformanceDisplay.vue'
-import { petParameters, petValue, petFruits, petSeasons, type PetParameter, type PetState } from '../components/screenPage/petDisplay'
+import { petParameters, petValue, petFruits, petSeasons, petStats, type PetParameter, type PetState } from '../components/screenPage/petDisplay'
+import { petActions, petActionLabels, petScenes, petSceneLabels, petToys } from '../utils/petCatalog'
 
 const router = useRouter()
 const win = window as any
@@ -31,9 +32,15 @@ let petTask: Promise<void> | undefined
 let petSession: string | undefined
 let requestedMode: 'work' | 'pet' | undefined
 const appMode = ref<'work' | 'pet'>('work')
-const petState = ref<PetState>({ active: false, action: 1, x: 0, fruit: 0, hour: 18, season: 0, queue: 0 })
+const petState = ref<PetState>({ active: false, action: 1, x: 128, fruit: 0, hour: 18, season: 0, queue: 0,
+  scene: 0, activeToy: 0, toyPhase: 0 })
 const petLinked = ref(false)
 const petNotice = ref('')
+const interactionNotice = ref('')
+const interacting = ref(false)
+const legacyPet = computed(() => petLinked.value && !petState.value.stats)
+const sceneToys = computed(() => petToys.filter(toy => toy.scene === petScenes[petState.value.scene]))
+const currentToy = computed(() => petToys.find(toy => toy.wireId === petState.value.activeToy))
 const petParameterIds = ref<[PetParameter, PetParameter]>(['action', 'hour'])
 const petImages = ref(['', ''])
 const performanceValues = ref<number[]>([])
@@ -43,6 +50,12 @@ const petScreen = ref(0)
 const showPetAi = ref(false)
 const fruitSelection = ref(1)
 const pendingScene = new Map<number, number>()
+let offlineBackground: number | undefined
+let previewTimer: ReturnType<typeof setTimeout> | undefined
+const hasPetPayload = (p?: Uint8Array) => p?.length === 12 || p?.length === 19
+watch(petLinked, linked => {
+  if (!linked) Object.assign(petState.value, { active: false, stats: undefined, activeToy: 0, toyPhase: 0, action: 1 })
+})
 
 function storeMode() {
   win.myApi.storageMenu('displayMode', appMode.value)
@@ -60,11 +73,17 @@ function setAppMode(mode: 'work' | 'pet') {
 
 function applyPetReply(reply: { session?: string; payload: Uint8Array }) {
   const p = reply.payload
+  const previousScene = petState.value.scene
+  clearTimeout(previewTimer)
   petSession = reply.session
   petLinked.value = true
   petNotice.value = ''
   petState.value = { active: p[0] === 1, action: p[1], x: p[2] | (p[3] << 8), fruit: p[8],
-    hour: pendingScene.get(4) ?? p[9], season: pendingScene.get(5) ?? p[10], queue: p[11] }
+    hour: pendingScene.get(4) ?? p[9], season: pendingScene.get(5) ?? p[10], queue: p[11],
+    stats: p.length === 19 ? { satiety: p[12], sleepiness: p[13], mood: p[14], affection: p[15] } : undefined,
+    scene: p.length === 19 ? p[16] : 0,
+    activeToy: p[17] ?? 0, toyPhase: p[18] ?? 0 }
+  if (p.length === 19 && previousScene !== p[16]) saveSceneSettings()
 }
 
 function refreshPetDevice() {
@@ -72,7 +91,7 @@ function refreshPetDevice() {
   petTask = (async () => {
     const status = await win.myApi.petAction(0)
     if (status.state === 'busy') return
-    if (status.state !== 'ready' || status.payload.length !== 12) {
+    if (status.state !== 'ready' || !hasPetPayload(status.payload)) {
       petLinked.value = false
       petSession = undefined
       petNotice.value = status.state === 'unsupported' ? '键盘固件需要升级才能同步养宠模式。' : ''
@@ -83,7 +102,7 @@ function refreshPetDevice() {
     if (requestedMode && actualMode !== requestedMode) {
       const target = requestedMode
       const result = await win.myApi.petAction(1, target === 'pet' ? 1 : 0)
-      if (result.state === 'ready' && result.status === 0 && result.payload.length === 12) {
+      if (result.state === 'ready' && result.status === 0 && hasPetPayload(result.payload)) {
         if (requestedMode === target) requestedMode = undefined
         applyPetReply(result)
       }
@@ -98,35 +117,90 @@ function refreshPetDevice() {
     }
     if (actualMode === 'pet') {
       for (const [command, value] of pendingScene) {
+        if (command === 6 && legacyPet.value) continue
         const result = await win.myApi.petAction(command, value)
-        if (result.state !== 'ready' || result.status !== 0 || result.payload.length !== 12) break
+        if (command === 6 && result.state === 'ready' && result.status !== 0 && pendingScene.get(6) === value) {
+          if (offlineBackground === value && result.status === 4) break
+          pendingScene.delete(6)
+          offlineBackground = undefined
+          saveSceneSettings()
+          interactionNotice.value = result.status === 4 ? '兔子正在互动，请稍后再切换场景。' : '键盘未确认场景切换。'
+          continue
+        }
+        if (result.state !== 'ready' || result.status !== 0 || !hasPetPayload(result.payload)) break
         if (pendingScene.get(command) === value) pendingScene.delete(command)
         applyPetReply(result)
+        if (command === 6 && !pendingScene.has(6)) {
+          offlineBackground = undefined
+          saveSceneSettings()
+        }
       }
     }
   })().catch(() => { petLinked.value = false }).finally(() => { petTask = undefined })
 }
 
-function setScene(command: 4 | 5, event: Event) {
-  const value = Number((event.target as HTMLSelectElement).value)
-  petState.value = { ...petState.value, [command === 4 ? 'hour' : 'season']: value }
+function saveSceneSettings() {
+  const { hour, season, scene } = petState.value
+  win.myApi.storageMenu('petSceneSettings', JSON.stringify({ hour, season, scene, offlineBackground }))
+}
+
+function setScene(command: 4 | 5 | 6, event: Event) {
+  const select = event.target as HTMLSelectElement
+  const value = Number(select.value)
+  interactionNotice.value = ''
+  if (command === 6) {
+    if (petLinked.value) {
+      select.value = String(petState.value.scene)
+      offlineBackground = undefined
+    } else {
+      clearTimeout(previewTimer)
+      Object.assign(petState.value, { scene: value, activeToy: 0, toyPhase: 0, action: 1 })
+      offlineBackground = value
+    }
+  } else petState.value[command === 4 ? 'hour' : 'season'] = value
   pendingScene.set(command, value)
-  const { hour, season } = petState.value
-  win.myApi.storageMenu('petSceneSettings', JSON.stringify({ hour, season }))
+  saveSceneSettings()
   refreshPetDevice()
 }
 
+function previewInteraction(command: number, value: number) {
+  clearTimeout(previewTimer)
+  if (command === 7) {
+    Object.assign(petState.value, { activeToy: value, toyPhase: 1, action: 1, fruit: 0 })
+    previewTimer = setTimeout(() => {
+      Object.assign(petState.value, { toyPhase: 2, action: 2 })
+      previewTimer = setTimeout(() => Object.assign(petState.value, { activeToy: 0, toyPhase: 0, action: 1 }), 4500)
+    }, 2000)
+    return
+  }
+  const action = command === 2 ? 3 : value
+  Object.assign(petState.value, { action, activeToy: 0, toyPhase: 0, fruit: command === 2 ? value : 0 })
+  if (action !== 2) {
+    previewTimer = setTimeout(() => Object.assign(petState.value, { action: 1, fruit: 0 }),
+      action === petActions.indexOf('gaze_owner') ? 3000 : 2050)
+  }
+}
+
 async function interactWithPet(command: number, value: number) {
-  if (petTask || progressShow.value || firmwareUpdating.value) return
+  if (interacting.value || progressShow.value || firmwareUpdating.value) return
+  interacting.value = true
+  interactionNotice.value = ''
+  await petTask
   if (!petLinked.value) {
-    petState.value = { ...petState.value, action: command === 2 ? 3 : value, fruit: command === 2 ? value : 0 }
+    if (conState.value) interactionNotice.value = petNotice.value || '等待读取键盘的宠物状态。'
+    else previewInteraction(command, value)
+    interacting.value = false
     return
   }
   petTask = (async () => {
     const result = await win.myApi.petAction(command, value)
-    if (result.state === 'ready' && result.status === 0 && result.payload.length === 12) applyPetReply(result)
-    else petNotice.value = '宠物暂时忙碌，请稍后再试。'
-  })().catch(() => { petNotice.value = '未能同步宠物操作。' }).finally(() => { petTask = undefined })
+    if (result.state === 'ready' && result.status === 0 && hasPetPayload(result.payload)) applyPetReply(result)
+    else interactionNotice.value = result.status === 4 || result.state === 'busy'
+      ? '兔子正在忙，请稍后再试。' : '键盘未确认这次操作，请检查连接和当前场景。'
+  })().catch(() => { interactionNotice.value = '未能同步宠物操作。' }).finally(() => {
+    petTask = undefined
+    interacting.value = false
+  })
   await petTask
 }
 
@@ -147,6 +221,7 @@ watch(() => [appMode.value, petContent(0).value, petContent(1).value, ...petPara
 
 function configurePetScreen(screen: number) {
   petScreen.value = screen
+  interactionNotice.value = ''
   showPetAi.value = false
   petDialog.value?.showModal()
 }
@@ -186,6 +261,13 @@ onMounted(async () => {
       petState.value = { ...petState.value, hour: savedScene.hour, season: savedScene.season }
       pendingScene.set(4, savedScene.hour)
       pendingScene.set(5, savedScene.season)
+    }
+    if (Number.isInteger(savedScene?.scene) && petScenes[savedScene.scene]) {
+      petState.value.scene = savedScene.scene
+    }
+    if (Number.isInteger(savedScene?.offlineBackground) && petScenes[savedScene.offlineBackground]) {
+      offlineBackground = savedScene.offlineBackground as number
+      pendingScene.set(6, offlineBackground)
     }
   } catch { /* Use the device scene or the default preview. */ }
   // 连接硬件
@@ -270,6 +352,7 @@ onMounted(async () => {
 onUnmounted(() => {
   clearInterval(liveTimer)
   clearInterval(petTimer)
+  clearTimeout(previewTimer)
   clearInterval(screenPoll)
   clearInterval(buttonPoll)
   clearButtonHighlights()
@@ -685,7 +768,18 @@ const showAppInfo = () => {
         <PetAiSettings v-if="showPetAi" :device-ready="petLinked && petState.active" />
         <template v-else-if="petScreen === 0">
           <PetDisplay :state="petState" :connected="petLinked && petState.active" />
+          <dl class="pet-stats" aria-label="宠物属性，满值一百">
+            <div v-for="stat in petStats" :key="stat.id">
+              <dt>{{ stat.label }}</dt>
+              <dd>{{ petValue(stat.id, petState) }}<small v-if="petState.stats"> / 100</small></dd>
+            </div>
+          </dl>
           <div class="pet-fields">
+            <label>宠物场景
+              <select :value="petState.scene" :disabled="legacyPet" @change="setScene(6, $event)">
+                <option v-for="(scene, index) in petScenes" :key="scene" :value="index">{{ petSceneLabels[scene] }}</option>
+              </select>
+            </label>
             <label>场景时间
               <select :value="petState.hour" @change="setScene(4, $event)">
                 <option v-for="hour in 24" :key="hour" :value="hour - 1">{{ String(hour - 1).padStart(2, '0') }}:00</option>
@@ -702,15 +796,29 @@ const showAppInfo = () => {
               </select>
             </label>
             <button type="button" @click="showPetAi = true">AI 控制</button>
-            <button type="button" @click="interactWithPet(2, fruitSelection)">投喂</button>
-            <button type="button" @click="interactWithPet(3, petState.action === 2 ? 0 : 2)">{{ petState.action === 2 ? '叫醒' : '睡觉' }}</button>
+            <button type="button" :disabled="interacting" @click="interactWithPet(2, fruitSelection)">投喂</button>
+            <button type="button" :disabled="interacting || !!currentToy" @click="interactWithPet(3, petState.action === 2 ? 0 : 2)">{{ petState.action === 2 ? '叫醒' : '睡觉' }}</button>
           </div>
-          <p v-if="petNotice" role="status">{{ petNotice }}</p>
+          <div class="pet-fields" role="group" aria-label="宠物互动">
+            <button v-for="action in (['trip_angry', 'gaze_owner'] as const)" :key="action"
+              type="button" :disabled="legacyPet || interacting || !!currentToy"
+              @click="interactWithPet(3, petActions.indexOf(action))">{{ petActionLabels[action] }}</button>
+            <button v-for="toy in sceneToys" :key="toy.id" type="button" :title="toy.description"
+              :disabled="legacyPet || interacting || !!currentToy" @click="interactWithPet(7, toy.wireId)">
+              {{ '使用' + toy.label }}
+            </button>
+          </div>
+          <p v-if="currentToy" role="status">{{ petState.toyPhase === 1 ? '正在走向' : '正在使用' }}{{ currentToy.label }}</p>
+          <p v-if="interactionNotice || petNotice" role="status">{{ interactionNotice || petNotice }}</p>
+          <p v-else-if="legacyPet">升级键盘固件即可启用新动作、场景玩具和宠物属性。</p>
+          <p v-else-if="!petLinked">本机预览 · 连接键盘后可读取宠物属性。</p>
         </template>
         <label v-else>显示参数
           <select :value="petParameterIds[petScreen - 1]" @change="setPetParameter">
-            <option v-for="option in petParameters" :key="option.id" :value="option.id">{{ option.label }}</option>
+            <option v-for="option in petParameters" :key="option.id" :value="option.id"
+              :disabled="legacyPet && petStats.some(stat => stat.id === option.id)">{{ option.label }}</option>
           </select>
+          <span v-if="legacyPet">升级键盘固件即可显示宠物属性。</span>
         </label>
       </form>
     </dialog>
@@ -730,9 +838,14 @@ const showAppInfo = () => {
 .pet-dialog h2 { margin: 0; font-size: 18px; }
 .pet-dialog canvas { height: auto; border-radius: 8px; }
 .pet-fields { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-top: 12px; }
+.pet-stats { display: grid; grid-template-columns: repeat(4, 1fr); margin: 10px 0 0; padding: 8px 10px; border-radius: 7px; background: #e7efed; }
+.pet-stats dt { color: #4d625c; font-size: 12px; }
+.pet-stats dd { margin: 2px 0 0; font-size: 16px; font-variant-numeric: tabular-nums; }
+.pet-stats small { color: #52665f; font-size: 10px; }
 .pet-dialog label { display: grid; gap: 4px; font-size: 13px; }
 .pet-dialog button, .pet-dialog select { font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid #aab7bd; background: white; color: inherit; }
 .pet-dialog button { cursor: pointer; }
+.pet-dialog :disabled { opacity: .55; cursor: default; }
 .pet-dialog p { margin: 8px 0 0; font-size: 12px; }
 #app-info {
   @include global.full_wh;

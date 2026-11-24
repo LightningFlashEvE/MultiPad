@@ -117,6 +117,34 @@
       ],
       "loop": true,
       "loopFrom": 4
+    },
+    "trip_angry": {
+      "first": 53,
+      "ticks": [
+        2,
+        2,
+        2,
+        3,
+        3,
+        3,
+        5,
+        3,
+        5,
+        3
+      ],
+      "loop": false
+    },
+    "gaze_owner": {
+      "first": 63,
+      "ticks": [
+        15,
+        12,
+        1,
+        2,
+        8,
+        10
+      ],
+      "loop": true
     }
   }
 }

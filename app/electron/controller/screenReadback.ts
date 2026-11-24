@@ -150,9 +150,10 @@ export default class ScreenReadback {
     if (this.closed) return { state: 'disconnected' }
     if (this.busy) return { state: 'busy' }
     const screen = 'after' in request ? PET_EVENTS : PET_CONTROL
-    const cursor = 'after' in request ? request.after : 0
+    // Control requests negotiate the extended state. V1 firmware ignores this field.
+    const generation = 'after' in request ? request.after : 2
     const offset = 'command' in request ? request.command | (request.value << 8) : 0
-    const frame = await this.exchange(screen, cursor, offset)
+    const frame = await this.exchange(screen, generation, offset)
     if (!frame || frame[7] !== screen || frame.readUInt32LE(12) !== offset) {
       return { state: this.closed ? 'disconnected' : 'unavailable' }
     }

@@ -98,7 +98,7 @@ ipcMain.handle('device-buttons', () => SerialConnect.readDeviceButtons())
 ipcMain.handle('pc-performance', () => readPcPerformance())
 ipcMain.handle('live-performance', (_event, menu, metrics) => SerialConnect.performance(menu, metrics))
 ipcMain.handle('pet-action', async (_event, command, value) => {
-  if (!Number.isInteger(command) || command < 0 || command > 5 ||
+  if (!Number.isInteger(command) || command < 0 || command > 7 ||
       !Number.isInteger(value) || value < 0 || value > 255) return { state: 'unavailable' }
   const reply = await SerialConnect.pet({ command, value })
   return reply.state === 'ready' ? { ...reply, payload: Uint8Array.from(reply.payload) } : reply
