@@ -64,6 +64,10 @@ $env:MULTIPAD_PET_MCP_TOKEN = [guid]::NewGuid().ToString('N')
 
 ## 从 LLM 读取事件
 
+第五代固件支持观察主人摸头。在养宠模式下，轻按并松开大旋钮会轻拍兔子，按住后转动则会顺着旋转方向抚摸。桌面大旋钮可以模拟这两类操作。每次轻按或转过一格，键盘产生 `head_petted`，`encoder` 为 3，`gesture` 为 `tap`、`cw` 或 `ccw`。`source` 为 `physical` 表示实体旋钮，为 `mcp` 表示软件模拟。MCP 客户端可在 `pet_get_state.headPet` 读取方向与剩余毫秒数；一轮摸头结束后 `remainingMs` 为 0、`gesture` 为 `null`。旧固件的 `headPet` 为 `null`。
+
+新一轮摸头会让心情与好感各增加 1，1200 毫秒内再次触摸会延长动画。保持按住时，无论转过几格或中途停顿多久，整次只奖励一次。兔子可以在睡眠、取食或玩玩具时继续接受抚摸。内置 AI 会收到这个主人动作，自行决定是否看向主人或继续当前活动。
+
 第一次调用 `pet_get_events` 可以省略游标。后续沿用上次返回的 `cursor`。`hasMore` 为真时，可以用新游标继续读取下一页。每页最多 16 条，键盘保留最近 64 条。连接发生变化时 `reset` 为真。游标早于缓存时 `overrun` 为真，返回当前能读到的最早一页。
 
 事件包括模式切换、动作变化、水果排队、落地、吃完、时间、季节、按键、大旋钮短按，以及背景变化 `scene_changed`、玩具放下 `toy_placed` 或收起 `toy_removed`、互动开始 `toy_started` 和完成 `toy_finished`。装饰另有 `decoration_moved`、`decoration_started`、`decoration_finished`。每条事件带有 `source`（`physical`、`mcp` 或 `automatic`）、事件序号和设备开机后的毫秒数。

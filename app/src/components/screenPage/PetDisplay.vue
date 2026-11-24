@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { drawCarrotToy, drawGarden, drawPetEffects, drawNursery, drawNurseryHutch, drawNurseryLight, drawSceneClock, tintNursery, type PetAction } from './petScene'
-import { drawRabbit, rabbitAtlasUrl } from './petAnimation'
+import { drawRabbit, drawRabbitHeadPat, rabbitAtlasUrl } from './petAnimation'
+import { patPhase } from './petHeadPat'
 import itemsUrl from '../../assets/pet/items.png'
 import type { HutchPosition, PetState } from './petDisplay'
 import { defaultHutchPosition, hutchBounds, petActions, petSceneLabels, petScenes } from '../../utils/petCatalog'
@@ -106,11 +107,23 @@ onMounted(() => {
   let lastFoods: PetState['foods']
   let lastDrop: number | undefined
   let sampleAt = 0
+  let lastPatState: PetState | undefined
+  let lastRemaining = 0, lastPatKind = 0
+  let patStarted = 0, patUntil = 0
   let x = 128
   let direction = 1
   function frame(now: number) {
     const { action, x: position, hour, season, scene, activeToy, toyPhase } = props.state
     const { deployedToys, foods, toyDrop } = props.state
+    const remaining = props.state.headPatRemaining ?? 0
+    const patKind = props.state.headPatKind ?? 0
+    if (props.state !== lastPatState || remaining !== lastRemaining || patKind !== lastPatKind) {
+      if (remaining && now >= patUntil) patStarted = now - (1200 - remaining)
+      patUntil = remaining ? now + remaining : 0
+      lastRemaining = remaining
+      lastPatState = props.state
+      lastPatKind = patKind
+    }
     if (lastSample !== props.state || lastFoods !== foods || lastDrop !== toyDrop) {
       lastSample = props.state
       lastFoods = foods
@@ -184,7 +197,8 @@ onMounted(() => {
       drawCarrotToy(display!, playingCarrot && toyPhase === 2, elapsed)
       display!.restore()
     }
-    drawRabbit(display!, atlas, Math.round(x), rabbitY, direction, clip, elapsed)
+    const phase = now < patUntil ? patPhase(now - patStarted, patUntil - now) : undefined
+    const pose = drawRabbit(display!, atlas, Math.round(x), rabbitY, direction, clip, elapsed, phase)
     if (resting) display!.drawImage(hutch, 21, 63, 40, 4, home.x - 20, home.y - 6, 40, 4)
     if (foods && items.complete && items.naturalWidth) {
       for (const food of foods) {
@@ -200,6 +214,8 @@ onMounted(() => {
     display!.translate(0, rabbitY - (resting ? 142 : 139))
     drawPetEffects(display!, Math.round(x), direction, clip, elapsed, true)
     display!.restore()
+    if (phase !== undefined && pose !== undefined)
+      drawRabbitHeadPat(display!, Math.round(x), rabbitY, direction, pose, patKind, phase)
     drawSceneClock(display!, hour, props.state.minute ?? 0)
     frameId = requestAnimationFrame(frame)
   }

@@ -31,6 +31,10 @@ export const petCareGuide = {
     confirmation: '收到 fruit_eaten 才是吃完。fruit_queued 是已接收，fruit_landed 是已落地。相同来源连续投放同种水果时，事件没有单份标识。'
   },
   interactions: {
+    headPet: '第 5 代起，主人轻按大旋钮或按住后转过一格可以摸兔子的头，桌面的大旋钮也能模拟。' +
+      '每次轻按和每个有效转格产生 head_petted，gesture 依次用 tap、cw（顺时针）、ccw（逆时针）表示。' +
+      '一次抚摸的心情和好感各 +1，最高 100。1.2 秒内继续摸会延长动画。一次按住只奖励一次，停顿后继续转仍属同一次。' +
+      '抚摸期间兔子继续原先的睡眠、进食或玩耍。headPet.remainingMs 表示剩余动画时长。',
     carrot_toy: '第 3 代起两个场景各有一个玩具位。pet_place_toy 幂等放置，落地后兔子有空就去玩，玩完留在原处。' +
       'pet_interact_with_toy 可再玩一次，pet_use_toy 会切换放下或收回。走到玩具旁后玩约 2.4 秒，' +
       '自然结束时困意 +2、心情 +6、好感 +2。玩具期间的 eat 动作没有吃下水果。',
@@ -48,7 +52,8 @@ export const petCareGuide = {
     1: '基础动作、按队列投喂、时间和季节。没有属性、玩具和场景读数。fall、fetch 是设备内部动作。',
     2: '增加四项属性、trip_angry、gaze_owner 和场景；宝宝房兔窝通过 pet_use_toy 短暂互动。',
     3: '增加多份地面食物、玩具放置和重玩、回窝长睡、跟随时间与按键绑定。此代兔窝仍占用宝宝房玩具位。',
-    4: '兔窝成为独立可移动装饰。使用 activeDecoration、decorationPhase 和 hutchPosition 读取回窝状态。'
+    4: '兔窝成为独立可移动装饰。使用 activeDecoration、decorationPhase 和 hutchPosition 读取回窝状态。',
+    5: '可通过 headPet 和 head_petted 观察主人摸头。事件 source 为 physical 时来自键盘旋钮，mcp 表示软件操作。'
   },
   observation: {
     inputs: { actions: 'pet_play_action(action)', feed: 'pet_feed(fruit)', useToys: 'pet_use_toy(toy)',

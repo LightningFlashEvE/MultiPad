@@ -20,6 +20,7 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
   let lastTick = 0
   let time = 0
   let lastInput = 0
+  let patUntil = 0
   let metabolism = 0
   let fatigue = 0
   let wasSleeping = false
@@ -71,6 +72,7 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     time += dt
     const pet = state()
     const stats = pet.stats ??= { ...previewCare }
+    pet.headPatRemaining = Math.max(0, patUntil - time)
     const sleeping = pet.action === 2
     if (wasSleeping !== sleeping) fatigue = 0
     wasSleeping = sleeping
@@ -160,8 +162,11 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     update()
   }
   function pause() {
+    if (timer === undefined) return
     window.clearInterval(timer)
     timer = undefined
+    patUntil = 0
+    state().headPatRemaining = 0
   }
   function changeScene(scene: number) {
     start()
@@ -176,7 +181,12 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     const pet = state()
     const hungry = pet.stats!.satiety < 100
     const room = rooms[pet.scene]
-    if (command === 2) {
+    if (command === 22) {
+      if (value < 0 || value > 4 || !Number.isInteger(value)) return '无法识别摸头手势。'
+      if (value < 3 && time >= patUntil) reward(0, 0, 1, 1)
+      patUntil = time + 1200
+      pet.headPatKind = value > 2 ? value - 2 : value
+    } else if (command === 2) {
       if (room.foods.length >= 8) return '场内已有八份零食。'
       const preferred = pet.x + (value % 2 ? 77 : -77)
       const lanes = Array.from({ length: 8 }, (_, i) => 41 + i * 34)

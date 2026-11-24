@@ -17,6 +17,7 @@ import { createLiveScreens } from '../components/screenPage/liveScreens'
 import { renderScreenContent, type ScreenFrame } from '../components/screenPage/screenContent'
 import PetDisplay from '../components/screenPage/PetDisplay.vue'
 import PetAiSettings from '../components/screenPage/PetAiSettings.vue'
+import PetHeadKnob from '../components/homePage/PetHeadKnob.vue'
 import PetItemsPanel from '../components/screenPage/PetItemsPanel.vue'
 import PetDecorationPanel from '../components/screenPage/PetDecorationPanel.vue'
 import { createPetItemPreview, previewCare } from '../components/screenPage/petItemPreview'
@@ -76,7 +77,7 @@ watch(petLinked, linked => {
     bindings.value = undefined
     bedtime.value = false
     Object.assign(petState.value, { active: false, stats: { ...(petState.value.stats ?? previewCare) }, activeToy: 0, toyPhase: 0, action: 1,
-      deployedToys: [0, 0], foods: [], toyDrop: 100, queue: 0, fruit: 0, hutchPosition: { ...offlineHutch } })
+      deployedToys: [0, 0], foods: [], toyDrop: 100, queue: 0, fruit: 0, headPatRemaining: 0, hutchPosition: { ...offlineHutch } })
   }
 })
 
@@ -121,6 +122,8 @@ function applyPetReply(reply: { session?: string; payload: Uint8Array }) {
     activeToy: p[17] ?? 0, toyPhase: p[18] ?? 0,
     hutchPosition: generation.value >= 4 ? { x: p[decorationOffset] | p[decorationOffset + 1] << 8, y: p[decorationOffset + 2] } : undefined,
     rabbitY: generation.value >= 4 ? p[decorationOffset + 3] : undefined,
+    headPatRemaining: generation.value >= 5 ? p[decorationOffset + 4] * 10 : undefined,
+    headPatKind: generation.value >= 5 ? p[decorationOffset + 5] : undefined,
     deployedToys: world ? [p[29], p[30]] : undefined, toyDrop: world ? p[31] : undefined,
     foods: world ? Array.from({ length: p[32] }, (_, i) => {
       const offset = 33 + 6 * i
@@ -358,6 +361,27 @@ function triggerItem(item: typeof petItems[number]) {
 }
 
 let keyActions = Promise.resolve()
+let pendingRub: { session?: string; value: number; time: number } | undefined
+function touchRabbit(gesture: number) {
+  if (petLinked.value && generation.value < 5) {
+    interactionNotice.value = '请升级键盘固件以使用摸头动作。'
+    return
+  }
+  // While USB is busy keep only the most recent direction of a continuous rub.
+  if (gesture > 2 && pendingRub && pendingRub.session === petSession) {
+    pendingRub.value = gesture
+    pendingRub.time = performance.now()
+    return
+  }
+  const request = { session: petSession, value: gesture, time: performance.now() }
+  pendingRub = gesture > 2 ? request : undefined
+  keyActions = keyActions.then(async () => {
+    if (pendingRub === request) pendingRub = undefined
+    if (appMode.value === 'pet' && petSession === request.session && performance.now() - request.time < 1200)
+      await interactWithPet(22, request.value)
+  }).catch(() => { interactionNotice.value = '未能同步摸头动作。' })
+}
+
 function pressHomeKey(key: number) {
   if (appMode.value === 'work') return openConfigWindow(key)
   const item = keyItems.value[key]
@@ -895,7 +919,9 @@ const showAppInfo = () => {
           <span>K{{ index + 1 }}</span><small v-if="appMode === 'pet' && !keyItems[index]">未绑定</small>
         </button>
       </div>
-      <button class="rotary rotary-large" type="button" title="配置旋钮 3"
+      <PetHeadKnob v-if="appMode === 'pet'" :class="{ 'device-active': isDeviceButtonActive(10) }"
+        @pat="touchRabbit" @switch-mode="setAppMode('work')" />
+      <button v-else class="rotary rotary-large" type="button" title="配置旋钮 3"
         :class="{ 'device-active': isDeviceButtonActive(10) }"
         @click.stop="openConfigWindow(10)">旋钮 3</button>
     </div>

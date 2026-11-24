@@ -24,15 +24,16 @@ const session = 'cccccccc-0000-0000-0000-000000000000'
 const pathToCatalog = '../../src/utils/petCatalog'
 const catalog = loadModule('../src/utils/petCatalog.ts')
 const guide = loadModule('../electron/controller/petCareGuide.ts', { [pathToCatalog]: catalog })
-function payload(generation = 4, fields = {}, foodIds = []) {
-  const p = Buffer.alloc(37 + foodIds.length * 6)
+function payload(generation = 4, fields = {}, foodIds = [], headPet = [0, 0]) {
+  const endOfFoods = 33 + foodIds.length * 6
+  const p = Buffer.alloc(endOfFoods + 6)
   p.set([1,0,78,0,0,0,0,0,0,12,1,0,65,24,68,45,1,0,0])
   p[31] = 100
   p[32] = foodIds.length
   foodIds.forEach((id, i) => p.set([id,41+i*34,0,129,0,1],33+i*6))
-  p.set([246,0,142,139], p.length - 4)
+  p.set([246,0,142,139,...headPet], endOfFoods)
   for (const [i,v] of Object.entries(fields)) p[Number(i)] = v
-  return p.subarray(0, generation === 1 ? 12 : generation === 2 ? 19 : generation === 3 ? p.length-4 : p.length)
+  return p.subarray(0, [0, 12, 19, endOfFoods, endOfFoods + 4, p.length][generation])
 }
 function eventPage(events) {
   const p = Buffer.alloc(1 + events.length * 12)
@@ -44,6 +45,49 @@ function eventPage(events) {
   }
   return p
 }
+
+test('serial protocol probes with reads, and transmits each supported owner gesture exactly once', async () => {
+  const { default: ScreenReadback } = loadModule('../electron/controller/screenReadback.ts', {
+    [pathToCatalog]: catalog, '../../src/utils/deviceScreenFormat': { DEVICE_SCREEN_SIZES: [] }
+  })
+  for (const generation of [1, 2, 3, 4, 5]) {
+    const writes = []
+    const reader = new ScreenReadback(async request => {
+      const requested = request.readUInt32LE(6), offset = request.readUInt32LE(11)
+      writes.push({ requested, offset })
+      const effective = requested >= 2 && requested <= generation ? requested : 1
+      const data = payload(effective)
+      const frame = Buffer.alloc(21 + data.length)
+      frame.set([0x4d,0x50,0x53,1])
+      request.copy(frame, 4, 4, 6)
+      frame[7] = request[10]
+      frame.writeUInt32LE(offset, 12)
+      frame.writeUInt16LE(data.length, 16)
+      frame.set(data, 19)
+      let crc = 0xffff
+      for (const byte of frame.subarray(0, -2)) {
+        crc ^= byte << 8
+        for (let bit = 0; bit < 8; bit++) crc = ((crc << 1) ^ ((crc & 0x8000) ? 0x1021 : 0)) & 65535
+      }
+      frame.writeUInt16LE(crc, frame.length - 2)
+      setImmediate(() => reader.accept(frame))
+      return true
+    })
+    try {
+      for (const input of [0,1,2,3,4]) {
+        const reply = await reader.readPet({ command: 22, value: input })
+        assert.equal(reply.state, generation === 5 ? 'ready' : 'unsupported')
+      }
+      assert.deepEqual(writes.filter(p=>!p.offset).map(p=>p.requested), [5,4,3,2].filter(g=>g>=generation))
+      const mutations = writes.filter(p=>p.offset).map(p=>p.offset)
+      assert.deepEqual(mutations, generation === 5 ? [0,1,2,3,4].map(v=>22|(v<<8)) : [])
+      if (generation === 5) assert.equal((await reader.readPet({command:22,value:5})).state, 'unavailable')
+    } finally {
+      reader.close()
+    }
+  }
+  for (const invalid of [[121,0],[1,3],[0,2]]) assert.equal(catalog.petStateGeneration(payload(5,{},[1],invalid)),0)
+})
 
 function fixture(t) {
   const board = { payload: payload(), requests: [], events: [], status: 0 }
@@ -73,10 +117,11 @@ test('an MCP client discovers the offline care guide and generation-specific act
   assert.match(rules.actions.eat, /饱食度/)
   assert.equal(Object.keys(rules.food.fruits).length, 8)
   assert.deepEqual(f.board.requests, [])
-  for (const generation of [1,2,3,4]) {
+  for (const generation of [1,2,3,4,5]) {
     f.board.payload = payload(generation)
     const state = await f.call('pet_get_state'), a = state.availableNow
     assert.equal(state.generation, generation)
+    assert.deepEqual(state.headPet, generation >= 5 ? { remainingMs: 0, gesture: null } : null)
     assert.equal(a.actions.includes('gaze_owner'), generation >= 2)
     assert(!a.actions.includes('fetch'));assert(!a.actions.includes('fall'))
     assert.equal(a.placeToys.includes('carrot_toy'), generation >= 3)
@@ -145,16 +190,23 @@ test('model sees its personality, limited recent activity and care state without
     return JSON.parse(modelRequest.messages[1].content)
   }
   f.board.events=Array.from({length:14},(_,i)=>i%2===0 ? [8,1,1,10] : [2,12,0,0])
-  f.board.payload=payload(4,{12:100},[1])
+  f.board.events.push([18,0,1,3], [18,2,2,3])
+  f.board.payload=payload(5,{12:100},[1],[98,2])
   let message=await auto()
   assert.match(modelRequest.messages[0].content,/垂耳兔/)
   assert.equal(message.personality,cfg.personality)
-  assert.equal(message.observation.generation,4)
+  assert.equal(message.observation.generation,5)
+  assert.deepEqual(message.observation.headPet,{remainingMs:980,gesture:'ccw'})
+  assert.deepEqual(message.observation.hutchPosition,{x:246,y:142})
+  assert.equal(message.observation.positionY,139)
   assert.deepEqual(message.observation.foods,[{fruit:'apple',x:41,y:129,stage:'landed'}])
   const recent=message.observation.recentActivity
   assert(recent.partial);assert.equal(recent.events.length,12)
   assert(recent.events.some(e=>e.source==='physical'&&e.key===1&&e.item==='carrot_toy'&&e.toy==='carrot_toy'))
   assert(recent.events.some(e=>e.source==='automatic'&&e.action==='gaze_owner'))
+  assert(recent.events.some(e=>e.type==='head_petted'&&e.source==='physical'&&e.gesture==='tap'&&e.encoder===3))
+  assert(recent.events.some(e=>e.type==='head_petted'&&e.source==='mcp'&&e.gesture==='ccw'&&e.encoder===3))
+  assert(!modelRequest.tools.some(t=>/head|stroke|pat/.test(t.function.name)))
   assert.match(message.observation.careNote,/吃饱/)
   assert(!modelRequest.tools.some(t=>t.function.name==='pet_feed'))
   for(const token of [cfg.apiKey,'localhost',session,'userData','session'])assert(!JSON.stringify(modelRequest.messages).includes(token))

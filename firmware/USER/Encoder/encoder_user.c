@@ -142,8 +142,9 @@ void encoder3_callback(uint8_t encoder_value) {
     if (encoder_value == ENCODER_DOWN || encoder_value == ENCODER_UP) {
         button_readback_record(10, encoder_value == ENCODER_DOWN);
         if (pet_mode_encoder_button(encoder_value == ENCODER_DOWN)) return;
-    } else {
-        pet_mode_encoder_rotated();
+    } else if (pet_mode_encoder_rotated(encoder_value == CLOCKWISE || encoder_value == UP_CLOCKWISE,
+                                        encoder_value == DOWN_ANTICLOCKWISE || encoder_value == UP_CLOCKWISE)) {
+        return;
     }
 //    printf("encoder_value -> %d\n\r", (ENCODER_EVENT_NUM * 2) + encoder_value + 16);
     parse_json_value( (ENCODER_EVENT_NUM * 2) + encoder_value + 16);

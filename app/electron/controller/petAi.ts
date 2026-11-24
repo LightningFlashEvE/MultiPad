@@ -7,7 +7,7 @@ import { z } from 'zod'
 import { createPetMcp } from './petMcp'
 import { petCareGuide } from './petCareGuide'
 import { defaultRabbitPersonality, personalityLimit } from '../../src/utils/petPersonality'
-import { petActionLabels, petActions, playableActions, petScenes, petToyIds, petToyPhases, petRoomItems, petFoodStages,
+import { petActionLabels, petActions, playableActions, petScenes, petToyIds, petToyPhases, petRoomItems, petFoodStages, petHeadGestures,
   petFruitIds as fruits, petFruitLabels as fruitLabel } from '../../src/utils/petCatalog'
 
 const allowedTools = ['pet_play_action', 'pet_feed', 'pet_use_toy', 'pet_place_toy', 'pet_interact_with_toy', 'pet_interact_with_decoration'] as const
@@ -28,6 +28,7 @@ const stateSchema = z.object({
   stats: z.object({ satiety: stat, sleepiness: stat, mood: stat, affection: stat }).nullable(),
   scene: z.enum(petScenes).nullable(), activeToy: z.enum(petToyIds).nullable(),
   activeDecoration: z.literal('rabbit_hutch').nullable(), decorationPhase: z.enum(petToyPhases).nullable(),
+  headPet: z.object({ remainingMs: z.number().int().min(0).max(1200), gesture: z.enum(petHeadGestures).nullable() }).nullable(),
   hutchPosition: z.object({ x: z.number(), y: z.number() }).nullable(),
   toyPhase: z.enum(petToyPhases).nullable(), availableToys: z.array(z.enum(petToyIds)),
   deployedToys: z.object({ garden: z.enum(petToyIds).nullable(), nursery: z.enum(petToyIds).nullable() }).nullable(),
@@ -63,7 +64,8 @@ const eventsSchema = z.object({
     fruit: z.enum(fruits).nullish(), queueDepth: z.number().optional(), active: z.boolean().optional(),
     action: z.enum(petActions).optional(), scene: z.enum(petScenes).optional(), key: z.number().optional(),
     item: z.string().nullable().optional(), toy: z.enum(petToyIds).nullable().optional(),
-    decoration: z.literal('rabbit_hutch').nullable().optional(), interrupted: z.boolean().optional()
+    decoration: z.literal('rabbit_hutch').nullable().optional(), interrupted: z.boolean().optional(),
+    gesture: z.enum(petHeadGestures).optional(), encoder: z.number().optional()
   }))
 })
 const completionSchema = z.object({
@@ -168,6 +170,7 @@ const rabbitRole = [
   '饥饿且场内没有水果时可投一份。已有水果时等兔子逐份吃，fruit_eaten 才表示吃完。eat 是空口进食动画。清醒且有兴致时可以走动、跳跃、玩胡萝卜或用 gaze_owner 面向主人。',
   'sleep 会回兔窝持续睡觉，兔窝小憩是短休。熟睡且仍困时可以继续睡，休息充分时可用 idle 醒来。胡萝卜玩具和兔窝装饰相互独立，完成玩耍才有属性收益。',
   '观测取自键盘。physical 表示实体操作，automatic 表示固件行为，mcp 可来自软件、外部客户端或你之前的动作。尊重主人刚投放的食物和玩具。字段为 null 或事件不完整时按已知事实行动。',
+  'head_petted 是主人对你的摸头，physical 来自实体大旋钮，mcp 来自软件模拟。你可以继续享受抚摸，也能在合适时看向主人。',
   '角色性格决定动作偏好，实际工具、参数和当前设备状态决定能执行的行为。'
 ].join('\n')
 

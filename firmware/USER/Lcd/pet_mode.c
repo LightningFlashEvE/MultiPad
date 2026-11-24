@@ -13,6 +13,7 @@ enum {
     FRAME_MS = 48,
     SLEEP_AFTER_MS = 18000,
     ENCODER_HOLD_MS = 1200,
+    HEAD_PAT_MS = 1200,
     GROUND = 139,
     WALK_MIN = 46,
     WALK_MAX = 274,
@@ -42,7 +43,8 @@ typedef struct {
     uint32_t elapsed;
     PetFloorFood foods[PET_FLOOR_CAPACITY];
     uint8_t food_count, hour, minute, season, scene, visible_toy, using_toy, drop;
-    bool bowl;
+    uint8_t pat_kind, pat_phase;
+    bool bowl, patting;
 } PetFrame;
 
 static bool active;
@@ -77,8 +79,11 @@ static uint32_t key_at[PET_KEY_COUNT];
 
 static PetFloor *current_floor(void) { return &floors[pet_care_get()->scene]; }
 
-static bool encoder_down, encoder_rotated, encoder_toggled, encoder_claimed;
+static bool encoder_down, encoder_rotated, encoder_toggled, encoder_claimed, encoder_cancelled;
 static uint32_t encoder_since;
+static bool head_pat_active;
+static uint32_t head_pat_started, head_pat_last;
+static uint8_t head_pat_kind;
 
 static bool manual_idle;
 static PetEvent events[PET_EVENT_CAPACITY];
@@ -266,6 +271,8 @@ static void start_mode(uint32_t now) {
 
 static void set_mode(bool enabled, uint8_t source, uint32_t now) {
     if (active == enabled) return;
+    if (encoder_down && source != SOURCE_PHYSICAL) encoder_cancelled = true;
+    head_pat_active = false;
     record_event(PET_EVENT_MODE, enabled, source, 0);
     live_oled_mode_changed();
     if (enabled) {
@@ -314,28 +321,53 @@ uint8_t pet_mode_foods(PetFloorFood *out) {
 uint8_t pet_mode_active_toy(void) { return active_toy ? active_toy->id : 0; }
 uint8_t pet_mode_toy_phase(void) { return toy_phase; }
 
+static uint16_t head_pat_remaining(uint32_t now) {
+    uint32_t since = now - head_pat_last;
+    return head_pat_active && since < HEAD_PAT_MS ? HEAD_PAT_MS - since : 0;
+}
+
+uint8_t pet_mode_head_pat_ticks(uint8_t *kind) {
+    uint16_t remaining = head_pat_remaining(HAL_GetTick());
+    *kind = remaining ? head_pat_kind : 0;
+    return (remaining + 9) / 10;
+}
+
+static void pat_head(uint8_t kind, uint8_t source, bool reward, uint32_t now) {
+    if (!head_pat_remaining(now)) {
+        head_pat_started = now;
+        if (reward) pet_care_adjust(0, 0, 1, 1);
+    }
+    head_pat_active = true;
+    head_pat_kind = kind;
+    last_input = head_pat_last = now;
+    record_event(PET_EVENT_HEAD_PETTED, kind, source, 3);
+}
+
 bool pet_mode_encoder_button(bool down) {
     const uint32_t now = HAL_GetTick();
     if (down) {
+        if (encoder_down) return encoder_claimed;
         encoder_down = true;
         encoder_since = now;
-        encoder_rotated = encoder_toggled = false;
+        encoder_rotated = encoder_toggled = encoder_cancelled = false;
         encoder_claimed = active;
     } else if (encoder_down) {
         encoder_down = false;
-        if (encoder_claimed && active && hungry() && !fruit && (!active_toy || bedtime) && !encoder_toggled && !encoder_rotated &&
-            now - encoder_since >= 40) {
-            last_input = now;
-            if (bedtime) end_toy(true, SOURCE_PHYSICAL, now);
-            record_event(PET_EVENT_SNACK, 0, SOURCE_PHYSICAL, 3);
-            set_action_from(PET_EAT, now, SOURCE_PHYSICAL);
+        if (encoder_claimed && active && !encoder_cancelled && !encoder_rotated) {
+            if (now - encoder_since >= ENCODER_HOLD_MS) set_mode(false, SOURCE_PHYSICAL, now);
+            else if (now - encoder_since >= 40) pat_head(0, SOURCE_PHYSICAL, true, now);
         }
-    }
+    } else return active;
     return encoder_claimed;
 }
 
-void pet_mode_encoder_rotated(void) {
-    if (encoder_down) encoder_rotated = true;
+bool pet_mode_encoder_rotated(bool clockwise, bool pressed_detent) {
+    if (!encoder_down) return active && pressed_detent;
+    const bool first_detent = !encoder_rotated;
+    encoder_rotated = true;
+    if (encoder_claimed && active && !encoder_cancelled)
+        pat_head(clockwise ? 1 : 2, SOURCE_PHYSICAL, first_detent, HAL_GetTick());
+    return encoder_claimed || encoder_cancelled || encoder_toggled;
 }
 
 static bool queue_fruit(uint8_t requested, uint8_t source, uint32_t now) {
@@ -413,7 +445,7 @@ void pet_mode_adjust_scene(int8_t direction_step, bool change_season) {
 }
 
 uint8_t pet_mode_control(uint8_t opcode, uint8_t value) {
-    enum { MODE = 1, FEED, PLAY, HOUR, SEASON, SCENE, DEPLOY_TOY, BIND_KEY, FOLLOW_CLOCK, PLAY_TOY = 11, TRIGGER_KEY, PLACE_IF_EMPTY, VISIT_HUTCH = 15, CLOCK_BASE = 16 };
+    enum { MODE = 1, FEED, PLAY, HOUR, SEASON, SCENE, DEPLOY_TOY, BIND_KEY, FOLLOW_CLOCK, PLAY_TOY = 11, TRIGGER_KEY, PLACE_IF_EMPTY, VISIT_HUTCH = 15, CLOCK_BASE = 16, PAT_HEAD = 22 };
     const uint32_t now = HAL_GetTick();
     if (opcode == MODE && value <= 1) {
         set_mode(value != 0, SOURCE_MCP, now);
@@ -428,6 +460,10 @@ uint8_t pet_mode_control(uint8_t opcode, uint8_t value) {
         return OK;
     }
     switch (opcode) {
+        case PAT_HEAD:
+            if (value > 4) return INVALID;
+            pat_head(value > 2 ? value - 2 : value, SOURCE_MCP, value <= 2, now);
+            return OK;
         case FEED:
             if (!value || value > FRUIT_COUNT) return INVALID;
             return queue_fruit(value, SOURCE_MCP, now) ? OK : BUSY;
@@ -720,6 +756,20 @@ static void include_toy(DirtyArea *area, const PetFrame *f) {
         include_rect(area, CARROT_X - 10, CARROT_Y - 12 + drop_offset(f->drop), 28);
 }
 
+static int16_t pat_brow_x(const PetFrame *f) {
+    return f->x + f->direction * ((int)rabbit_brow_x[f->sprite] - RABBIT_ANCHOR_X);
+}
+
+static int16_t pat_top(const PetFrame *f) {
+    return f->y - RABBIT_ANCHOR_Y + rabbit_brow_y[f->sprite] - HEAD_PAT_ANCHOR_Y;
+}
+
+static void include_pat(DirtyArea *area, const PetFrame *f) {
+    if (!f->patting) return;
+    const int left = pat_brow_x(f) - (f->direction > 0 ? HEAD_PAT_ANCHOR_X : HEAD_PAT_WIDTH - HEAD_PAT_ANCHOR_X);
+    include_rect(area, left, pat_top(f), HEAD_PAT_WIDTH);
+}
+
 static void begin_frame(uint32_t now) {
     const uint32_t elapsed = now - action_since;
     DirtyArea area = {(x < last_x ? x : last_x) - DIRTY_MARGIN, DIRTY_TOP,
@@ -734,11 +784,20 @@ static void begin_frame(uint32_t now) {
         .scene = scene, .visible_toy = pet_care_get()->placed[scene], .using_toy = using,
         .drop = pet_mode_toy_drop(), .bowl = action == PET_EAT && !fruit && !active_toy
     };
+    uint16_t remaining = head_pat_remaining(now);
+    if (remaining) {
+        next.patting = true;
+        next.pat_kind = head_pat_kind;
+        next.pat_phase = head_pat_phase(now - head_pat_started, remaining);
+        if (head_pat_contact[next.pat_phase]) next.sprite = head_pat_touch_pose[next.sprite];
+    }
     const int min_y = y < frame.y ? y : frame.y;
     const int max_y = y > frame.y ? y : frame.y;
     if (min_y < GROUND) area.top -= GROUND - min_y;
     if (max_y > GROUND) next.bottom += max_y - GROUND;
     if (next.bottom > LCD_HEIGHT) next.bottom = LCD_HEIGHT;
+    include_pat(&area, &frame);
+    include_pat(&area, &next);
     if (next.visible_toy != frame.visible_toy || next.drop != frame.drop) {
         include_toy(&area, &frame);
         include_toy(&area, &next);
@@ -795,6 +854,21 @@ static void paint_rabbit(uint8_t *line, uint16_t row) {
                                  frame.x + RABBIT_ANCHOR_X - offset - count;
             paint_span(line, left, left + count, pet_palette[color]);
         }
+        offset += count;
+    }
+}
+
+static void paint_head_pat(uint8_t *line, uint16_t row) {
+    if (!frame.patting) return;
+    const int local = (int)row - pat_top(&frame);
+    if (local < 0 || local >= HEAD_PAT_HEIGHT) return;
+    const unsigned index = (frame.pat_kind * HEAD_PAT_FRAMES + frame.pat_phase) * HEAD_PAT_HEIGHT + local;
+    const int brow = pat_brow_x(&frame);
+    int offset = -HEAD_PAT_ANCHOR_X;
+    for (uint16_t run = head_pat_rows[index]; run < head_pat_rows[index + 1]; run++) {
+        uint8_t count = head_pat_runs[run * 2], color = head_pat_runs[run * 2 + 1];
+        int left = frame.direction > 0 ? brow + offset : brow - offset - count;
+        if (color) paint_span(line, left, left + count, pet_palette[color]);
         offset += count;
     }
 }
@@ -998,6 +1072,7 @@ static void paint_row(uint8_t *line, uint16_t row) {
         paint_rect(line, row, star_x + 2, top, 2, 8, accent);
         paint_rect(line, row, star_x - 1, top + 3, 8, 2, accent);
     }
+    paint_head_pat(line, row);
     paint_controls(line, row);
 }
 
@@ -1018,7 +1093,10 @@ void pet_mode_poll(void) {
         clock_anchor += elapsed_minutes * 60000u;
         set_time((hour * 60u + minute + elapsed_minutes) % 1440u, SOURCE_AUTOMATIC);
     }
-    if (encoder_down && !encoder_toggled && !encoder_rotated && now - encoder_since >= ENCODER_HOLD_MS) {
+    if (head_pat_active && !head_pat_remaining(now)) head_pat_active = false;
+    /* A pet-origin hold stays undecided until release so a late turn still strokes the rabbit. */
+    if (encoder_down && !encoder_claimed && !encoder_cancelled && !encoder_toggled && !encoder_rotated &&
+        now - encoder_since >= ENCODER_HOLD_MS) {
         encoder_toggled = true;
         set_mode(!active, SOURCE_PHYSICAL, now);
     }

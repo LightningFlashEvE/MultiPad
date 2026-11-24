@@ -28,6 +28,8 @@ export interface PetState {
   action: number
   x: number
   rabbitY?: number
+  headPatRemaining?: number
+  headPatKind?: number
   fruit: number
   hour: number
   minute?: number

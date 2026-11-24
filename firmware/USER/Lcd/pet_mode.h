@@ -37,7 +37,8 @@ typedef enum {
     PET_EVENT_TOY_REMOVED,
     PET_EVENT_DECORATION_STARTED,
     PET_EVENT_DECORATION_FINISHED,
-    PET_EVENT_DECORATION_MOVED
+    PET_EVENT_DECORATION_MOVED,
+    PET_EVENT_HEAD_PETTED
 } PetEventKind;
 
 typedef struct {
@@ -49,7 +50,7 @@ enum { PET_EVENT_CAPACITY = 64, PET_EVENTS_PER_REPLY = 16, PET_API_CAPABILITY = 
 
 bool pet_mode_is_active(void);
 bool pet_mode_encoder_button(bool down);
-void pet_mode_encoder_rotated(void);
+bool pet_mode_encoder_rotated(bool clockwise, bool pressed_detent);
 bool pet_mode_key_down(uint8_t key);
 void pet_mode_cycle_background(int8_t direction);
 void pet_mode_adjust_scene(int8_t direction, bool change_season);
@@ -64,6 +65,7 @@ uint8_t pet_mode_fruit(void);
 uint8_t pet_mode_hour(void);
 uint8_t pet_mode_minute(void);
 bool pet_mode_is_bedtime(void);
+uint8_t pet_mode_head_pat_ticks(uint8_t *kind);
 uint8_t pet_mode_season(void);
 uint8_t pet_mode_queue_depth(void);
 uint8_t pet_mode_active_toy(void);

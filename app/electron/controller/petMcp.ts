@@ -7,7 +7,7 @@ import SerialConnect from './serialPort'
 import { petCareGuide, petServerInstructions } from './petCareGuide'
 import type { PetRequest } from './screenReadback'
 import { petActions, playableActions, petScenes, petRoomItems, petToyIds, petToyPhases, petFruitIds as fruits,
-  petItems, toysForScene, petStateGeneration, petFoodStages, petDecorations, hutchBounds } from '../../src/utils/petCatalog'
+  petItems, toysForScene, petStateGeneration, petFoodStages, petHeadGestures, petDecorations, hutchBounds } from '../../src/utils/petCatalog'
 
 const seasons = ['spring', 'summer', 'autumn', 'winter'] as const
 const sources = ['automatic', 'physical', 'mcp'] as const
@@ -56,6 +56,7 @@ function decodeState(payload: Buffer, session?: string) {
   const extended = generation >= 2
   const scene = extended ? petScenes[payload[16]] ?? null : null
   const visitingHutch = generation >= 4 && payload[17] === 1
+  const endOfFoods = generation >= 3 ? 33 + 6 * payload[32] : 0
   const phase = extended ? petToyPhases[payload[18]] : null
   return {
     session,
@@ -63,7 +64,7 @@ function decodeState(payload: Buffer, session?: string) {
     active: Boolean(payload[0]),
     action: payload[0] ? petActions[payload[1]] ?? null : null,
     positionX: payload[0] ? payload.readUInt16LE(2) : null,
-    positionY: generation >= 4 && payload[0] ? payload[payload.length - 1] : null,
+    positionY: generation >= 4 && payload[0] ? payload[endOfFoods + 3] : null,
     frames: payload.readUInt32LE(4),
     fruit: fruits[payload[8] - 1] ?? null,
     hour: payload[9],
@@ -76,7 +77,9 @@ function decodeState(payload: Buffer, session?: string) {
     toyPhase: visitingHutch ? 'idle' : phase,
     activeDecoration: visitingHutch ? 'rabbit_hutch' : null,
     decorationPhase: generation >= 4 ? (visitingHutch ? phase : 'idle') : null,
-    hutchPosition: generation >= 4 ? { x: payload.readUInt16LE(payload.length - 4), y: payload[payload.length - 2] } : null,
+    hutchPosition: generation >= 4 ? { x: payload.readUInt16LE(endOfFoods), y: payload[endOfFoods + 2] } : null,
+    headPet: generation >= 5 ? { remainingMs: payload[endOfFoods + 4] * 10,
+      gesture: payload[endOfFoods + 4] ? petHeadGestures[payload[endOfFoods + 5]] : null } : null,
     availableToys: toysForScene(scene, generation).map(toy => toy.id),
     keyBindings: generation >= 3 ? Array.from(payload.subarray(19, 27), slot =>
       petItems.find(item => item.itemId === slot)?.id ?? null) : null,
@@ -175,6 +178,7 @@ function decodeEvent(payload: Buffer, offset: number) {
     case 15: return { ...base, type: 'decoration_started', decoration: toyForWireId(value) }
     case 16: return { ...base, type: 'decoration_finished', decoration: toyForWireId(value), interrupted: Boolean(detail) }
     case 17: return { ...base, type: 'decoration_moved', decoration: toyForWireId(value), scene: petScenes[detail] }
+    case 18: return { ...base, type: 'head_petted', gesture: petHeadGestures[value], encoder: detail }
     default: return { ...base, type: 'unknown', value, detail }
   }
 }

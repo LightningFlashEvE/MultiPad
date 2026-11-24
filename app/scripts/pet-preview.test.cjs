@@ -39,6 +39,28 @@ function preview(satiety = 65) {
   return { world, state, tick, sleeping: () => bedtime }
 }
 
+test('head strokes overlay bedtime and late detents of the same press earn no extra reward', () => {
+  const { world, state, tick, sleeping } = preview(100)
+  world.use(3, 2)
+  tick(2500)
+  assert.ok(sleeping())
+  world.use(22, 1)
+  assert.equal(state.headPatKind, 1)
+  assert.equal(state.headPatRemaining, 1200)
+  assert.deepEqual(state.stats, { satiety: 100, sleepiness: 25, mood: 71, affection: 36 })
+  tick(1400)
+  world.use(22, 4)
+  assert.equal(state.headPatKind, 2)
+  assert.equal(state.headPatRemaining, 1200)
+  assert.equal(state.stats.affection, 36)
+  assert.equal(state.action, 2)
+  assert.ok(sleeping())
+  tick(1200)
+  world.use(22, 0)
+  assert.equal(state.stats.affection, 37)
+  assert.equal(state.stats.satiety, 100)
+})
+
 test('each snack lands independently and surplus food waits until the rabbit is hungry', () => {
   const { world, state, tick } = preview()
   for (const id of [1, 1, 2, 3]) world.use(2, id)

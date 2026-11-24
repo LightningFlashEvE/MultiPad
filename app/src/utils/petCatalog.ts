@@ -45,6 +45,11 @@ export type PetToyId = typeof petRoomItems[number]['id']
 export const petToyIds = petRoomItems.map(item => item.id) as [PetToyId, ...PetToyId[]]
 export const petToyPhases = ['idle', 'approaching', 'using'] as const
 export const petFoodStages = ['falling', 'landed', 'eating'] as const
+export const petHeadGestures = ['tap', 'cw', 'ccw'] as const
+// 3/4 continue a held clockwise/counterclockwise stroke without granting a second reward.
+export function isHeadPetInput(value: number) {
+  return Number.isInteger(value) && value >= 0 && value <= 4
+}
 
 // Control state lengths include all visible foods; reject partial SPI/USB snapshots.
 export function petStateGeneration(p: Uint8Array) {
@@ -52,8 +57,8 @@ export function petStateGeneration(p: Uint8Array) {
   if (p.length === 19) return 2
   if (p.length < 33 || p[32] > 8) return 0
   const endOfFoods = 33 + 6 * p[32]
-  const hasHutchPosition = p.length === endOfFoods + 4
-  if ((!hasHutchPosition && p.length !== endOfFoods) ||
+  const tailLength = p.length - endOfFoods
+  if ((tailLength !== 0 && tailLength !== 4 && tailLength !== 6) ||
       p[16] >= petScenes.length || p[17] > petRoomItems.length || p[18] >= petToyPhases.length ||
       p.subarray(19, 27).some(id => id > petItems.length) ||
       p[28] > 59 || p[29] > petRoomItems.length || p[30] > petRoomItems.length || p[31] > 100) return 0
@@ -63,12 +68,15 @@ export function petStateGeneration(p: Uint8Array) {
     const y = rawY >= 0x8000 ? rawY - 0x10000 : rawY
     if (!p[i] || p[i] > petFruitIds.length || x >= 320 || y < -9 || y > 129 || p[i + 5] >= petFoodStages.length) return 0
   }
-  if (!hasHutchPosition) return 3
+  if (tailLength === 0) return 3
   const x = p[endOfFoods] | (p[endOfFoods + 1] << 8)
   const y = p[endOfFoods + 2]
   if (p[29] === 1 || p[30] === 1 || !isHutchPosition(x, y) ||
       p[endOfFoods + 3] < hutchBounds.minY || p[endOfFoods + 3] > hutchBounds.maxY) return 0
-  return 4
+  if (tailLength === 4) return 4
+  const remaining = p[endOfFoods + 4], kind = p[endOfFoods + 5]
+  if (remaining > 120 || kind >= petHeadGestures.length || (!remaining && kind !== 0)) return 0
+  return 5
 }
 
 export function isHutchPosition(x: number, y: number) {
