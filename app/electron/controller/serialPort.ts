@@ -21,6 +21,7 @@ export default class SerialConnect {
   private static upgrading = false
   private static configuring = false
   private static petSession?: string
+  private static performanceSupported = false
   private static liveOledSupported = false
   private static liveOledTask?: Promise<Awaited<ReturnType<typeof exchangeLiveOled>>>
 
@@ -104,6 +105,7 @@ export default class SerialConnect {
         if (capabilityStart !== -1) {
           const suffix = reply.subarray(capabilityStart + READBACK_CAPABILITY.length)
           const buttonFlag = suffix[0] === UPDATE_CAPABILITY ? suffix[1] : suffix[0]
+          this.performanceSupported = suffix.includes(0x56)
           this.liveOledSupported = suffix.includes(LIVE_OLED_CAPABILITY)
           this.petSession = suffix.includes(PET_API_CAPABILITY) ? randomUUID() : undefined
           this.screenReadback = new ScreenReadback(
@@ -180,6 +182,18 @@ export default class SerialConnect {
       await new Promise(resolve => setTimeout(resolve, 15))
     } while (Date.now() < deadline)
     return { state: 'busy' }
+  }
+
+  static async performance(menu: number, metrics?: number[]) {
+    if (!this.port?.isOpen) return 'disconnected'
+    if (!this.performanceSupported || !this.screenReadback) return 'unsupported'
+    if (this.upgrading || this.configuring || this.liveOledTask) return 'busy'
+    if (!Number.isInteger(menu) || menu < 0 || menu > 10 ||
+        (menu !== 0 && (!Array.isArray(metrics) || metrics.length !== 3 ||
+          [...metrics].some(value => !Number.isInteger(value) || value < 0 || (value > 100 && value !== 255))))) {
+      return 'unavailable'
+    }
+    return this.screenReadback.performance(menu, metrics)
   }
 
   static async liveOled(operation?: Parameters<typeof exchangeLiveOled>[1]) {

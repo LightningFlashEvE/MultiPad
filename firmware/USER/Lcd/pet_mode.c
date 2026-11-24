@@ -1,4 +1,5 @@
 #include "pet_mode.h"
+#include "live_oled.h"
 #include "lcd_user.h"
 
 #include "pet_art.inc"
@@ -111,6 +112,7 @@ static void start_mode(uint32_t now) {
 static void set_mode(bool enabled, uint8_t source, uint32_t now) {
     if (active == enabled) return;
     record_event(PET_EVENT_MODE, enabled, source, 0);
+    live_oled_mode_changed();
     if (enabled) {
         start_mode(now);
     } else {

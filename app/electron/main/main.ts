@@ -6,12 +6,21 @@ import { windowControlListener } from '../controller/windowControl'
 import CreateWindow from '../controller/createWindow'
 import { getFilePath, getConfigFile, writeConfigFile } from '../controller/fileDialog'
 import SerialConnect from '../controller/serialPort'
+import { readPcPerformance } from '../controller/pcPerformance'
 import { picDataListener } from '../controller/picDataEditor'
 import { setItem, getItem, delItem } from "../controller/storage"
 import { fileReadListener } from "../controller/fileRead"
 import { fetchScreenValue } from '../controller/screenApi'
 import { startPetMcp } from '../controller/petMcp'
 import type { WebContents } from 'electron'
+
+// A detached Windows launcher can close its logging pipes while MultiPad is open.
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on('error', (error: NodeJS.ErrnoException) => {
+    if (error.code !== 'EPIPE') throw error
+  })
+}
+
 // 窗口监听
 windowControlListener()
 // 图片处理监听
@@ -53,7 +62,7 @@ ipcMain.handle('select-file', async () => {
   return await getFilePath()
 })
 
-// 选取配置文件 
+// 选取配置文件
 ipcMain.handle('get-config', async () => {
   return await getConfigFile()
 })
@@ -85,6 +94,14 @@ ipcMain.handle('device-screens', (_event, knownGeneration?: number) => {
 })
 
 ipcMain.handle('device-buttons', () => SerialConnect.readDeviceButtons())
+ipcMain.handle('pc-performance', () => readPcPerformance())
+ipcMain.handle('live-performance', (_event, menu, metrics) => SerialConnect.performance(menu, metrics))
+ipcMain.handle('pet-action', async (_event, command, value) => {
+  if (!Number.isInteger(command) || command < 0 || command > 5 ||
+      !Number.isInteger(value) || value < 0 || value > 255) return { state: 'unavailable' }
+  const reply = await SerialConnect.pet({ command, value })
+  return reply.state === 'ready' ? { ...reply, payload: Uint8Array.from(reply.payload) } : reply
+})
 ipcMain.handle('live-oled', (_event, operation) => SerialConnect.liveOled(operation))
 ipcMain.handle('screen-api-value', (_event, url: unknown, field: unknown) => fetchScreenValue(url, field))
 

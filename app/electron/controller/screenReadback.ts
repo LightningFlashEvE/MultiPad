@@ -137,6 +137,15 @@ export default class ScreenReadback {
     return { state: 'ready', held: this.heldButtons, pressed }
   }
 
+  async performance(menu: number, metrics?: number[]) {
+    if (this.closed) return 'disconnected'
+    if (this.busy) return 'busy'
+    const packed = metrics ? metrics[0] | (metrics[1] << 8) | (metrics[2] << 16) : 0
+    const frame = await this.exchange(0xf9, packed, menu)
+    if (!frame || frame[7] !== 0xf9) return 'unavailable'
+    return frame[6] === STATUS_OK ? 'ready' : 'busy'
+  }
+
   async readPet(request: PetRequest): Promise<PetReply> {
     if (this.closed) return { state: 'disconnected' }
     if (this.busy) return { state: 'busy' }

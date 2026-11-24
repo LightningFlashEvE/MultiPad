@@ -1,6 +1,7 @@
 #include "live_oled.h"
 #include "flash_user.h"
 #include "oled_42.h"
+#include "pet_mode.h"
 #include "screen_readback.h"
 #include "usbd_cdc_if.h"
 #include <string.h>
@@ -54,6 +55,20 @@ void live_oled_menu_applied(uint8_t menu) {
     generation++;
 }
 
+static void restore_oled(uint8_t screen) {
+    uint8_t saved[2 * FRAME_SIZE] = {0};
+    if (active_menu) load_menu_from_flash(active_menu, saved, sizeof(saved), 1);
+    oled_42_show_pic_index(0, 0, 72, 40, saved + (screen - 1) * FRAME_SIZE, 1, screen - 1);
+}
+
+void live_oled_mode_changed(void) {
+    for (uint8_t screen = 1; screen <= 2; screen++) {
+        if (overlay_mask & (1u << (screen - 1))) restore_oled(screen);
+    }
+    screen_readback_overlay_changed();
+    live_oled_menu_applied(active_menu);
+}
+
 void live_oled_poll(void) {
     if (!request_size || !CDC_TransmitReady_FS()) return;
 
@@ -66,12 +81,10 @@ void live_oled_poll(void) {
         staged_screen = 0;
     } else if (screen < 1 || screen > 2) {
         status = STATUS_INVALID;
-    } else if (!active_menu || generation != expected) {
+    } else if ((!active_menu && !pet_mode_is_active()) || generation != expected) {
         status = STATUS_STALE;
     } else if (chunk == CLEAR_OVERLAY && request_size == HEADER_SIZE) {
-        uint8_t saved[2 * FRAME_SIZE];
-        load_menu_from_flash(active_menu, saved, sizeof(saved), 1);
-        oled_42_show_pic_index(0, 0, 72, 40, saved + (screen - 1) * FRAME_SIZE, 1, screen - 1);
+        restore_oled(screen);
         overlay_mask &= (uint8_t)~(1u << (screen - 1));
         screen_readback_overlay_changed();
         staged_screen = 0;

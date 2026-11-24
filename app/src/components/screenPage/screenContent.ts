@@ -1,6 +1,8 @@
 export type ScreenContent =
   | { mode: 'time' | 'date' | 'datetime' }
   | { mode: 'text'; text: string }
+  | { mode: 'performance' }
+  | { mode: 'pet'; label: string; value: string }
   | { mode: 'api'; url: string; field: string; label: string; interval: number }
 
 export interface ScreenFrame {
@@ -31,6 +33,11 @@ export async function renderScreenContent(content: ScreenContent, now = new Date
       lines = content.text.trim().split(/\r?\n/, 2)
       if (!lines[0]) throw new Error('请输入文字')
       break
+    case 'performance':
+      throw new Error('性能监测仅用于彩屏')
+    case 'pet':
+      lines = [content.label, content.value]
+      break
     case 'api': {
       const result = await win.myApi.fetchScreenValue(content.url, content.field)
       if (!result.ok) throw new Error(result.error)
@@ -49,7 +56,7 @@ export async function renderScreenContent(content: ScreenContent, now = new Date
   context.textAlign = 'center'
   context.textBaseline = 'middle'
   lines.forEach((text, index) => {
-    const primary = lines.length === 1 || (content.mode === 'api' ? index === 1 : index === 0)
+    const primary = lines.length === 1 || (content.mode === 'api' || content.mode === 'pet' ? index === 1 : index === 0)
     const maxSize = primary ? (lines.length === 1 ? 23 : 18) : 11
     const y = lines.length === 1 ? 20 : index === 0 ? 11 : 29
     let size = maxSize
