@@ -65,87 +65,190 @@ export function drawGarden(ctx: CanvasRenderingContext2D) {
   }
 }
 
-export function drawToyFactory(ctx: CanvasRenderingContext2D) {
-  // Painted brick, steel rafters and a clerestory window above the assembly line.
-  rect(ctx, '#b7bbb1', 0, 0, 320, 172)
-  for (let y = 22; y < 116; y += 16) {
-    rect(ctx, '#a9afa6', 0, y, 320, 1)
-    for (let x = ((y - 22) % 32 === 0 ? 12 : 34); x < 320; x += 44)
-      rect(ctx, '#a9afa6', x, y + 1, 1, 15)
+// Draw an ellipse as horizontal pixel spans so the LCD asset and canvas use the same grid.
+function nurseryOval(ctx: CanvasRenderingContext2D, color: string, cx: number, cy: number, rx: number, ry: number) {
+  for (let dy = -ry; dy <= ry; dy++) {
+    const half = Math.round(rx * Math.sqrt(1 - dy * dy / (ry * ry)))
+    rect(ctx, color, cx - half, cy + dy, 2 * half + 1, 1)
   }
-  rect(ctx, '#556876', 0, 0, 320, 8)
-  rect(ctx, '#76848a', 0, 8, 320, 3)
-  for (const x of [8, 160, 305]) {
-    rect(ctx, '#78888a', x, 11, 5, 105)
-    rect(ctx, '#8f9d98', x + 4, 11, 2, 105)
-  }
-  rect(ctx, '#778888', 18, 24, 113, 52)
-  rect(ctx, '#596e76', 18, 22, 111, 52)
-  rect(ctx, '#8ebbc2', 22, 26, 103, 44)
-  rect(ctx, '#c3d7c6', 22, 52, 103, 18)
-  for (const x of [28, 76, 99]) {
-    rect(ctx, '#d5e0d2', x, 38, 14, 2)
-    rect(ctx, '#d5e0d2', x + 4, 36, 6, 2)
-  }
-  for (const x of [47, 74, 101]) rect(ctx, '#71878a', x, 26, 3, 44)
-  rect(ctx, '#71878a', 22, 47, 103, 3)
-  rect(ctx, '#e0d7ba', 15, 73, 118, 4)
-  // Pendant lamps and a short belt carrying a wooden train and blocks.
-  for (const x of [145, 196, 273]) {
-    rect(ctx, '#667b78', x, 10, 2, 18)
-    rect(ctx, '#48786f', x - 5, 27, 12, 3)
-    rect(ctx, '#48786f', x - 9, 30, 20, 4)
-    rect(ctx, '#f6d592', x - 8, 34, 18, 2)
-  }
-  rect(ctx, '#987e71', 0, 115, 320, 8)
-  rect(ctx, '#c4ac8f', 0, 123, 320, 49)
-  rect(ctx, '#d2b998', 0, 124, 320, 3)
-  for (const y of [140, 156, 169]) {
-    rect(ctx, '#b49a82', 0, y, 320, 1)
-    for (let x = y % 3 * 38 + 15; x < 320; x += 91) rect(ctx, '#b49a82', x, y + 1, 1, 13)
-  }
-  rect(ctx, '#65787b', 12, 98, 142, 9)
-  rect(ctx, '#3f5866', 15, 100, 136, 5)
-  for (let x = 18; x < 150; x += 12) rect(ctx, '#a7b4a8', x, 101, 3, 2)
-  for (const x of [21, 132]) {
-    rect(ctx, '#617679', x, 107, 5, 16)
-    rect(ctx, '#505e64', x - 3, 122, 11, 2)
-  }
-  rect(ctx, '#ae6359', 33, 88, 23, 6)
-  rect(ctx, '#e8c27c', 34, 79, 11, 9)
-  rect(ctx, '#668c92', 37, 81, 5, 6)
-  rect(ctx, '#698d85', 47, 84, 8, 4)
-  rect(ctx, '#ac6b5d', 51, 79, 3, 5)
-  pixelCircle(ctx, '#475d66', 38, 95, 3)
-  pixelCircle(ctx, '#475d66', 51, 95, 3)
-  for (const [x, y, paint] of [[91, 87, '#daa36f'], [103, 87, '#79a59a'], [98, 76, '#c98677']] as const) {
-    rect(ctx, paint, x, y, 11, 11)
-    rect(ctx, '#eed2a0', x + 2, y + 2, 5, 1)
-  }
-
-  // The door is centred on the firmware's interaction point (246, 139).
-  rect(ctx, '#a78c78', 211, 139, 72, 4)
-  rect(ctx, '#80584f', 211, 88, 70, 51)
-  rect(ctx, '#cc956a', 215, 90, 62, 46)
-  for (const x of [220, 230, 242, 254, 266]) rect(ctx, '#bb825f', x, 92, 1, 42)
-  for (let row = 0; row < 10; row++) {
-    const x = 242 - row * 4
-    rect(ctx, row < 2 ? '#93645c' : '#af7062', x, 67 + row * 2, 8 + row * 8, 2)
-  }
-  rect(ctx, '#744e4d', 204, 87, 84, 4)
-  rect(ctx, '#e2ac79', 210, 91, 72, 3)
-  rect(ctx, '#966650', 233, 98, 26, 4)
-  rect(ctx, '#966650', 227, 102, 38, 34)
-  rect(ctx, '#695661', 232, 105, 28, 30)
-  rect(ctx, '#695661', 229, 111, 34, 23)
-  rect(ctx, '#a47d71', 230, 130, 32, 6)
-  rect(ctx, '#deb178', 228, 133, 36, 3)
-  drawHutchStraw(ctx)
 }
 
-export function drawHutchStraw(ctx: CanvasRenderingContext2D) {
-  rect(ctx, '#efbc75', 226, 136, 40, 2)
-  rect(ctx, '#a66550', 226, 138, 40, 2)
+export function drawNursery(ctx: CanvasRenderingContext2D) {
+  const paint = (color: string, x: number, y: number, w: number, h: number) => rect(ctx, color, x, y, w, h)
+  const oval = (color: string, x: number, y: number, rx: number, ry: number) => nurseryOval(ctx, color, x, y, rx, ry)
+  const honey = '#c99470', maple = '#e1b181', mapleLight = '#f4d5a8'
+  const cream = '#fff0cf', peach = '#efb4a2', rose = '#cb8b80'
+  const mint = '#9bc7b8', teal = '#78a99d'
+
+  // Daisies on buttercream wallpaper, above a low honey-oak skirting board.
+  paint('#fae6cc', 0, 0, 320, 172)
+  for (let y = 14; y < 105; y += 27) {
+    for (let x = (y % 2 ? 9 : 24); x < 320; x += 32) {
+      paint('#f1d6bd', x, y, 1, 3)
+      paint('#f1d6bd', x - 1, y + 1, 3, 1)
+    }
+  }
+  paint('#f2d9bc', 0, 103, 320, 8)
+  paint('#fff1d7', 0, 106, 320, 2)
+  paint(mapleLight, 0, 109, 320, 5)
+  paint('#d5ad8d', 0, 114, 320, 2)
+  paint('#f1d3ad', 0, 116, 320, 56)
+  for (const [y, seam] of [[126, 49], [147, 18], [166, 76]]) {
+    paint('#e5c19f', 0, y, 320, 1)
+    for (let x = seam; x < 320; x += 98) paint('#e5c19f', x, y + 1, 1, 18)
+  }
+
+  // Wide window with tied linen curtains, a bright sky and trees beyond the sill.
+  paint('#e5c6a8', 87, 15, 106, 66)
+  paint(honey, 90, 12, 100, 65)
+  paint(mapleLight, 91, 13, 98, 63)
+  paint('#a7d4dd', 96, 17, 88, 54)
+  paint('#bee1e1', 96, 40, 88, 31)
+  pixelCircle(ctx, '#ffe2a1', 157, 34, 10)
+  pixelCircle(ctx, '#ffedbc', 157, 34, 8)
+  for (const [x, y] of [[111, 32], [169, 47]]) {
+    paint('#f3f6e7', x, y, 12, 2)
+    paint('#f3f6e7', x + 3, y - 2, 6, 2)
+  }
+  for (const [cx, cy, radius] of [[102, 67, 6], [113, 68, 7], [124, 68, 5], [154, 69, 4], [175, 65, 6]]) {
+    pixelCircle(ctx, '#adcbbb', cx, cy, radius)
+  }
+  paint('#a7c4ae', 96, 68, 88, 3)
+  paint('#faf0d7', 137, 16, 4, 56)
+  paint('#faf0d7', 95, 44, 90, 3)
+  paint('#d8b898', 141, 16, 1, 56)
+  paint(maple, 83, 74, 114, 5)
+  paint('#ffebc6', 83, 74, 114, 2)
+  paint(honey, 85, 79, 110, 2)
+  for (let y = 12; y <= 73; y++) {
+    const width = y < 49 ? 20 - Math.floor((y - 12) / 3) : 8 + Math.floor((y - 49) / 4)
+    for (const side of [0, 1]) {
+      const left = side ? 196 - width : 83
+      paint(rose, left, y, width, 1)
+      paint(peach, left + 1, y, width - 2, 1)
+      paint('#f7c9b4', side ? left + 2 : left + width - 5, y, 2, 1)
+    }
+  }
+  for (const x of [82, 187]) {
+    paint('#b98866', x, 48, 10, 3)
+    paint('#f6d596', x, 48, 9, 1)
+  }
+  paint(honey, 79, 9, 121, 3)
+  pixelCircle(ctx, maple, 79, 10, 3)
+  pixelCircle(ctx, maple, 200, 10, 3)
+
+  // A tiny framed rainbow above a low shelf within a child's reach.
+  paint('#e8c9ad', 22, 32, 36, 29)
+  paint(honey, 20, 30, 36, 29)
+  paint(mapleLight, 21, 31, 34, 27)
+  paint(cream, 23, 33, 30, 23)
+  for (const [radius, color] of [[10, '#dd998b'], [8, '#efc680'], [6, mint], [4, cream]] as const) {
+    for (let dy = -radius; dy <= 0; dy++) {
+      const half = Math.floor(Math.sqrt(radius * radius - dy * dy))
+      paint(color, 38 - half, 50 + dy, half * 2 + 1, 1)
+    }
+  }
+  paint('#f4d9b9', 26, 51, 7, 1)
+  paint('#f4d9b9', 43, 51, 7, 1)
+  oval('#dfaF8d', 44, 123, 39, 3)
+  paint(honey, 8, 96, 74, 27)
+  paint(maple, 9, 97, 72, 25)
+  paint('#c39775', 13, 99, 65, 19)
+  paint('#d8ad88', 14, 100, 64, 17)
+  paint(mapleLight, 7, 93, 76, 3)
+  paint(honey, 7, 96, 76, 2)
+  paint(mapleLight, 10, 118, 69, 3)
+  paint(mapleLight, 44, 98, 3, 21)
+  for (const [x, height, color] of [[16, 14, teal], [21, 16, peach], [26, 12, cream], [31, 15, '#b6a6c5']] as const) {
+    paint(color, x, 118 - height, 4, height)
+    paint('#f8dfc1', x, 120 - height, 3, 1)
+  }
+  paint('#b57e68', 51, 106, 23, 12)
+  paint(peach, 52, 106, 21, 11)
+  paint('#f9d2bc', 50, 104, 25, 3)
+  paint('#a87867', 59, 108, 7, 2)
+  // Seated teddy and a wooden stacking-ring toy.
+  oval('#d2a07d', 27, 91, 14, 2)
+  for (const x of [19, 34]) {
+    pixelCircle(ctx, '#b67f60', x, 71, 4)
+    pixelCircle(ctx, '#e8b887', x, 71, 2)
+  }
+  oval('#bb8566', 27, 85, 8, 8)
+  oval('#dcab7c', 27, 85, 7, 7)
+  oval('#f0cd98', 27, 86, 4, 4)
+  for (const x of [19, 35]) oval('#c99370', x, 85, 3, 5)
+  for (const x of [21, 32]) oval('#b98060', x, 91, 4, 2)
+  oval('#bd8667', 27, 76, 10, 9)
+  oval('#dfad7f', 27, 75, 9, 8)
+  oval('#f1cfa0', 27, 78, 5, 3)
+  paint('#76554e', 22, 74, 2, 2)
+  paint('#76554e', 30, 74, 2, 2)
+  paint('#886453', 26, 77, 3, 2)
+  paint('#97b7ab', 23, 82, 8, 2)
+  paint(maple, 53, 89, 22, 4)
+  paint('#b5a2c0', 54, 86, 20, 4)
+  paint(mint, 56, 82, 16, 4)
+  paint('#e7bd7e', 58, 78, 12, 4)
+  paint(peach, 60, 75, 8, 3)
+  pixelCircle(ctx, cream, 64, 73, 2)
+
+  // A wooden moon-and-stars mobile above the nest.
+  paint('#bfa085', 246, 0, 1, 17)
+  paint(honey, 225, 18, 43, 2)
+  paint(honey, 233, 16, 27, 2)
+  paint(honey, 241, 14, 11, 2)
+  for (const [x, y] of [[227, 34], [247, 42], [265, 31]]) {
+    paint('#c3a58e', x, 20, 1, y - 19)
+    if (x === 247) {
+      pixelCircle(ctx, '#e4b769', x, y, 6)
+      pixelCircle(ctx, '#fae6cc', x + 3, y - 2, 5)
+    } else {
+      paint(x === 227 ? peach : mint, x - 1, y - 3, 3, 8)
+      paint(x === 227 ? peach : mint, x - 4, y, 9, 2)
+      paint(x === 227 ? peach : mint, x - 2, y + 2, 5, 1)
+    }
+  }
+
+  // Braided oval play mat; the centre is open for the rabbit to roam.
+  oval('#ddba9e', 160, 150, 101, 15)
+  oval('#92b8ab', 159, 148, 101, 16)
+  oval('#bedac5', 159, 147, 98, 15)
+  oval('#93bcae', 159, 147, 90, 12)
+  oval('#c7dfca', 159, 147, 87, 11)
+  for (const x of [106, 130, 154, 178, 202]) {
+    paint('#a9cdb9', x, 153, 3, 1)
+    paint('#dfebd0', x + 1, 152, 1, 3)
+  }
+
+  // Padded rabbit bed with a curved hood, stitched ears and a blush seat cushion.
+  oval('#dbb698', 246, 139, 35, 5)
+  for (const x of [224, 267]) {
+    oval('#ad958c', x, 85, 5, 10)
+    oval('#e5bbad', x, 84, 4, 9)
+    oval('#f2d7ba', x, 84, 2, 6)
+  }
+  oval('#b98e82', 246, 114, 34, 34)
+  oval('#e9b3a2', 246, 114, 32, 32)
+  oval('#f4cdb7', 245, 113, 29, 31)
+  paint('#b98e82', 212, 114, 69, 22)
+  paint('#e9b3a2', 214, 114, 65, 22)
+  oval('#d39084', 246, 117, 25, 26)
+  oval('#9c7975', 246, 118, 23, 25)
+  oval('#8b6f70', 246, 119, 21, 23)
+  paint('#9c7975', 223, 117, 47, 18)
+  paint('#8b6f70', 225, 117, 43, 17)
+  for (const [x, y] of [[221, 104], [226, 96], [233, 90], [244, 87], [256, 89], [265, 96], [271, 105]]) {
+    paint('#ffe3c7', x, y, 2, 1)
+  }
+  oval('#c78e80', 246, 137, 34, 7)
+  oval('#f1b8a6', 246, 136, 32, 6)
+  oval('#f9d3b9', 246, 135, 27, 4)
+  drawHutchCushion(ctx)
+}
+
+export function drawHutchCushion(ctx: CanvasRenderingContext2D) {
+  rect(ctx, '#f8c3ae', 226, 136, 40, 2)
+  rect(ctx, '#c38277', 226, 138, 40, 2)
 }
 
 export function drawPetEffects(

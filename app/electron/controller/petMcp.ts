@@ -11,6 +11,8 @@ const fruits = ['apple', 'banana', 'orange', 'grape', 'strawberry', 'pear', 'che
 const seasons = ['spring', 'summer', 'autumn', 'winter'] as const
 const sources = ['automatic', 'physical', 'mcp'] as const
 const commands = { state: 0, mode: 1, feed: 2, action: 3, hour: 4, season: 5, scene: 6, toy: 7 }
+// Older MCP clients used toy_factory for the room at USB scene index 1.
+const sceneInput = z.preprocess(value => value === 'toy_factory' ? 'nursery' : value, z.enum(petScenes))
 const toyForWireId = (id: number) => petToys.find(toy => toy.wireId === id)?.id ?? null
 
 async function requestDevice(request: PetRequest, session?: string) {
@@ -135,13 +137,13 @@ export function createPetMcp() {
   }, ({ season }) => result(() => command(commands.season, seasons.indexOf(season))))
 
   server.registerTool('pet_set_scene', {
-    description: '切换彩屏背景。garden 是花园，toy_factory 是带兔窝的室内玩具厂。',
-    inputSchema: { scene: z.enum(petScenes) }
+    description: '切换彩屏背景。garden 是花园，nursery 是有玩具和兔窝的宝宝房。',
+    inputSchema: { scene: sceneInput }
   }, ({ scene }) => result(() => command(commands.scene, petScenes.indexOf(scene))))
 
   server.registerTool('pet_list_toys', {
     description: '列出当前场景的互动玩具。传 scene 可查询指定场景的玩具目录。',
-    inputSchema: { scene: z.enum(petScenes).optional() },
+    inputSchema: { scene: sceneInput.optional() },
     annotations: { readOnlyHint: true }
   }, ({ scene }) => result(async () => {
     const selected = scene ?? (await command(commands.state)).scene

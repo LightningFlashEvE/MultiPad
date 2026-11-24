@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-enum { PET_GARDEN, PET_TOY_FACTORY, PET_SCENE_COUNT };
+enum { PET_GARDEN, PET_NURSERY, PET_SCENE_COUNT };
 
 typedef struct {
     uint8_t satiety, sleepiness, mood, affection, scene;

@@ -6,11 +6,11 @@ export const petActionLabels: Record<typeof petActions[number], string> = {
   run: '奔跑', jump: '跳跃', daydream: '做白日梦', flee: '受惊逃跑', blink: '眨眼',
   trip_angry: '绊脚生气', gaze_owner: '面向主人发呆'
 }
-export const petScenes = ['garden', 'toy_factory'] as const
-export const petSceneLabels: Record<typeof petScenes[number], string> = { garden: '花园', toy_factory: '室内玩具厂' }
+export const petScenes = ['garden', 'nursery'] as const
+export const petSceneLabels: Record<typeof petScenes[number], string> = { garden: '花园', nursery: '宝宝房' }
 
 export const petToys = [
-  { id: 'rabbit_hutch', wireId: 1, scene: 'toy_factory', label: '兔窝', description: '走到兔窝里休息片刻。' }
+  { id: 'rabbit_hutch', wireId: 1, scene: 'nursery', label: '兔窝', description: '走到兔窝里休息片刻。' }
 ] as const satisfies readonly { id: string; wireId: number; scene: typeof petScenes[number]; label: string; description: string }[]
 
 export type PetToyId = typeof petToys[number]['id']

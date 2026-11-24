@@ -81,7 +81,7 @@ typedef struct {
 } PetToy;
 
 static const PetToy toys[] = {
-    {TOY_RABBIT_HUTCH, PET_TOY_FACTORY, 246, -1, PET_SLEEP, 4500, -12, 5, 2}
+    {TOY_RABBIT_HUTCH, PET_NURSERY, 246, -1, PET_SLEEP, 4500, -12, 5, 2}
 };
 static const PetToy *active_toy;
 static uint8_t toy_phase, action_source, walk_stops;
@@ -645,22 +645,36 @@ static void paint_controls(uint8_t *line, uint16_t row) {
 }
 
 static void paint_row(uint8_t *line, uint16_t row) {
-    const bool factory = frame.scene == PET_TOY_FACTORY;
-    const uint16_t *rows = factory ? factory_rows : garden_rows;
-    const uint8_t *runs = factory ? factory_runs : garden_runs;
+    const bool nursery = frame.scene == PET_NURSERY;
+    const uint16_t *rows = nursery ? nursery_rows : garden_rows;
+    const uint8_t *runs = nursery ? nursery_runs : garden_runs;
     uint16_t x_pos = 0;
     for (uint16_t run = rows[row]; run < rows[row + 1]; run++) {
         const uint16_t end = x_pos + runs[run * 2];
         const uint8_t color = runs[run * 2 + 1];
-        paint_span(line, x_pos, end, factory ? pet_palette[color] :
+        paint_span(line, x_pos, end, nursery ? pet_palette[color] :
                                      color == 5 ? sky_color(row) : scene_palette[color]);
         x_pos = end;
     }
-    if (!factory) paint_sky(line, row);
+    if (!nursery) paint_sky(line, row);
 
-    const uint16_t shadow = factory ? HEX565(0x906e66) : blend(scene_palette[15], scene_palette[18], 2, 3);
-    paint_rect(line, row, frame.x - 23, 138, 46, 3, shadow);
-    paint_rect(line, row, frame.x - 18, 141, 36, 1, shadow);
+    if (nursery) {
+        if (!frame.using_toy && row >= 138 && row <= 141) {
+            static const uint8_t radii[] = {14, 19, 18, 12};
+            const int radius = radii[row - 138];
+            for (int col = frame.x - radius; col < frame.x + radius; col++) {
+                if (col < frame.left || col >= frame.right) continue;
+                uint8_t *pixel = line + (col - frame.left) * 2;
+                uint16_t shade = blend(((uint16_t)pixel[0] << 8) | pixel[1], HEX565(0x826c6b), 1, 5);
+                pixel[0] = shade >> 8;
+                pixel[1] = (uint8_t)shade;
+            }
+        }
+    } else {
+        const uint16_t shadow = blend(scene_palette[15], scene_palette[18], 2, 3);
+        paint_rect(line, row, frame.x - 23, 138, 46, 3, shadow);
+        paint_rect(line, row, frame.x - 18, 141, 36, 1, shadow);
+    }
     if (frame.bowl) {
         const int16_t bowl = frame.x + frame.direction * 29 - 6;
         paint_rect(line, row, bowl, 134, 12, 5, RGB565(91, 69, 81));
@@ -669,8 +683,8 @@ static void paint_row(uint8_t *line, uint16_t row) {
     }
     paint_rabbit(line, row);
     if (frame.using_toy == TOY_RABBIT_HUTCH) {
-        paint_rect(line, row, 226, 136, 40, 2, HEX565(0xefbc75));
-        paint_rect(line, row, 226, 138, 40, 2, HEX565(0xa66550));
+        paint_rect(line, row, 226, 136, 40, 2, HEX565(0xf8c3ae));
+        paint_rect(line, row, 226, 138, 40, 2, HEX565(0xc38277));
     }
     paint_fruit(line, row);
 

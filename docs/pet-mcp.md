@@ -27,9 +27,9 @@ $env:MULTIPAD_PET_MCP_TOKEN = [guid]::NewGuid().ToString('N')
 | `pet_feed` | `fruit` | `apple`、`banana`、`orange`、`grape`、`strawberry`、`pear`、`cherry`、`watermelon` |
 | `pet_set_time` | `hour` | 设置场景的整点，范围 0–23 |
 | `pet_set_season` | `season` | `spring`、`summer`、`autumn`、`winter` |
-| `pet_set_scene` | `scene` | 切换花园 `garden` 或室内玩具厂 `toy_factory` |
+| `pet_set_scene` | `scene` | 切换花园 `garden` 或宝宝房 `nursery` |
 | `pet_list_toys` | 可选 `scene` | 返回场景内玩具的 ID、名称和互动说明。省略场景时读取键盘当前背景 |
-| `pet_use_toy` | `toy` | 让兔子走向指定玩具并互动。室内玩具厂有兔窝 `rabbit_hutch` |
+| `pet_use_toy` | `toy` | 让兔子走向指定玩具并互动。宝宝房里的兔窝为 `rabbit_hutch` |
 | `pet_get_events` | 可选 `cursor` | 读取桌宠事件，并返回下一次读取的游标 |
 
 `pet_feed` 成功表示水果已进入等待队列。水果从屏幕上方落下，兔子走过去吃。落地和吃完分别产生事件。`pet_play_action` 的 `eat` 播放进食动作。播放 `idle` 可叫醒睡着的兔子。投喂过程中，单独播放动作会返回忙。投喂、动作以及季节和时间修改需要桌宠模式已开启。
@@ -38,7 +38,7 @@ $env:MULTIPAD_PET_MCP_TOKEN = [guid]::NewGuid().ToString('N')
 
 `pet_get_state.stats` 包含饱食度 `satiety`、困意 `sleepiness`、心情值 `mood` 和好感度 `affection`。各项范围均为 0–100，困意越高表示越想睡。键盘维护这些数值，软件里的两块小屏可分别选择其中一项显示。旧版桌宠固件仍可投喂和播放原有动作，扩展状态字段为 `null`，`availableToys` 为空数组。
 
-进入养宠模式后，调用 `pet_set_scene({"scene":"toy_factory"})`，再用 `pet_list_toys({})` 读取可用玩具。调用 `pet_use_toy({"toy":"rabbit_hutch"})` 后，键盘状态中的 `activeToy` 标识正在使用的玩具。`toyPhase` 依次为 `approaching`、`using`，结束后回到 `idle`。互动结束时产生 `toy_finished`，其 `interrupted` 字段为 `false` 表示自然结束，为 `true` 表示中途退出。
+进入养宠模式后，调用 `pet_set_scene({"scene":"nursery"})`，再用 `pet_list_toys({})` 读取可用玩具。调用 `pet_use_toy({"toy":"rabbit_hutch"})` 后，键盘状态中的 `activeToy` 标识正在使用的玩具。`toyPhase` 依次为 `approaching`、`using`，结束后回到 `idle`。互动结束时产生 `toy_finished`，其 `interrupted` 字段为 `false` 表示自然结束，为 `true` 表示中途退出。
 
 内置 AI 在每轮决策时读取属性，只能选择当前背景内可用的玩具。兔子正在取食或使用玩具时，AI 会等待下一轮。软件端的玩具目录位于 `app/src/utils/petCatalog.ts`，新增玩具需为固件分配稳定的玩具 ID 并实现其互动。
 

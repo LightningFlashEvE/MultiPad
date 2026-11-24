@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
-import { drawGarden, drawHutchStraw, drawPetEffects, drawToyFactory, type PetAction } from './petScene'
+import { drawGarden, drawHutchCushion, drawPetEffects, drawNursery, type PetAction } from './petScene'
 import { drawRabbit, rabbitAtlasUrl } from './petAnimation'
 import type { PetState } from './petDisplay'
 import { petActions, petSceneLabels, petScenes, petToys } from '../../utils/petCatalog'
 
 const props = defineProps<{ state: PetState; connected: boolean }>()
 const canvas = ref<HTMLCanvasElement>()
+const nurseryShadowRadii = [14, 19, 18, 12]
 let frameId = 0
 
 onMounted(() => {
@@ -26,9 +27,9 @@ onMounted(() => {
   let direction = 1
   function frame(now: number) {
     const { action, x: position, hour, season, scene, activeToy, toyPhase } = props.state
-    const factory = petScenes[scene] === 'toy_factory'
+    const nursery = petScenes[scene] === 'nursery'
     if (lastScene !== scene) {
-      if (factory) drawToyFactory(context!)
+      if (nursery) drawNursery(context!)
       else drawGarden(context!)
       lastScene = scene
     }
@@ -47,7 +48,7 @@ onMounted(() => {
       actionStart = now
     }
     display!.drawImage(background, 0, 0)
-    if (!factory) {
+    if (!nursery) {
       display!.fillStyle = seasonTints[season] ?? seasonTints[0]
       display!.fillRect(0, 0, 320, 172)
       if (hour < 6 || hour >= 20) {
@@ -55,9 +56,14 @@ onMounted(() => {
         display!.fillRect(0, 0, 320, 172)
       }
     }
+    if (nursery && !resting) {
+      display!.fillStyle = 'rgba(130, 108, 107, .2)'
+      nurseryShadowRadii.forEach((radius, row) =>
+        display!.fillRect(Math.round(x) - radius, 138 + row, radius * 2, 1))
+    }
     const elapsed = now - actionStart
     drawRabbit(display!, atlas, Math.round(x), resting ? 142 : 139, direction, clip, elapsed)
-    if (resting) drawHutchStraw(display!)
+    if (resting) drawHutchCushion(display!)
     drawPetEffects(display!, Math.round(x), direction, clip, elapsed, true)
     frameId = requestAnimationFrame(frame)
   }
