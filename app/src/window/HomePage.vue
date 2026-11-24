@@ -18,10 +18,11 @@ import { renderScreenContent, type ScreenFrame } from '../components/screenPage/
 import PetDisplay from '../components/screenPage/PetDisplay.vue'
 import PetAiSettings from '../components/screenPage/PetAiSettings.vue'
 import PetItemsPanel from '../components/screenPage/PetItemsPanel.vue'
+import PetDecorationPanel from '../components/screenPage/PetDecorationPanel.vue'
 import { createPetItemPreview, previewCare } from '../components/screenPage/petItemPreview'
 import PerformanceDisplay from '../components/screenPage/PerformanceDisplay.vue'
-import { petParameters, petParameterContent, petValue, petSeasons, petStats, type PetParameter, type PetState } from '../components/screenPage/petDisplay'
-import { petActions, petActionLabels, petScenes, petSceneLabels, petToys, petItems, petStateGeneration } from '../utils/petCatalog'
+import { petParameters, petParameterContent, petValue, petSeasons, petStats, type HutchPosition, type PetParameter, type PetState } from '../components/screenPage/petDisplay'
+import { petActions, petActionLabels, petScenes, petSceneLabels, petRoomItems, petItems, petStateGeneration, isHutchPosition, defaultHutchPosition } from '../utils/petCatalog'
 
 const router = useRouter()
 const win = window as any
@@ -35,7 +36,8 @@ let petSession: string | undefined
 let requestedMode: 'work' | 'pet' | undefined
 const appMode = ref<'work' | 'pet'>('work')
 const petState = ref<PetState>({ active: false, action: 1, x: 128, fruit: 0, hour: 18, season: 0, queue: 0,
-  scene: 0, activeToy: 0, toyPhase: 0, stats: { ...previewCare }, deployedToys: [0, 0], foods: [] })
+  scene: 0, activeToy: 0, toyPhase: 0, stats: { ...previewCare }, deployedToys: [0, 0], foods: [],
+  hutchPosition: { ...defaultHutchPosition } })
 const petLinked = ref(false)
 const petNotice = ref('')
 const interactionNotice = ref('')
@@ -51,7 +53,8 @@ const followClock = ref(false)
 const bedtime = ref(false)
 let pendingClock: boolean | undefined
 let nextClockRetry = 0
-const currentToy = computed(() => petToys.find(toy => toy.wireId === petState.value.activeToy))
+const currentToy = computed(() => petRoomItems.find(item => item.wireId === petState.value.activeToy))
+let offlineHutch: HutchPosition = { ...defaultHutchPosition }
 type ParamPair = [PetParameter, PetParameter]
 const petParameterIds = ref<[ParamPair, ParamPair]>([['satiety','sleepiness'], ['mood','affection']])
 const petImages = ref(['', ''])
@@ -59,7 +62,7 @@ const performanceValues = ref<number[]>([])
 const performanceUnavailable = ref(false)
 const petDialog = ref<HTMLDialogElement>()
 const petScreen = ref(0)
-const petTab = ref<'scene' | 'items' | 'ai'>('scene')
+const petTab = ref<'scene' | 'items' | 'decor' | 'ai'>('scene')
 const selectedItem = ref(1)
 const isSleeping = computed(() => bedtime.value || (petLinked.value && generation.value < 3 && petState.value.action === 2))
 const clockText = computed(() => [petState.value.hour, petState.value.minute ?? 0].map(n => String(n).padStart(2, '0')).join(':'))
@@ -73,7 +76,7 @@ watch(petLinked, linked => {
     bindings.value = undefined
     bedtime.value = false
     Object.assign(petState.value, { active: false, stats: { ...(petState.value.stats ?? previewCare) }, activeToy: 0, toyPhase: 0, action: 1,
-      deployedToys: [0, 0], foods: [], toyDrop: 100, queue: 0, fruit: 0 })
+      deployedToys: [0, 0], foods: [], toyDrop: 100, queue: 0, fruit: 0, hutchPosition: { ...offlineHutch } })
   }
 })
 
@@ -86,7 +89,7 @@ function setAppMode(mode: 'work' | 'pet') {
   requestedMode = mode
   appMode.value = mode
   storeMode()
-  showDeviceScreens.value = false
+  if (mode === 'work') refreshDeviceScreens()
   refreshPetDevice()
   liveScreens.tick()
 }
@@ -99,8 +102,9 @@ function applyPetReply(reply: { session?: string; payload: Uint8Array }) {
   petSession = reply.session
   petLinked.value = true
   petNotice.value = ''
-  const world = p.length >= 33
-  generation.value = world ? 3 : p.length === 19 ? 2 : 1
+  generation.value = petStateGeneration(p)
+  const world = generation.value >= 3
+  const decorationOffset = 33 + 6 * p[32]
   bindings.value = world ? Array.from(p.slice(19, 27)) : undefined
   if (bindings.value && bindings.value.some((id, i) => id !== previewKeys.value[i])) {
     previewKeys.value = [...bindings.value]
@@ -115,6 +119,8 @@ function applyPetReply(reply: { session?: string; payload: Uint8Array }) {
     stats: p.length >= 19 ? { satiety: p[12], sleepiness: p[13], mood: p[14], affection: p[15] } : undefined,
     scene: p.length >= 19 ? p[16] : 0,
     activeToy: p[17] ?? 0, toyPhase: p[18] ?? 0,
+    hutchPosition: generation.value >= 4 ? { x: p[decorationOffset] | p[decorationOffset + 1] << 8, y: p[decorationOffset + 2] } : undefined,
+    rabbitY: generation.value >= 4 ? p[decorationOffset + 3] : undefined,
     deployedToys: world ? [p[29], p[30]] : undefined, toyDrop: world ? p[31] : undefined,
     foods: world ? Array.from({ length: p[32] }, (_, i) => {
       const offset = 33 + 6 * i
@@ -125,7 +131,7 @@ function applyPetReply(reply: { session?: string; payload: Uint8Array }) {
 }
 
 async function syncClock() {
-  if (generation.value !== 3 || !petState.value.active) return
+  if (generation.value < 3 || !petState.value.active) return
   if (pendingClock !== undefined) {
     const target = pendingClock
     if (followClock.value !== target) {
@@ -199,8 +205,8 @@ function refreshPetDevice() {
     requestedMode = undefined
     applyPetReply(status)
     if (appMode.value !== actualMode) {
-      if (actualMode === 'pet') showDeviceScreens.value = false
       appMode.value = actualMode
+      if (actualMode === 'work') refreshDeviceScreens()
       storeMode()
     }
     if (actualMode === 'pet') {
@@ -263,7 +269,16 @@ async function interactWithPet(command: number, value: number) {
   if (!petLinked.value) {
     if (conState.value) interactionNotice.value = petNotice.value || '等待读取键盘的宠物状态。'
     else if (command === 8) interactionNotice.value = '连接键盘后即可绑定道具。'
-    else interactionNotice.value = previewWorld.use(command, value) || '本机宠物预览'
+    else if (command === 6) previewWorld.changeScene(value)
+    else {
+      const previewError = previewWorld.use(command, value)
+      interactionNotice.value = previewError || '本机宠物预览'
+      if (!previewError && command === 14 && petState.value.hutchPosition) {
+        offlineHutch = { ...petState.value.hutchPosition }
+        win.myApi.storageMenu('petHutchPreview', JSON.stringify(offlineHutch))
+        interactionNotice.value = '已保存预览中的兔窝位置。'
+      }
+    }
     interacting.value = false
     return
   }
@@ -279,6 +294,11 @@ async function interactWithPet(command: number, value: number) {
     const result = await win.myApi.petAction(command, value)
     if (result.state === 'ready' && result.status === 0 && hasPetPayload(result.payload)) {
       applyPetReply(result)
+      if (command === 14) {
+        const position = petState.value.hutchPosition
+        interactionNotice.value = position && (position.x | (position.y << 9)) === value
+          ? '键盘已保存兔窝位置。' : '键盘尚未确认兔窝位置。'
+      }
       if (command === 8) {
         const key = value >> 4
         const item = value & 15
@@ -286,7 +306,8 @@ async function interactWithPet(command: number, value: number) {
           ? 'K' + (key + 1) + (item ? ' 已绑定' + petItems.find(entry => entry.itemId === item)?.label : ' 已解除道具绑定')
           : '键盘尚未确认此绑定。'
       }
-    } else interactionNotice.value = result.status === 4 || result.state === 'busy'
+    } else if (command === 14) interactionNotice.value = '兔窝位置未保存，请检查键盘连接或稍后再试。'
+    else interactionNotice.value = result.status === 4 || result.state === 'busy'
       ? '兔子正在忙，请稍后再试。' : '键盘未确认这次操作，请检查连接和当前场景。'
   })().catch(() => { interactionNotice.value = '未能同步宠物操作。' }).finally(() => {
     petTask = undefined
@@ -327,7 +348,13 @@ function setPetParameter(row: number, event: Event) {
 
 function useItem(id: number) {
   const item = petItems.find(entry => entry.itemId === id)
-  if (item) void interactWithPet(item.kind === 'fruit' ? 2 : 7, item.wireId)
+  if (item) void triggerItem(item)
+}
+
+function triggerItem(item: typeof petItems[number]) {
+  if (item.kind === 'fruit') return interactWithPet(2, item.wireId)
+  if (item.kind === 'decoration' && (!petLinked.value || generation.value >= 4)) return interactWithPet(15, 0)
+  return interactWithPet(7, item.wireId)
 }
 
 let keyActions = Promise.resolve()
@@ -339,7 +366,7 @@ function pressHomeKey(key: number) {
   keyActions = keyActions.then(async () => {
     if (appMode.value !== 'pet' || petSession !== session) return
     if (petLinked.value && generation.value >= 3) await interactWithPet(12, key)
-    else await interactWithPet(item.kind === 'fruit' ? 2 : 7, item.wireId)
+    else await triggerItem(item)
   }).catch(() => { interactionNotice.value = '未能执行宠物按键。' })
 }
 
@@ -378,6 +405,13 @@ onMounted(async () => {
     if (Array.isArray(savedKeys) && savedKeys.length === 8 && savedKeys.every(id => id === 0 ||
         petItems.some(item => item.itemId === id))) previewKeys.value = savedKeys as number[]
   } catch { /* Offline previews start with the eight fruit keys. */ }
+  try {
+    const saved = JSON.parse(await win.myApi.getMenu('petHutchPreview') || 'null')
+    if (saved && isHutchPosition(saved.x, saved.y)) {
+      offlineHutch = { x: saved.x, y: saved.y }
+      if (!petLinked.value) petState.value.hutchPosition = { ...offlineHutch }
+    }
+  } catch { /* Use the default layout for a new local preview. */ }
   try {
     const savedScene = JSON.parse(await win.myApi.getMenu('petSceneSettings') || 'null')
     followClock.value = savedScene?.followClock === true
@@ -670,7 +704,6 @@ const keyOrder = [0, 2, 4, 6, 1, 3, 5, 7]
 
 const menuIndex = computed(() => configStore.curMenu + 1)
 const menuChange = (func: number) => {
-  showDeviceScreens.value = false
   storageCurMenu()
   setMenu((configStore.curMenu + (func ? 1 : 9)) % 10)
 }
@@ -689,13 +722,11 @@ const storageCurMenu = () => {
 // 显示屏幕编辑
 const openScreenPage = (curScreen: number) => {
   if (appMode.value === 'pet') return configurePetScreen(curScreen)
-  showDeviceScreens.value = false
   storageCurMenu()
   closeStorage()
   createWindow(`/screen?screen=${curScreen}&menu=${configStore.curMenu}`)
 }
 
-const showDeviceScreens = ref(true)
 const deviceScreens = shallowRef<{ menu: number; generation: number; images: string[] }>()
 const screenReadState = ref<DeviceScreens['state']>('disconnected')
 let screenPoll: ReturnType<typeof setInterval> | undefined
@@ -724,13 +755,13 @@ async function readDeviceScreens() {
 }
 
 function refreshDeviceScreens() {
-  if (!conState.value || !showDeviceScreens.value || appMode.value === 'pet' || progressShow.value || firmwareUpdating.value || screenReadTask) return
+  if (!conState.value || appMode.value === 'pet' || progressShow.value || firmwareUpdating.value || screenReadTask) return
   screenReadTask = readDeviceScreens().finally(() => { screenReadTask = undefined })
 }
 
 const screenSourceLabel = computed(() => {
   if (deviceScreens.value) {
-    return showDeviceScreens.value ? `设备画面 · 第 ${deviceScreens.value.menu} 层` : '本机预览'
+    return `设备画面 · 第 ${deviceScreens.value.menu} 层`
   }
   if (screenReadState.value === 'unsupported') return '固件不支持回读'
   if (screenReadState.value === 'empty') return '暂无设备画面'
@@ -739,7 +770,7 @@ const screenSourceLabel = computed(() => {
 })
 
 const screenPreviews = computed(() => {
-  if (showDeviceScreens.value && deviceScreens.value) return deviceScreens.value.images
+  if (conState.value && deviceScreens.value) return deviceScreens.value.images
   return configStore.screenData.map((saved, screen) => {
     const baseData = liveScreens.current(configStore.curMenu, screen, saved)?.frame?.baseData ?? saved.baseData
     return baseData ? `data:image/png;base64,${baseData}` : ''
@@ -824,12 +855,9 @@ const showAppInfo = () => {
             title="重新连接键盘" @click="titleClick">
             {{ conState ? '已连接' : '未连接' }}
           </button>
-          <button v-if="conState && appMode === 'work'" class="screen-source" type="button"
-            :aria-pressed="Boolean(deviceScreens && showDeviceScreens)"
-            :title="deviceScreens ? '切换设备画面与本机预览' : undefined"
-            @click="showDeviceScreens = !showDeviceScreens; refreshDeviceScreens()">
+          <span v-if="conState && appMode === 'work'" class="readback-state" role="status">
             {{ screenSourceLabel }}
-          </button>
+          </span>
           <button class="firmware-update" type="button" :disabled="firmwareUpdating || progressShow"
             title="通过 USB 升级键盘固件" @click="updateFirmware">
             {{ firmwareUpdating ? '升级中' : 'USB 升级' }}
@@ -854,7 +882,7 @@ const showAppInfo = () => {
           <span class="screen-image">
             <PetDisplay v-if="appMode === 'pet' && index === 0" :state="petState" :connected="petLinked && petState.active" />
             <img v-else-if="appMode === 'pet' && index && petImages[index - 1]" :src="petImages[index - 1]" alt="" />
-            <PerformanceDisplay v-else-if="index === 0 && configStore.screenData[0].content?.mode === 'performance'"
+            <PerformanceDisplay v-else-if="appMode === 'work' && !(conState && deviceScreens) && index === 0 && configStore.screenData[0].content?.mode === 'performance'"
               :values="performanceValues" />
             <img v-else-if="appMode === 'work' && screenPreviews[index]" :src="screenPreviews[index]" alt="" />
           </span>
@@ -899,10 +927,13 @@ const showAppInfo = () => {
         </header>
         <template v-if="petScreen === 0">
           <nav class="pet-tabs" aria-label="宠物设置">
-            <button v-for="tab in ([['scene','场景与作息'],['items','道具与按键'],['ai','AI 控制']] as const)" :key="tab[0]"
+            <button v-for="tab in ([['scene','场景与作息'],['items','道具与按键'],['decor','装饰布置'],['ai','AI 控制']] as const)" :key="tab[0]"
               type="button" :aria-pressed="petTab === tab[0]" @click="petTab = tab[0]; interactionNotice = ''">{{ tab[1] }}</button>
           </nav>
           <PetAiSettings v-if="petTab === 'ai'" :device-ready="petLinked && petState.active" />
+          <PetDecorationPanel v-else-if="petTab === 'decor'" :state="petState" :connected="petLinked" :generation="generation"
+            :busy="interacting || (conState && !petLinked)" @enter="interactWithPet(6, 1)"
+            @move="p => interactWithPet(14, p.x | (p.y << 9))" @rest="interactWithPet(15, 0)" />
           <PetItemsPanel v-else-if="petTab === 'items'" :selected="selectedItem" :bindings="bindings" :generation="generation"
             :connected="petLinked" :busy="interacting" :occupied="!!currentToy" :scene="petState.scene"
             :deployed-toys="petState.deployedToys" :toy-drop="petState.toyDrop" :food-count="petState.foods?.length ?? 0"
@@ -1062,7 +1093,7 @@ const showAppInfo = () => {
   font-weight: 700;
 }
 
-.connection-state, .screen-source, .firmware-update {
+.connection-state, .firmware-update {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1074,7 +1105,6 @@ const showAppInfo = () => {
 }
 
 .home-toolbar .connection-state,
-.home-toolbar .screen-source,
 .home-toolbar .firmware-update {
   -webkit-app-region: no-drag;
 }
@@ -1095,13 +1125,10 @@ const showAppInfo = () => {
   }
 }
 
-.screen-source {
+.readback-state {
   margin-left: auto;
-
-  &[aria-pressed='true'] {
-    background: #dcebe6;
-    color: #234936;
-  }
+  color: #334b4a;
+  font-size: 12px;
 }
 
 .firmware-update {

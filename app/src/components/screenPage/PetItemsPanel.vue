@@ -22,20 +22,24 @@ const emit = defineEmits<{
   play: [wireId: number]
 }>()
 const selectedItem = computed(() => petItems.find(item => item.itemId === props.selected) ?? petItems[0])
-const groups = [
+const independentHutch = computed(() => !props.connected || props.generation >= 4)
+const groups = computed(() => [
   { title: '零食', entries: petItems.filter(item => item.kind === 'fruit') },
-  { title: '玩具', entries: petItems.filter(item => item.kind === 'toy') }
-]
+  { title: '玩具', entries: petItems.filter(item => item.kind === 'toy' || (!independentHutch.value && item.kind === 'decoration')) },
+  ...(independentHutch.value ? [{ title: '装饰', entries: petItems.filter(item => item.kind === 'decoration') }] : [])
+])
 const available = computed(() => !props.connected || props.generation >= selectedItem.value.minGeneration)
 const placement = computed(() => !props.connected || props.generation >= 3)
 const targetScene = computed(() => selectedItem.value.id === 'rabbit_hutch' ? 1 : props.scene)
 const deployed = computed(() => props.deployedToys?.[targetScene.value] ?? 0)
-const placed = computed(() => selectedItem.value.kind === 'toy' && deployed.value === selectedItem.value.wireId)
+const visiting = computed(() => independentHutch.value && selectedItem.value.kind === 'decoration')
+const placed = computed(() => !visiting.value && selectedItem.value.kind !== 'fruit' && deployed.value === selectedItem.value.wireId)
 const canUse = computed(() => available.value && !props.busy && (placement.value || !props.occupied) &&
   (selectedItem.value.kind !== 'fruit' || props.foodCount < 8))
 const useLabel = computed(() => {
   const item = selectedItem.value
   if (item.kind === 'fruit') return '投喂' + item.label
+  if (visiting.value) return '去兔窝小憩'
   const room = targetScene.value !== props.scene ? '去宝宝房' : ''
   if (!placement.value) return room + '使用' + item.label
   return room + (placed.value ? '收回' : deployed.value ? '替换为' : '投放') + item.label

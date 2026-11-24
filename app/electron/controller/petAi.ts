@@ -5,10 +5,10 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { setTimeout as delay } from 'node:timers/promises'
 import { z } from 'zod'
 import { createPetMcp } from './petMcp'
-import { petActionLabels, petActions, playableActions, petScenes, petToyIds, petToyPhases, petToys, petFoodStages,
+import { petActionLabels, petActions, playableActions, petScenes, petToyIds, petToyPhases, petRoomItems, petFoodStages,
   petFruitIds as fruits, petFruitLabels as fruitLabel } from '../../src/utils/petCatalog'
 
-const allowedTools = ['pet_play_action', 'pet_feed', 'pet_use_toy', 'pet_place_toy', 'pet_interact_with_toy'] as const
+const allowedTools = ['pet_play_action', 'pet_feed', 'pet_use_toy', 'pet_place_toy', 'pet_interact_with_toy', 'pet_interact_with_decoration'] as const
 const settingsSchema = z.object({
   apiUrl: z.string().trim().min(1).max(2048),
   model: z.string().trim().min(1).max(200),
@@ -22,6 +22,8 @@ const stateSchema = z.object({
   season: z.string(), bedtime: z.boolean().nullable(),
   stats: z.object({ satiety: stat, sleepiness: stat, mood: stat, affection: stat }).nullable(),
   scene: z.enum(petScenes).nullable(), activeToy: z.enum(petToyIds).nullable(),
+  activeDecoration: z.literal('rabbit_hutch').nullable(), decorationPhase: z.enum(petToyPhases).nullable(),
+  hutchPosition: z.object({ x: z.number(), y: z.number() }).nullable(),
   toyPhase: z.enum(petToyPhases).nullable(), availableToys: z.array(z.enum(petToyIds)),
   deployedToys: z.object({ garden: z.enum(petToyIds).nullable(), nursery: z.enum(petToyIds).nullable() }).nullable(),
   toyDropProgress: z.number().nullable(),
@@ -29,9 +31,10 @@ const stateSchema = z.object({
 })
 type PetState = z.infer<typeof stateSchema>
 const usingToy = (pet: PetState) => !!pet.activeToy || pet.toyPhase === 'using' || pet.toyPhase === 'approaching'
-const asleepInHutch = (pet: PetState) => pet.bedtime && pet.activeToy === 'rabbit_hutch' &&
-  pet.toyPhase === 'using' && pet.action === 'sleep'
-const busyWithToy = (pet: PetState) => usingToy(pet) && !asleepInHutch(pet)
+const hutchPhase = (pet: PetState) => pet.activeDecoration === 'rabbit_hutch' ? pet.decorationPhase :
+  pet.activeToy === 'rabbit_hutch' ? pet.toyPhase : null
+const asleepInHutch = (pet: PetState) => pet.bedtime && hutchPhase(pet) === 'using' && pet.action === 'sleep'
+const busyWithToy = (pet: PetState) => (usingToy(pet) || !!pet.activeDecoration) && !asleepInHutch(pet)
 const hasFood = (pet: PetState) => pet.foods ? pet.foods.length > 0 : !!(pet.fruit || pet.queuedFruit)
 const canAutoFeed = (pet: PetState) => !hasFood(pet) && pet.stats?.satiety !== 100
 const foodInProgress = (pet: PetState) => hasFood(pet) &&
@@ -155,6 +158,7 @@ async function decide(provider: Provider, client: Client, prompt: string, pet?: 
   const choice = pet && !sleeping ? toyChoice(pet) : undefined
   const toys = choice?.toys ?? []
   const offered = tools.filter(tool => (tool.name === 'pet_feed' && (!pet || canAutoFeed(pet))) ||
+    (tool.name === 'pet_interact_with_decoration' && pet?.hutchPosition && !sleeping) ||
     (pet && tool.name === 'pet_play_action') || (toys.length && tool.name === choice?.tool)).map(tool => {
     const { $schema: _schema, ...parameters } = tool.inputSchema
     if (tool.name === 'pet_play_action' || tool.name === choice?.tool) {
@@ -192,6 +196,10 @@ async function decide(provider: Provider, client: Client, prompt: string, pet?: 
   const args: unknown = JSON.parse(call.arguments)
   if (call.name === 'pet_feed') {
     return { name: call.name, fruit: z.object({ fruit: z.enum(fruits) }).strict().parse(args).fruit } as const
+  }
+  if (call.name === 'pet_interact_with_decoration') {
+    const { decoration } = z.object({ decoration: z.literal('rabbit_hutch') }).strict().parse(args)
+    return { name: call.name, decoration } as const
   }
   if (call.name === 'pet_use_toy' || call.name === 'pet_place_toy' || call.name === 'pet_interact_with_toy') {
     const { toy } = z.object({ toy: z.enum(petToyIds) }).strict().parse(args)
@@ -319,6 +327,14 @@ async function run(kind: 'auto' | 'connection' | 'feed') {
           status = { phase: 'idle', message: '兔子状态已改变，等待下次决策' }
           return
         }
+        if (decision.name === 'pet_interact_with_decoration') {
+          if (!fresh.hutchPosition) throw Error('当前键盘不支持兔窝装饰')
+          const receipt = stateSchema.parse(await callPet(client, decision.name, { decoration: decision.decoration }))
+          status = receipt.session === fresh.session && receipt.activeDecoration === decision.decoration
+            ? { phase: 'action', message: 'AI 让兔子去窝里小憩' }
+            : { phase: 'unconfirmed', message: '键盘未确认兔子开始小憩' }
+          return
+        }
         if (decision.name !== 'pet_play_action') {
           const choice = toyChoice(fresh)
           if (decision.name !== choice.tool || !choice.toys.includes(decision.toy)) throw Error('场景中的玩具已改变')
@@ -327,13 +343,12 @@ async function run(kind: 'auto' | 'connection' | 'feed') {
           const accepted = placing ? receipt.scene && receipt.deployedToys?.[receipt.scene] === decision.toy :
             receipt.activeToy === decision.toy && usingToy(receipt)
           status = receipt.session === fresh.session && accepted
-            ? { phase: 'action', message: (placing ? 'AI 放下了' : 'AI 让兔子去使用') + petToys.find(toy => toy.id === decision.toy)!.label }
+            ? { phase: 'action', message: (placing ? 'AI 放下了' : 'AI 让兔子去使用') + petRoomItems.find(toy => toy.id === decision.toy)!.label }
             : { phase: 'unconfirmed', message: '键盘未确认本次玩具操作' }
           return
         }
         const receipt = stateSchema.parse(await callPet(client, 'pet_play_action', { action: decision.action }))
-        const headingToBed = decision.action === 'sleep' && receipt.bedtime && receipt.activeToy === 'rabbit_hutch' &&
-          receipt.toyPhase === 'approaching'
+        const headingToBed = decision.action === 'sleep' && receipt.bedtime && hutchPhase(receipt) === 'approaching'
         if (receipt.session !== fresh.session || (receipt.action !== decision.action && !headingToBed)) {
           status = { phase: 'unconfirmed', message: '未能确认兔子已开始所选动作' }
           return

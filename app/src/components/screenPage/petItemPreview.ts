@@ -1,10 +1,12 @@
 import type { PetState } from './petDisplay'
+import { defaultHutchPosition, isHutchPosition } from '../../utils/petCatalog'
 
 export const previewCare = { satiety: 65, sleepiness: 25, mood: 70, affection: 35 }
 type Food = { id: number; x: number; droppedAt: number }
 type Room = { toy: number; droppedAt: number; awaitingPlay: boolean; foods: Food[] }
 type FoodActivity = { target: number; eatingAt?: number }
-type ToyActivity = { bedtime: boolean; usingAt?: number; gardenFood: boolean }
+type RoomActivity = { item: 1 | 2; bedtime: boolean; usingAt?: number; gardenFood: boolean;
+  fromX: number; fromY: number; walkStart: number }
 
 const fallMs = 650
 const clampStat = (value: number) => Math.max(0, Math.min(value, 100))
@@ -12,7 +14,7 @@ const clampStat = (value: number) => Math.max(0, Math.min(value, 100))
 export function createPetItemPreview(state: () => PetState, setBedtime: (enabled: boolean) => void) {
   const rooms: Room[] = [0, 1].map(() => ({ toy: 0, droppedAt: 0, awaitingPlay: false, foods: [] }))
   let food: FoodActivity | undefined
-  let play: ToyActivity | undefined
+  let play: RoomActivity | undefined
   let gesture: { action: number; until: number } | undefined
   let timer: number | undefined
   let lastTick = 0
@@ -39,24 +41,27 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
   function switchRoom(scene: number) {
     if (scene === state().scene) return
     state().scene = scene
+    state().rabbitY = 139
     play = undefined
     food = undefined
     gesture = undefined
   }
 
   function place(room: Room, toy: number) {
-    play = undefined
+    if (play?.item === 2) play = undefined
     room.toy = toy
     room.droppedAt = time
     room.awaitingPlay = !!toy
   }
 
-  function goToBed() {
+  function startActivity(item: 1 | 2, bedtime = false, gardenFood = false) {
+    play = { item, bedtime, gardenFood, fromX: state().x, fromY: state().rabbitY ?? 139, walkStart: time }
+  }
+
+  function visitHutch(bedtime: boolean) {
     const gardenFood = state().scene === 0 && rooms[0].foods.length > 0
     switchRoom(1)
-    if (rooms[1].toy !== 1) place(rooms[1], 1)
-    rooms[1].awaitingPlay = false
-    play = { bedtime: true, gardenFood }
+    startActivity(1, bedtime, gardenFood)
   }
 
   function update() {
@@ -92,19 +97,27 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
       if (!food && gesture.action === 12) reward(0, 0, 1, 1)
       gesture = undefined
     }
-    if (room.awaitingPlay && time - room.droppedAt >= fallMs && !food && !(hungry && first)) {
+    if (!play && room.awaitingPlay && time - room.droppedAt >= fallMs && !food && !(hungry && first)) {
       room.awaitingPlay = false
-      play = { bedtime: false, gardenFood: false }
+      startActivity(2)
       gesture = undefined
     }
     if (!play && !food && !gesture && (!first || !hungry) && time - lastInput >= 18_000) {
-      goToBed()
+      visitHutch(true)
       room = rooms[pet.scene]
     }
     if (play) {
-      const hutch = room.toy === 1
+      const hutch = play.item === 1
       if (play.usingAt === undefined) {
-        if (move(hutch ? 246 : 151, dt * .078) && time - room.droppedAt >= fallMs) play.usingAt = time
+        if (hutch) {
+          const target = pet.hutchPosition ?? defaultHutchPosition
+          const dx = target.x - play.fromX, dy = target.y - play.fromY
+          const distance = Math.max(Math.abs(dx), Math.abs(dy))
+          const progress = distance ? Math.min(1, (time - play.walkStart) * .078 / distance) : 1
+          pet.x = play.fromX + Math.trunc(dx * progress)
+          pet.rabbitY = play.fromY + Math.trunc(dy * progress)
+          if (progress === 1) { pet.x = target.x; pet.rabbitY = target.y; play.usingAt = time }
+        } else if (move(151, dt * .078)) play.usingAt = time
       } else if (!play.bedtime && time - play.usingAt >= (hutch ? 4500 : 2400)) {
         reward(0, hutch ? -12 : 2, hutch ? 5 : 6, 2)
         lastInput = time
@@ -126,9 +139,10 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
         stage: index === 0 && food?.eatingAt !== undefined ? 2 : t === 1 ? 1 : 0 }
     })
     const toyPhase = !play ? 0 : play.usingAt === undefined ? 1 : 2
-    pet.action = play ? toyPhase === 1 ? 1 : room.toy === 1 ? 2 : 3 :
+    pet.action = play ? toyPhase === 1 ? 1 : play.item === 1 ? 2 : 3 :
       food ? food.eatingAt === undefined ? 5 : 3 : gesture?.action ?? 0
-    pet.activeToy = play ? room.toy : 0
+    pet.activeToy = play?.item ?? 0
+    if (pet.activeToy !== 1) pet.rabbitY = 139
     pet.toyPhase = toyPhase
     pet.fruit = food ? foods[0].id : 0
     pet.queue = foods.length - Number(!!food)
@@ -161,7 +175,6 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     update()
     const pet = state()
     const hungry = pet.stats!.satiety < 100
-    if (command === 7 && value === 1) switchRoom(1)
     const room = rooms[pet.scene]
     if (command === 2) {
       if (room.foods.length >= 8) return '场内已有八份零食。'
@@ -177,11 +190,25 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
       if (room.toy !== value) return '请先投放玩具。'
       if (time - room.droppedAt < fallMs || !!play || (hungry && room.foods.length)) return '兔子正在忙，请稍后再试。'
       room.awaitingPlay = false
-      play = { bedtime: false, gardenFood: false }
+      startActivity(2)
+    } else if (command === 14) {
+      const position = { x: value & 511, y: value >> 9 }
+      if (!isHutchPosition(position.x, position.y)) return '请将兔窝放在场景范围内。'
+      pet.hutchPosition = position
+      if (play?.item === 1) {
+        if (play.usingAt === undefined) {
+          play.fromX = pet.x
+          play.fromY = pet.rabbitY ?? 139
+          play.walkStart = time
+        } else { pet.x = position.x; pet.rabbitY = position.y }
+      }
+    } else if (command === 15) {
+      if (food) return '兔子正在吃零食。'
+      if (play?.item !== 1) visitHutch(false)
     } else if (command === 3) {
       if (food || (value !== 2 && play && !play.bedtime)) return '兔子正在忙，请稍后再试。'
       if (value === 2) {
-        if (!play?.bedtime) goToBed()
+        if (!play?.bedtime) visitHutch(true)
       } else {
         play = undefined
         gesture = value === 0 ? undefined : { action: value, until: time + (value === 12 ? 3000 : 2050) }

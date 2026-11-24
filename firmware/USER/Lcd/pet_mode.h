@@ -34,7 +34,10 @@ typedef enum {
     PET_EVENT_TOY_STARTED,
     PET_EVENT_TOY_FINISHED,
     PET_EVENT_TOY_PLACED,
-    PET_EVENT_TOY_REMOVED
+    PET_EVENT_TOY_REMOVED,
+    PET_EVENT_DECORATION_STARTED,
+    PET_EVENT_DECORATION_FINISHED,
+    PET_EVENT_DECORATION_MOVED
 } PetEventKind;
 
 typedef struct {
@@ -55,6 +58,7 @@ void pet_mode_poll(void);
 /* USB diagnostics report the action, position and completed LCD frame count. */
 PetAction pet_mode_action(void);
 uint16_t pet_mode_x(void);
+uint8_t pet_mode_y(void);
 uint32_t pet_mode_frames(void);
 uint8_t pet_mode_fruit(void);
 uint8_t pet_mode_hour(void);
@@ -72,6 +76,7 @@ typedef struct {
 uint8_t pet_mode_foods(PetFloorFood *out);
 uint8_t pet_mode_toy_drop(void);
 uint8_t pet_mode_control(uint8_t opcode, uint8_t value);
+uint8_t pet_mode_move_hutch(uint16_t x, uint16_t y);
 uint8_t pet_mode_events(uint32_t after, PetEvent *out, bool *overrun, bool *more);
 
 #endif

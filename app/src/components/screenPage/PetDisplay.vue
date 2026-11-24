@@ -1,13 +1,82 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { drawCarrotToy, drawGarden, drawPetEffects, drawNursery, drawNurseryHutch, drawNurseryLight, drawSceneClock, tintNursery, type PetAction } from './petScene'
 import { drawRabbit, rabbitAtlasUrl } from './petAnimation'
 import itemsUrl from '../../assets/pet/items.png'
-import type { PetState } from './petDisplay'
-import { petActions, petSceneLabels, petScenes, petToys } from '../../utils/petCatalog'
+import type { HutchPosition, PetState } from './petDisplay'
+import { defaultHutchPosition, hutchBounds, petActions, petSceneLabels, petScenes } from '../../utils/petCatalog'
 
-const props = defineProps<{ state: PetState; connected: boolean }>()
+const props = defineProps<{ state: PetState; connected: boolean; editableDecoration?: boolean; decorationBusy?: boolean }>()
+const emit = defineEmits<{ moveHutch: [position: HutchPosition] }>()
 const canvas = ref<HTMLCanvasElement>()
+const hutchButton = ref<HTMLButtonElement>()
+const dragging = ref<HutchPosition>()
+const hutchAt = computed(() => dragging.value ?? props.state.hutchPosition ?? defaultHutchPosition)
+const showHandle = computed(() => !!props.editableDecoration && props.state.scene === 1 && !!props.state.hutchPosition)
+const canMove = computed(() => showHandle.value && !props.decorationBusy)
+const handleStyle = computed(() => ({
+  left: (hutchAt.value.x - 41) / 320 * 100 + '%',
+  top: (hutchAt.value.y - 69) / 172 * 100 + '%'
+}))
+let grab: { pointerId: number; x: number; y: number } | undefined
+
+function limitPosition(x: number, y: number): HutchPosition {
+  return { x: Math.max(hutchBounds.minX, Math.min(hutchBounds.maxX, Math.round(x))),
+    y: Math.max(hutchBounds.minY, Math.min(hutchBounds.maxY, Math.round(y))) }
+}
+
+function scenePoint(event: PointerEvent) {
+  const bounds = canvas.value!.getBoundingClientRect()
+  return { x: (event.clientX - bounds.left) * 320 / bounds.width, y: (event.clientY - bounds.top) * 172 / bounds.height }
+}
+
+function startDrag(event: PointerEvent) {
+  if (!canMove.value || !event.isPrimary || event.button !== 0 || grab) return
+  const pos = scenePoint(event)
+  grab = { pointerId: event.pointerId, x: pos.x - hutchAt.value.x, y: pos.y - hutchAt.value.y }
+  dragging.value = { ...hutchAt.value }
+  hutchButton.value?.setPointerCapture(event.pointerId)
+}
+
+function moveDrag(event: PointerEvent) {
+  if (!grab || grab.pointerId !== event.pointerId) return
+  const pos = scenePoint(event)
+  dragging.value = limitPosition(pos.x - grab.x, pos.y - grab.y)
+}
+
+function cancelDrag() {
+  const id = grab?.pointerId
+  grab = undefined
+  dragging.value = undefined
+  if (id !== undefined && hutchButton.value?.hasPointerCapture(id)) hutchButton.value.releasePointerCapture(id)
+}
+
+function savePosition(position: HutchPosition) {
+  if (canMove.value && (position.x !== props.state.hutchPosition?.x || position.y !== props.state.hutchPosition?.y))
+    emit('moveHutch', position)
+}
+
+function endDrag(event: PointerEvent) {
+  if (grab?.pointerId !== event.pointerId) return
+  moveDrag(event)
+  const position = dragging.value
+  cancelDrag()
+  if (position) savePosition(position)
+}
+
+const arrowSteps: Record<string, readonly [number, number]> = {
+  ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1]
+}
+function nudge(event: KeyboardEvent) {
+  if (event.key === 'Escape' && grab) { event.preventDefault(); cancelDrag(); return }
+  const step = arrowSteps[event.key]
+  if (!step || grab) return
+  event.preventDefault()
+  const size = event.shiftKey ? 8 : 1
+  savePosition(limitPosition(hutchAt.value.x + step[0] * size, hutchAt.value.y + step[1] * size))
+}
+watch(canMove, enabled => { if (!enabled) cancelDrag() })
+
 const nurseryShadowRadii = [14, 19, 18, 12]
 let frameId = 0
 
@@ -67,20 +136,22 @@ onMounted(() => {
       lastScene = scene
       lastLighting = lighting
     }
-    const toy = petToys.find(toy => toy.wireId === activeToy)?.id
-    const inHutch = toy === 'rabbit_hutch'
+    const fixedDecoration = !!props.state.hutchPosition
+    const home = hutchAt.value
+    const inHutch = nursery && activeToy === 1
     const resting = inHutch && toyPhase === 2
     const stateAction = petActions[action] ?? 'idle'
     const clip: PetAction = stateAction === 'fetch' ? 'walk' :
       stateAction === 'fall' || stateAction === 'jump' ? 'react' : stateAction
     const roaming = clip === 'walk' || clip === 'run' || clip === 'flee'
-    const playingCarrot = toy === 'carrot_toy'
+    const playingCarrot = activeToy === 2
     const followingFood = !!foods?.length && (stateAction === 'fetch' || stateAction === 'eat')
-    const target = props.connected || followingFood ? position : inHutch ? 246 : playingCarrot ? 151 : roaming ? 160 + Math.sin(now / 1750) * 94 : x
+    const target = props.connected || followingFood ? position : inHutch ? home.x : playingCarrot ? 151 : roaming ? 160 + Math.sin(now / 1750) * 94 : x
     if (Math.abs(target - x) > 1) direction = target > x ? 1 : -1
     x += (target - x) * (inHutch && !props.connected ? .055 : .14)
-    if (resting) { x = 246; direction = -1 }
+    if (resting) { x = home.x; direction = -1 }
     if (playingCarrot && toyPhase === 2) { x = 151; direction = 1 }
+    const rabbitY = resting ? home.y : (props.state.rabbitY ?? 139)
     if (lastAction !== action) {
       lastAction = action
       actionStart = now
@@ -99,21 +170,22 @@ onMounted(() => {
     if (nursery && toyPhase !== 2) {
       display!.fillStyle = 'rgba(130, 108, 107, .2)'
       nurseryShadowRadii.forEach((radius, row) =>
-        display!.fillRect(Math.round(x) - radius, 138 + row, radius * 2, 1))
+        display!.fillRect(Math.round(x) - radius, rabbitY - 1 + row, radius * 2, 1))
     }
     const elapsed = now - actionStart
     const deployed = deployedToys?.[scene] ?? (nursery ? 1 : 0)
     const drop = Math.min(1, (toyDrop ?? 100) / 100 + (now - sampleAt) / 650)
     const dy = -Math.round(146 * (1 - drop))
-    if (deployed === 1) display!.drawImage(hutch, 205, 73 + dy)
+    if (nursery && (fixedDecoration || deployed === 1))
+      display!.drawImage(hutch, home.x - 41, home.y - 69 + (fixedDecoration ? 0 : dy))
     if (deployed === 2) {
       display!.save()
       display!.translate(0, dy)
       drawCarrotToy(display!, playingCarrot && toyPhase === 2, elapsed)
       display!.restore()
     }
-    drawRabbit(display!, atlas, Math.round(x), resting ? 142 : 139, direction, clip, elapsed)
-    if (resting) display!.drawImage(hutch, 21, 63, 40, 4, 226, 136, 40, 4)
+    drawRabbit(display!, atlas, Math.round(x), rabbitY, direction, clip, elapsed)
+    if (resting) display!.drawImage(hutch, 21, 63, 40, 4, home.x - 20, home.y - 6, 40, 4)
     if (foods && items.complete && items.naturalWidth) {
       for (const food of foods) {
         if (food.id < 1 || food.id > 8) continue
@@ -124,7 +196,10 @@ onMounted(() => {
         display!.drawImage(items, (food.id - 1) * 16 + 3, 3, 9, 9, food.x - 9, y - 9, 18, 18)
       }
     }
+    display!.save()
+    display!.translate(0, rabbitY - (resting ? 142 : 139))
     drawPetEffects(display!, Math.round(x), direction, clip, elapsed, true)
+    display!.restore()
     drawSceneClock(display!, hour, props.state.minute ?? 0)
     frameId = requestAnimationFrame(frame)
   }
@@ -134,9 +209,21 @@ onUnmounted(() => cancelAnimationFrame(frameId))
 </script>
 
 <template>
-  <canvas ref="canvas" width="320" height="172" :aria-label="petSceneLabels[petScenes[state.scene]] + '里的垂耳兔'" role="img" />
+  <div class="pet-scene">
+    <canvas ref="canvas" width="320" height="172" :aria-label="petSceneLabels[petScenes[state.scene]] + '里的垂耳兔'" role="img" />
+    <button v-if="showHandle" ref="hutchButton" class="hutch-handle" :class="{ dragging }" :style="handleStyle"
+      type="button" :aria-disabled="!canMove" aria-label="移动兔窝" title="拖动兔窝，或用方向键微调"
+      @pointerdown="startDrag" @pointermove="moveDrag" @pointerup="endDrag"
+      @pointercancel="cancelDrag" @lostpointercapture="cancelDrag" @keydown="nudge"></button>
+  </div>
 </template>
 
 <style scoped>
-canvas { display: block; width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+.pet-scene { position: relative; width: 100%; aspect-ratio: 320 / 172; overflow: hidden; border-radius: inherit; }
+canvas { display: block; width: 100%; height: auto; image-rendering: pixelated; }
+.pet-scene .hutch-handle { position:absolute; width:25.3125%; height:43.0233%; box-sizing:border-box;
+  padding:0; margin:0; background:transparent; border:1px dashed rgb(39 86 75 / 70%);
+  border-radius:9px; cursor:grab; touch-action:none; }
+.hutch-handle:hover,.hutch-handle:focus-visible,.hutch-handle.dragging { outline:2px solid #276550; outline-offset:-2px; }
+.hutch-handle.dragging { cursor:grabbing; }
 </style>

@@ -3,6 +3,7 @@
 #include "live_oled.h"
 #include "lcd_user.h"
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "pet_art.inc"
@@ -34,7 +35,7 @@ _Static_assert(sizeof(fruit_art) / sizeof(fruit_art[0]) == FRUIT_COUNT, "Each ke
 
 typedef struct {
     uint16_t left, right, row, bottom;
-    int16_t x, y;
+    int16_t x, y, hutch_x, hutch_y;
     int8_t direction;
     uint8_t sprite;
     PetAction action;
@@ -47,7 +48,8 @@ typedef struct {
 static bool active;
 static PetAction action;
 static uint32_t action_since, last_input, last_frame, last_motion, frames;
-static int16_t x, last_x;
+static int16_t x, y, last_x, approach_x, approach_y;
+static uint16_t approach_travel, approach_distance;
 static int8_t direction;
 static uint32_t walk_remainder;
 static PetFrame frame;
@@ -98,7 +100,7 @@ typedef struct {
 } PetToy;
 
 static const PetToy toys[] = {
-    {TOY_RABBIT_HUTCH, PET_NURSERY, 246, -1, PET_SLEEP, 4500, -12, 5, 2},
+    {TOY_RABBIT_HUTCH, PET_NURSERY, 0, -1, PET_SLEEP, 4500, -12, 5, 2},
     {TOY_CARROT, ANY_SCENE, CARROT_X - 23, 1, PET_EAT, 2400, 2, 6, 2}
 };
 static const PetToy *active_toy;
@@ -161,25 +163,44 @@ static void change_background(uint8_t scene, uint8_t source) {
 
 static void end_toy(bool interrupted, uint8_t source, uint32_t now) {
     if (!active_toy) return;
-    record_event(PET_EVENT_TOY_FINISHED, active_toy->id, source, interrupted);
+    record_event(active_toy->id == TOY_RABBIT_HUTCH ? PET_EVENT_DECORATION_FINISHED : PET_EVENT_TOY_FINISHED,
+                 active_toy->id, source, interrupted);
     active_toy = NULL;
     toy_phase = TOY_IDLE;
     bedtime = false;
     return_for_garden_food = false;
+    y = GROUND;
     last_input = now;
     set_action_from(PET_IDLE, now, source);
 }
 
+static int16_t target_x(void) {
+    return active_toy->id == TOY_RABBIT_HUTCH ? (int16_t)pet_care_get()->hutch_x : active_toy->target_x;
+}
+
+static int16_t target_y(void) {
+    return active_toy->id == TOY_RABBIT_HUTCH ? pet_care_get()->hutch_y : GROUND;
+}
+
+static void aim_at_activity(void) {
+    approach_x = x;
+    approach_y = y;
+    const int dx = target_x() - x, dy = target_y() - y;
+    approach_distance = abs(dx) > abs(dy) ? abs(dx) : abs(dy);
+    approach_travel = walk_remainder = 0;
+    if (dx) direction = dx > 0 ? 1 : -1;
+}
+
 static void start_toy(const PetToy *toy, bool long_sleep, uint8_t source, uint32_t now) {
-    current_floor()->awaiting_play = false;
+    if (toy->id != TOY_RABBIT_HUTCH) current_floor()->awaiting_play = false;
     active_toy = toy;
     toy_source = source;
     bedtime = long_sleep;
     toy_phase = TOY_APPROACHING;
-    direction = x < toy->target_x ? 1 : -1;
-    walk_remainder = 0;
+    aim_at_activity();
     last_input = now;
-    record_event(PET_EVENT_TOY_STARTED, toy->id, source, 0);
+    record_event(toy->id == TOY_RABBIT_HUTCH ? PET_EVENT_DECORATION_STARTED : PET_EVENT_TOY_STARTED,
+                 toy->id, source, 0);
     set_action_from(PET_WALK, now, source);
 }
 
@@ -187,7 +208,7 @@ static void place_toy(uint8_t id, uint8_t source, uint32_t now) {
     const uint8_t scene = pet_care_get()->scene, previous = pet_care_get()->placed[scene];
     PetFloor *floor = current_floor();
     if (previous) {
-        end_toy(true, source, now);
+        if (active_toy && active_toy->id == previous) end_toy(true, source, now);
         record_event(PET_EVENT_TOY_REMOVED, previous, source, scene);
     }
     pet_care_set_toy(scene, id);
@@ -205,18 +226,35 @@ static uint8_t deploy_toy(uint8_t id, bool only_if_empty, uint8_t source, uint32
     return OK;
 }
 
-static void go_to_bed(uint8_t source, uint32_t now) {
+static void visit_hutch(bool long_sleep, uint8_t source, uint32_t now) {
     const bool left_food = pet_care_get()->scene == PET_GARDEN && current_floor()->count;
+    if (active_toy && active_toy->id == TOY_RABBIT_HUTCH) {
+        if (long_sleep) bedtime = true;
+        return;
+    }
+    end_toy(true, source, now);
     change_background(PET_NURSERY, source);
-    if (pet_care_get()->placed[PET_NURSERY] != TOY_RABBIT_HUTCH)
-        place_toy(TOY_RABBIT_HUTCH, source, now);
-    start_toy(find_toy(TOY_RABBIT_HUTCH), true, source, now);
-    return_for_garden_food = left_food;
+    start_toy(find_toy(TOY_RABBIT_HUTCH), long_sleep, source, now);
+    return_for_garden_food = long_sleep && left_food;
+}
+
+uint8_t pet_mode_move_hutch(uint16_t new_x, uint16_t new_y) {
+    if (!active) return INACTIVE;
+    if (new_x == pet_care_get()->hutch_x && new_y == pet_care_get()->hutch_y) return OK;
+    if (!pet_care_move_hutch(new_x, new_y)) return INVALID;
+    if (active_toy && active_toy->id == TOY_RABBIT_HUTCH) {
+        if (toy_phase == TOY_APPROACHING) aim_at_activity();
+        else { x = new_x; y = new_y; }
+    }
+    if (pet_care_get()->scene == PET_NURSERY) redraw_scene = true;
+    record_event(PET_EVENT_DECORATION_MOVED, TOY_RABBIT_HUTCH, SOURCE_MCP, PET_NURSERY);
+    return OK;
 }
 
 static void start_mode(uint32_t now) {
     active = true;
     x = last_x = 78;
+    y = GROUND;
     direction = 1;
     frames = walk_remainder = 0;
     last_input = last_frame = last_motion = now;
@@ -245,6 +283,7 @@ static void set_mode(bool enabled, uint8_t source, uint32_t now) {
 bool pet_mode_is_active(void) { return active; }
 PetAction pet_mode_action(void) { return active ? action : PET_IDLE; }
 uint16_t pet_mode_x(void) { return active ? (uint16_t)x : 0; }
+uint8_t pet_mode_y(void) { return active ? (uint8_t)y : GROUND; }
 uint32_t pet_mode_frames(void) { return frames; }
 uint8_t pet_mode_fruit(void) { return active ? fruit : 0; }
 uint8_t pet_mode_hour(void) { return hour; }
@@ -324,8 +363,12 @@ static uint8_t trigger_key(uint8_t key, uint8_t source, uint32_t now) {
     record_event(PET_EVENT_KEY, key + 1, source, item);
     if (!item) return OK;
     if (item <= FRUIT_COUNT) return queue_fruit(item, source, now) ? OK : BUSY;
-    if (item == ITEM_HUTCH) change_background(PET_NURSERY, source);
-    return deploy_toy(item == ITEM_HUTCH ? TOY_RABBIT_HUTCH : TOY_CARROT, false, source, now);
+    if (item == ITEM_HUTCH) {
+        if (fruit) return BUSY;
+        visit_hutch(false, source, now);
+        return OK;
+    }
+    return deploy_toy(TOY_CARROT, false, source, now);
 }
 
 bool pet_mode_key_down(uint8_t key) {
@@ -370,7 +413,7 @@ void pet_mode_adjust_scene(int8_t direction_step, bool change_season) {
 }
 
 uint8_t pet_mode_control(uint8_t opcode, uint8_t value) {
-    enum { MODE = 1, FEED, PLAY, HOUR, SEASON, SCENE, DEPLOY_TOY, BIND_KEY, FOLLOW_CLOCK, PLAY_TOY = 11, TRIGGER_KEY, PLACE_IF_EMPTY, CLOCK_BASE = 16 };
+    enum { MODE = 1, FEED, PLAY, HOUR, SEASON, SCENE, DEPLOY_TOY, BIND_KEY, FOLLOW_CLOCK, PLAY_TOY = 11, TRIGGER_KEY, PLACE_IF_EMPTY, VISIT_HUTCH = 15, CLOCK_BASE = 16 };
     const uint32_t now = HAL_GetTick();
     if (opcode == MODE && value <= 1) {
         set_mode(value != 0, SOURCE_MCP, now);
@@ -392,10 +435,7 @@ uint8_t pet_mode_control(uint8_t opcode, uint8_t value) {
             if (value > PET_GAZE_OWNER || value == PET_FALL || value == PET_FETCH) return INVALID;
             if (fruit || (value == PET_EAT && !hungry())) return BUSY;
             if (value == PET_SLEEP) {
-                if (!bedtime) {
-                    end_toy(true, SOURCE_MCP, now);
-                    go_to_bed(SOURCE_MCP, now);
-                }
+                visit_hutch(true, SOURCE_MCP, now);
                 return OK;
             }
             if (active_toy && !bedtime) return BUSY;
@@ -420,14 +460,20 @@ uint8_t pet_mode_control(uint8_t opcode, uint8_t value) {
             return OK;
         case DEPLOY_TOY:
         case PLACE_IF_EMPTY:
+            if (value == TOY_RABBIT_HUTCH) return INVALID;
             return deploy_toy(value, opcode == PLACE_IF_EMPTY, SOURCE_MCP, now);
         case PLAY_TOY: {
             const PetToy *toy = find_toy(value);
-            if (!toy || pet_care_get()->placed[pet_care_get()->scene] != value) return INVALID;
+            if (!toy || value == TOY_RABBIT_HUTCH || pet_care_get()->placed[pet_care_get()->scene] != value) return INVALID;
             if (current_floor()->toy_falling || (current_floor()->count && hungry()) || active_toy) return BUSY;
             start_toy(toy, false, SOURCE_MCP, now);
             return OK;
         }
+        case VISIT_HUTCH:
+            if (value) return INVALID;
+            if (fruit) return BUSY;
+            visit_hutch(false, SOURCE_MCP, now);
+            return OK;
         case TRIGGER_KEY:
             return value < PET_KEY_COUNT ? trigger_key(value, SOURCE_MCP, now) : INVALID;
         case BIND_KEY:
@@ -488,14 +534,16 @@ static void update_action(uint32_t now, uint32_t step_ms) {
         end_toy(true, SOURCE_AUTOMATIC, now);
     if (active_toy) {
         if (toy_phase == TOY_APPROACHING) {
-            x += walking_step(step_ms, 78);
-            if ((direction > 0 && x >= active_toy->target_x) ||
-                (direction < 0 && x <= active_toy->target_x)) {
-                x = active_toy->target_x;
-                if (floor->toy_falling) return;
+            approach_travel += abs(walking_step(step_ms, 78));
+            if (approach_travel >= approach_distance) {
+                x = target_x();
+                y = target_y();
                 direction = active_toy->facing;
                 toy_phase = TOY_USING;
                 set_action(active_toy->activity, now);
+            } else {
+                x = approach_x + (target_x() - approach_x) * approach_travel / approach_distance;
+                y = approach_y + (target_y() - approach_y) * approach_travel / approach_distance;
             }
         } else if (!bedtime && elapsed >= active_toy->duration_ms) {
             pet_care_adjust(0, active_toy->fatigue_delta, active_toy->mood_delta, active_toy->affection_delta);
@@ -575,7 +623,7 @@ static void update_action(uint32_t now, uint32_t step_ms) {
     }
 
     if ((!floor->count || !hungry()) && now - last_input >= SLEEP_AFTER_MS) {
-        go_to_bed(SOURCE_AUTOMATIC, now);
+        visit_hutch(true, SOURCE_AUTOMATIC, now);
     } else if (action == PET_IDLE) {
         if (elapsed >= 1700) set_action(PET_WALK, now);
     } else {
@@ -672,8 +720,6 @@ static int drop_offset(uint8_t progress) {
 }
 
 static void include_toy(DirtyArea *area, const PetFrame *f) {
-    if (f->visible_toy == TOY_RABBIT_HUTCH)
-        include_rect(area, 205, 73 + drop_offset(f->drop), 81);
     if (f->visible_toy == TOY_CARROT)
         include_rect(area, CARROT_X - 10, CARROT_Y - 12 + drop_offset(f->drop), 28);
 }
@@ -685,12 +731,18 @@ static void begin_frame(uint32_t now) {
     const uint8_t scene = pet_care_get()->scene;
     const uint8_t using = toy_phase == TOY_USING ? active_toy->id : 0;
     PetFrame next = {
-        .bottom = DIRTY_BOTTOM, .x = x, .y = GROUND + (using == TOY_RABBIT_HUTCH ? 3 : 0),
+        .bottom = DIRTY_BOTTOM, .x = x, .y = y,
+        .hutch_x = pet_care_get()->hutch_x, .hutch_y = pet_care_get()->hutch_y,
         .direction = direction, .sprite = sprite_frame(action_clip(elapsed), elapsed),
         .action = action, .elapsed = elapsed, .hour = hour, .minute = minute, .season = season,
         .scene = scene, .visible_toy = pet_care_get()->placed[scene], .using_toy = using,
         .drop = pet_mode_toy_drop(), .bowl = action == PET_EAT && !fruit && !active_toy
     };
+    const int min_y = y < frame.y ? y : frame.y;
+    const int max_y = y > frame.y ? y : frame.y;
+    if (min_y < GROUND) area.top -= GROUND - min_y;
+    if (max_y > GROUND) next.bottom += max_y - GROUND;
+    if (next.bottom > LCD_HEIGHT) next.bottom = LCD_HEIGHT;
     if (next.visible_toy != frame.visible_toy || next.drop != frame.drop) {
         include_toy(&area, &frame);
         include_toy(&area, &next);
@@ -752,9 +804,9 @@ static void paint_rabbit(uint8_t *line, uint16_t row) {
 }
 
 static void paint_hutch(uint8_t *line, uint16_t row) {
-    const int local = (int)row - 73 - drop_offset(frame.drop);
+    const int local = (int)row - frame.hutch_y + 69;
     if (local < 0 || local >= 74) return;
-    int col = 205;
+    int col = frame.hutch_x - 41;
     for (uint16_t run = hutch_rows[local]; run < hutch_rows[local + 1]; run++) {
         const int end = col + hutch_runs[run * 2];
         uint8_t color = hutch_runs[run * 2 + 1];
@@ -906,9 +958,9 @@ static void paint_row(uint8_t *line, uint16_t row) {
     }
 
     if (nursery) {
-        if (!frame.using_toy && row >= 138 && row <= 141) {
+        if (!frame.using_toy && row >= frame.y - 1 && row <= frame.y + 2) {
             static const uint8_t radii[] = {14, 19, 18, 12};
-            const int radius = radii[row - 138];
+            const int radius = radii[row - frame.y + 1];
             for (int col = frame.x - radius; col < frame.x + radius; col++) {
                 if (col < frame.left || col >= frame.right) continue;
                 uint8_t *pixel = line + (col - frame.left) * 2;
@@ -928,19 +980,19 @@ static void paint_row(uint8_t *line, uint16_t row) {
         paint_rect(line, row, bowl + 1, 135, 10, 3, RGB565(246, 184, 134));
         paint_rect(line, row, bowl + 5, 132, 4, 2, RGB565(104, 68, 75));
     }
-    if (frame.visible_toy == TOY_RABBIT_HUTCH) paint_hutch(line, row);
+    if (nursery) paint_hutch(line, row);
     if (frame.visible_toy == TOY_CARROT) paint_carrot(line, row);
     paint_rabbit(line, row);
     if (frame.using_toy == TOY_RABBIT_HUTCH) {
-        paint_rect(line, row, 226, 136, 40, 2, nursery_light(HEX565(0xf8c3ae)));
-        paint_rect(line, row, 226, 138, 40, 2, nursery_light(HEX565(0xc38277)));
+        paint_rect(line, row, frame.hutch_x - 20, frame.hutch_y - 6, 40, 2, nursery_light(HEX565(0xf8c3ae)));
+        paint_rect(line, row, frame.hutch_x - 20, frame.hutch_y - 4, 40, 2, nursery_light(HEX565(0xc38277)));
     }
     for (unsigned i = 0; i < frame.food_count; i++) paint_fruit(line, row, frame.foods + i);
 
     const uint16_t accent = RGB565(255, 243, 201);
     if (frame.action == PET_SLEEP) {
         const int16_t sign_x = frame.x + frame.direction * 25;
-        const int16_t top = 102 - (int16_t)(frame.elapsed % 1500 / 140);
+        const int16_t top = frame.y - 40 - (int16_t)(frame.elapsed % 1500 / 140);
         paint_rect(line, row, sign_x, top, 6, 2, accent);
         paint_rect(line, row, sign_x + 2, top + 2, 2, 2, accent);
         paint_rect(line, row, sign_x, top + 4, 6, 2, accent);

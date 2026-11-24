@@ -218,11 +218,18 @@ void screen_readback_poll(void) {
             length = 1 + 12 * count;
         }
     } else if (screen == PET_STATE || screen == PET_CONTROL) {
-        if (length || offset > UINT16_MAX || (screen == PET_STATE && offset)) {
+        const uint8_t command = (uint8_t)offset, value = (uint8_t)(offset >> 8);
+        const bool move_hutch = screen == PET_CONTROL && requested_generation == 4 && command == 14;
+        if (length || (move_hutch ? offset >> 25 : offset > UINT16_MAX) || (screen == PET_STATE && offset)) {
             status = STATUS_INVALID;
         } else {
-            if (screen == PET_CONTROL && offset)
-                status = pet_mode_control((uint8_t)offset, (uint8_t)(offset >> 8));
+            if (screen == PET_CONTROL && offset) {
+                if (move_hutch) status = pet_mode_move_hutch((offset >> 8) & 511, offset >> 17);
+                else if (requested_generation != 4 && (command == 14 || command == 15)) status = STATUS_INVALID;
+                else if (requested_generation <= 3 && value == 1 && (command == 7 || command == 11 || command == 13))
+                    status = pet_mode_control(15, 0); /* Former rabbit_hutch toy now visits the decoration. */
+                else status = pet_mode_control(command, value);
+            }
             pixels[0] = pet_mode_is_active();
             pixels[1] = pet_mode_action();
             write_u16(pixels + 2, pet_mode_x());
@@ -232,7 +239,7 @@ void screen_readback_poll(void) {
             pixels[10] = pet_mode_season();
             pixels[11] = pet_mode_queue_depth();
             length = screen == PET_STATE ? 11 : 12;
-            if (screen == PET_CONTROL && (requested_generation == 2 || requested_generation == 3)) {
+            if (screen == PET_CONTROL && requested_generation >= 2 && requested_generation <= 4) {
                 const PetCare *care = pet_care_get();
                 pixels[12] = care->satiety;
                 pixels[13] = care->sleepiness;
@@ -242,7 +249,7 @@ void screen_readback_poll(void) {
                 pixels[17] = pet_mode_active_toy();
                 pixels[18] = pet_mode_toy_phase();
                 length = 19;
-                if (requested_generation == 3) {
+                if (requested_generation >= 3) {
                     memcpy(pixels + 19, care->bindings, PET_KEY_COUNT);
                     pixels[27] = (care->follow_time ? 1u : 0u) | (pet_mode_is_bedtime() ? 2u : 0u);
                     pixels[28] = pet_mode_minute();
@@ -260,6 +267,12 @@ void screen_readback_poll(void) {
                         entry[5] = foods[i].stage;
                     }
                     length = 33 + 6 * count;
+                    if (requested_generation == 4) {
+                        write_u16(pixels + length, care->hutch_x);
+                        pixels[length + 2] = care->hutch_y;
+                        pixels[length + 3] = pet_mode_y();
+                        length += 4;
+                    }
                 }
             }
         }

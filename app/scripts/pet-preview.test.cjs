@@ -5,21 +5,29 @@ const { test } = require('node:test')
 const vm = require('node:vm')
 const ts = require('typescript')
 
-const path = resolve(__dirname, '../src/components/screenPage/petItemPreview.ts')
-const { outputText } = ts.transpileModule(readFileSync(path, 'utf8'), {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
-})
+function compile(source) {
+  return ts.transpileModule(readFileSync(resolve(__dirname, source), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
+  }).outputText
+}
+const catalog = {}
+vm.runInNewContext(compile('../src/utils/petCatalog.ts'), { exports: catalog })
+const outputText = compile('../src/components/screenPage/petItemPreview.ts')
 
 function preview(satiety = 65) {
   let now = 0
   let update
   let bedtime = false
-  const context = { exports: {}, Date: { now: () => now }, window: {
+  const context = { exports: {}, require: module => {
+    assert.equal(module, '../../utils/petCatalog')
+    return catalog
+  }, Date: { now: () => now }, window: {
     setInterval(fn) { update = fn; return 1 },
     clearInterval() { update = undefined }
   } }
   vm.runInNewContext(outputText, context)
-  const state = { scene: 0, x: 128, action: 1, stats: { ...context.exports.previewCare, satiety } }
+  const state = { scene: 0, x: 128, action: 1, hutchPosition: { ...catalog.defaultHutchPosition },
+    stats: { ...context.exports.previewCare, satiety } }
   const world = context.exports.createPetItemPreview(() => state, on => { bedtime = on })
   world.start()
   function tick(ms) {
@@ -99,7 +107,7 @@ test('completed toy interactions and gestures reward once each, recalled toys do
   assert.equal(state.stats.mood, 76)
   world.use(11, 2)
   tick(2600)
-  world.use(7, 1)
+  world.use(15, 0)
   tick(7000)
   assert.equal(state.stats.sleepiness, 17)
   assert.equal(state.stats.mood, 87)
@@ -110,4 +118,43 @@ test('completed toy interactions and gestures reward once each, recalled toys do
   tick(3100)
   assert.equal(state.stats.mood, 84)
   assert.equal(state.stats.affection, 42)
+})
+
+test('the hutch moves independently of the carrot, including during approach and rest', () => {
+  const { world, state, tick, sleeping } = preview()
+  world.changeScene(1)
+  world.use(7, 2)
+  tick(4000)
+  assert.equal(state.deployedToys[1], 2)
+  world.use(14, 255 | (120 << 9))
+  world.use(3, 2)
+  tick(450)
+  assert.ok(state.x > 151 && state.x < 255)
+  assert.ok(state.rabbitY < 139 && state.rabbitY > 120)
+  const startY = state.rabbitY
+  world.use(14, 130 | (160 << 9))
+  tick(150)
+  assert.ok(state.rabbitY > startY)
+  tick(1500)
+  assert.deepEqual([state.x, state.rabbitY], [130, 160])
+  assert.ok(sleeping())
+  world.use(7, 2)
+  assert.equal(state.deployedToys[1], 0)
+  assert.ok(sleeping())
+  world.use(14, 41 | (69 << 9))
+  assert.deepEqual([state.x, state.rabbitY], [41, 69])
+  assert.ok(world.use(14, 281 | (68 << 9)))
+  assert.deepEqual([state.x, state.rabbitY], [41, 69])
+  world.use(14, 280 | (167 << 9))
+  assert.deepEqual([state.x, state.rabbitY], [280, 167])
+  world.use(15, 0)
+  assert.ok(sleeping())
+  world.use(3, 0)
+  assert.equal(state.rabbitY, 139)
+  assert.equal(state.hutchPosition.x, 280)
+  world.use(15, 0)
+  tick(5500)
+  assert.equal(state.activeToy, 0)
+  assert.equal(state.stats.sleepiness, 15)
+  assert.equal(state.deployedToys[1], 0)
 })

@@ -5,15 +5,17 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod'
 import SerialConnect from './serialPort'
 import type { PetRequest } from './screenReadback'
-import { petActions, playableActions, petScenes, petToys, petToyIds, petToyPhases, petFruitIds as fruits,
-  petItems, toysForScene, petStateGeneration, petFoodStages } from '../../src/utils/petCatalog'
+import { petActions, playableActions, petScenes, petRoomItems, petToyIds, petToyPhases, petFruitIds as fruits,
+  petItems, toysForScene, petStateGeneration, petFoodStages, petDecorations, hutchBounds } from '../../src/utils/petCatalog'
 
 const seasons = ['spring', 'summer', 'autumn', 'winter'] as const
 const sources = ['automatic', 'physical', 'mcp'] as const
-const commands = { state: 0, mode: 1, feed: 2, action: 3, hour: 4, season: 5, scene: 6, toy: 7, interactToy: 11, placeToy: 13 }
+const commands = { state: 0, mode: 1, feed: 2, action: 3, hour: 4, season: 5, scene: 6, toy: 7,
+  interactToy: 11, placeToy: 13, moveHutch: 14, visitHutch: 15 }
 // Older MCP clients used toy_factory for the room at USB scene index 1.
 const sceneInput = z.preprocess(value => value === 'toy_factory' ? 'nursery' : value, z.enum(petScenes))
-const toyForWireId = (id: number) => petToys.find(toy => toy.wireId === id)?.id ?? null
+const toyForWireId = (id: number) => petRoomItems.find(item => item.wireId === id)?.id ?? null
+const decoration = z.literal('rabbit_hutch')
 
 async function requestDevice(request: PetRequest, session?: string) {
   const reply = await SerialConnect.pet(request, session)
@@ -48,11 +50,15 @@ async function command(command: number, value = 0) {
   if (!generation) throw Error('桌宠状态格式不匹配。')
   const extended = generation >= 2
   const scene = extended ? petScenes[payload[16]] ?? null : null
+  const visitingHutch = generation >= 4 && payload[17] === 1
+  const phase = extended ? petToyPhases[payload[18]] : null
   return {
     session,
+    generation,
     active: Boolean(payload[0]),
     action: payload[0] ? petActions[payload[1]] ?? null : null,
     positionX: payload[0] ? payload.readUInt16LE(2) : null,
+    positionY: generation >= 4 && payload[0] ? payload[payload.length - 1] : null,
     frames: payload.readUInt32LE(4),
     fruit: fruits[payload[8] - 1] ?? null,
     hour: payload[9],
@@ -61,8 +67,11 @@ async function command(command: number, value = 0) {
     queuedFruit: payload[11],
     stats: extended ? { satiety: payload[12], sleepiness: payload[13], mood: payload[14], affection: payload[15] } : null,
     scene,
-    activeToy: extended ? toyForWireId(payload[17]) : null,
-    toyPhase: extended ? petToyPhases[payload[18]] ?? null : null,
+    activeToy: extended && !visitingHutch ? toyForWireId(payload[17]) : null,
+    toyPhase: visitingHutch ? 'idle' : phase,
+    activeDecoration: visitingHutch ? 'rabbit_hutch' : null,
+    decorationPhase: generation >= 4 ? (visitingHutch ? phase : 'idle') : null,
+    hutchPosition: generation >= 4 ? { x: payload.readUInt16LE(payload.length - 4), y: payload[payload.length - 2] } : null,
     availableToys: toysForScene(scene, generation).map(toy => toy.id),
     keyBindings: generation >= 3 ? Array.from(payload.subarray(19, 27), slot =>
       petItems.find(item => item.itemId === slot)?.id ?? null) : null,
@@ -101,6 +110,9 @@ function decodeEvent(payload: Buffer, offset: number) {
     case 12: return { ...base, type: 'toy_finished', toy: toyForWireId(value), interrupted: Boolean(detail) }
     case 13: return { ...base, type: 'toy_placed', toy: toyForWireId(value), scene: petScenes[detail] }
     case 14: return { ...base, type: 'toy_removed', toy: toyForWireId(value), scene: petScenes[detail] }
+    case 15: return { ...base, type: 'decoration_started', decoration: toyForWireId(value) }
+    case 16: return { ...base, type: 'decoration_finished', decoration: toyForWireId(value), interrupted: Boolean(detail) }
+    case 17: return { ...base, type: 'decoration_moved', decoration: toyForWireId(value), scene: petScenes[detail] }
     default: return { ...base, type: 'unknown', value, detail }
   }
 }
@@ -127,7 +139,7 @@ async function result(run: () => Promise<Record<string, unknown>>) {
 }
 
 export function createPetMcp() {
-  const server = new McpServer({ name: 'multipad-pet', version: '1.2.0' })
+  const server = new McpServer({ name: 'multipad-pet', version: '1.3.0' })
   server.registerTool('pet_get_state', {
     description: '读取兔子的动作、位置、水果、时间、季节、场景、玩具和四项属性（0–100）。旧固件的扩展字段为 null。',
     annotations: { readOnlyHint: true }
@@ -174,7 +186,7 @@ export function createPetMcp() {
       throw error
     })
     const selected = scene ?? pet?.scene ?? null
-    const generation = !pet || pet.keyBindings ? 3 : pet.stats ? 2 : 1
+    const generation = pet?.generation ?? 4
     const toys = toysForScene(selected, generation).map(({ id, label, description }) => ({ id, label, description }))
     return { scene: selected, toys }
   }))
@@ -182,17 +194,44 @@ export function createPetMcp() {
   server.registerTool('pet_use_toy', {
     description: '切换当前场景中的玩具。首次放下后兔子会去玩；再次选择同一玩具会收回，选择其他玩具会替换。旧版固件执行一次短暂互动。',
     inputSchema: { toy: z.enum(petToyIds) }
-  }, ({ toy }) => result(() => command(commands.toy, petToys.find(entry => entry.id === toy)!.wireId)))
+  }, ({ toy }) => result(async () => {
+    // Existing clients used this call for a hutch rest before it became permanent scenery.
+    if (toy === 'rabbit_hutch' && (await command(commands.state)).generation >= 4) return command(commands.visitHutch)
+    return command(commands.toy, petRoomItems.find(entry => entry.id === toy)!.wireId)
+  }))
 
   server.registerTool('pet_place_toy', {
     description: '在当前场景的空位放下玩具。相同玩具已放置时保持原状；若已有其他玩具，返回忙。',
     inputSchema: { toy: z.enum(petToyIds) }
-  }, ({ toy }) => result(() => command(commands.placeToy, petToys.find(entry => entry.id === toy)!.wireId)))
+  }, ({ toy }) => result(() => command(commands.placeToy, petRoomItems.find(entry => entry.id === toy)!.wireId)))
 
   server.registerTool('pet_interact_with_toy', {
     description: '让兔子和当前场景中已落地的玩具再玩一次，保留玩具的位置。',
     inputSchema: { toy: z.enum(petToyIds) }
-  }, ({ toy }) => result(() => command(commands.interactToy, petToys.find(entry => entry.id === toy)!.wireId)))
+  }, ({ toy }) => result(() => command(commands.interactToy, petRoomItems.find(entry => entry.id === toy)!.wireId)))
+
+  server.registerTool('pet_list_decorations', {
+    description: '查询场景中常驻的互动装饰，包括当前位置和可移动范围。省略 scene 时查询当前场景。',
+    inputSchema: { scene: sceneInput.optional() },
+    annotations: { readOnlyHint: true }
+  }, ({ scene }) => result(async () => {
+    const state = await command(commands.state)
+    const selected = scene ?? state.scene
+    const entries = selected === 'nursery' && state.hutchPosition ? petDecorations.map(({ id, label, description }) =>
+      ({ id, label, description, position: state.hutchPosition, bounds: hutchBounds })) : []
+    return { scene: selected, decorations: entries }
+  }))
+
+  server.registerTool('pet_move_decoration', {
+    description: '移动宝宝房的兔窝。坐标是 320×172 画面中兔窝底边中心的位置，键盘保存设置。',
+    inputSchema: { decoration, x: z.number().int().min(hutchBounds.minX).max(hutchBounds.maxX),
+      y: z.number().int().min(hutchBounds.minY).max(hutchBounds.maxY) }
+  }, ({ x, y }) => result(() => command(commands.moveHutch, x | (y << 9))))
+
+  server.registerTool('pet_interact_with_decoration', {
+    description: '让兔子去宝宝房的兔窝小憩片刻，醒来后继续活动。持续睡觉可用 pet_play_action 的 sleep。',
+    inputSchema: { decoration }
+  }, () => result(() => command(commands.visitHutch)))
 
   server.registerTool('pet_get_events', {
     description: '读取已发生的桌宠事件。后续调用传入上次响应的 cursor。包括实体投喂键、旋钮改动和自动动作。',

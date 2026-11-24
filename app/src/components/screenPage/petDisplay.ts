@@ -21,10 +21,13 @@ export type PetParameter = typeof petParameters[number]['id']
 export const petSeasons = ['春', '夏', '秋', '冬']
 export const petFruits = ['无', '苹果', '香蕉', '橙子', '葡萄', '草莓', '梨', '樱桃', '西瓜']
 
+export interface HutchPosition { x: number; y: number }
+
 export interface PetState {
   active: boolean
   action: number
   x: number
+  rabbitY?: number
   fruit: number
   hour: number
   minute?: number
@@ -34,6 +37,7 @@ export interface PetState {
   scene: number
   activeToy: number
   toyPhase: number
+  hutchPosition?: HutchPosition
   deployedToys?: readonly number[]
   toyDrop?: number
   foods?: readonly { id: number; x: number; y: number; stage: number }[]
