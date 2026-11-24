@@ -15,7 +15,9 @@ typedef enum {
     PET_JUMP,
     PET_DAYDREAM,
     PET_FLEE,
-    PET_BLINK
+    PET_BLINK,
+    PET_TRIP_ANGRY,
+    PET_GAZE_OWNER
 } PetAction;
 
 typedef enum {
@@ -27,7 +29,10 @@ typedef enum {
     PET_EVENT_HOUR,
     PET_EVENT_SEASON,
     PET_EVENT_KEY,
-    PET_EVENT_SNACK
+    PET_EVENT_SNACK,
+    PET_EVENT_SCENE,
+    PET_EVENT_TOY_STARTED,
+    PET_EVENT_TOY_FINISHED
 } PetEventKind;
 
 typedef struct {
@@ -52,6 +57,8 @@ uint8_t pet_mode_fruit(void);
 uint8_t pet_mode_hour(void);
 uint8_t pet_mode_season(void);
 uint8_t pet_mode_queue_depth(void);
+uint8_t pet_mode_active_toy(void);
+uint8_t pet_mode_toy_phase(void);
 uint8_t pet_mode_control(uint8_t opcode, uint8_t value);
 uint8_t pet_mode_events(uint32_t after, PetEvent *out, bool *overrun, bool *more);
 

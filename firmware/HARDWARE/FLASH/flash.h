@@ -73,7 +73,7 @@
 #define FLASH_SPI_TRANS_DATA(data, size) spi1_transmit_data(data, size)
 #define FLASH_SPI_REC_DATA(data, size) spi1_receive_data(data, size)
 
-void flash_init(void);
+uint16_t flash_init(void);
 
 uint16_t read_flash_id(void);
 

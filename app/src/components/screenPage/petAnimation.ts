@@ -4,20 +4,16 @@ import type { PetAction } from './petScene'
 
 export const rabbitAtlasUrl = atlasUrl
 
-const actionClips = {
-  idle: 'daydream',
-  walk: 'walk',
-  sleep: 'sleep',
-  eat: 'eat',
-  react: 'jump'
-} as const
-
 function frameFor(action: PetAction, elapsed: number) {
   const blink = action === 'idle' && elapsed >= 1400 && elapsed < 1525
-  const clip = sprite.clips[blink ? 'blink' : actionClips[action]]
+  const name = blink ? 'blink' : action === 'idle' ? 'daydream' : action === 'react' ? 'jump' : action
+  const clip = sprite.clips[name]
   const total = clip.ticks.reduce((sum, duration) => sum + duration, 0)
   const elapsedTicks = Math.floor(elapsed * sprite.tickRateHz / 1000)
-  let tick = clip.loop ? elapsedTicks % total : Math.min(elapsedTicks, total - 1)
+  const loopFrom = 'loopFrom' in clip ? Number(clip.loopFrom) : 0
+  const start = clip.ticks.slice(0, loopFrom).reduce((sum, duration) => sum + duration, 0)
+  let tick = clip.loop && elapsedTicks >= total
+    ? start + (elapsedTicks - start) % (total - start) : Math.min(elapsedTicks, total - 1)
   for (let i = 0; i < clip.ticks.length; i++) {
     if (tick < clip.ticks[i]) return clip.first + i
     tick -= clip.ticks[i]

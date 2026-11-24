@@ -1,4 +1,5 @@
-export type PetAction = 'idle' | 'walk' | 'sleep' | 'eat' | 'react'
+export type PetAction = 'idle' | 'walk' | 'sleep' | 'eat' | 'react' | 'run' | 'flee' | 'blink' |
+  'daydream' | 'trip_angry' | 'gaze_owner'
 
 function rect(ctx: CanvasRenderingContext2D, color: string, x: number, y: number, w: number, h: number) {
   ctx.fillStyle = color
@@ -62,6 +63,89 @@ export function drawGarden(ctx: CanvasRenderingContext2D) {
     rect(ctx, '#ffd39e', x - 2, y - 2, 6, 3)
     rect(ctx, '#f7a78a', x, y - 3, 2, 4)
   }
+}
+
+export function drawToyFactory(ctx: CanvasRenderingContext2D) {
+  // Painted brick, steel rafters and a clerestory window above the assembly line.
+  rect(ctx, '#b7bbb1', 0, 0, 320, 172)
+  for (let y = 22; y < 116; y += 16) {
+    rect(ctx, '#a9afa6', 0, y, 320, 1)
+    for (let x = ((y - 22) % 32 === 0 ? 12 : 34); x < 320; x += 44)
+      rect(ctx, '#a9afa6', x, y + 1, 1, 15)
+  }
+  rect(ctx, '#556876', 0, 0, 320, 8)
+  rect(ctx, '#76848a', 0, 8, 320, 3)
+  for (const x of [8, 160, 305]) {
+    rect(ctx, '#78888a', x, 11, 5, 105)
+    rect(ctx, '#8f9d98', x + 4, 11, 2, 105)
+  }
+  rect(ctx, '#778888', 18, 24, 113, 52)
+  rect(ctx, '#596e76', 18, 22, 111, 52)
+  rect(ctx, '#8ebbc2', 22, 26, 103, 44)
+  rect(ctx, '#c3d7c6', 22, 52, 103, 18)
+  for (const x of [28, 76, 99]) {
+    rect(ctx, '#d5e0d2', x, 38, 14, 2)
+    rect(ctx, '#d5e0d2', x + 4, 36, 6, 2)
+  }
+  for (const x of [47, 74, 101]) rect(ctx, '#71878a', x, 26, 3, 44)
+  rect(ctx, '#71878a', 22, 47, 103, 3)
+  rect(ctx, '#e0d7ba', 15, 73, 118, 4)
+  // Pendant lamps and a short belt carrying a wooden train and blocks.
+  for (const x of [145, 196, 273]) {
+    rect(ctx, '#667b78', x, 10, 2, 18)
+    rect(ctx, '#48786f', x - 5, 27, 12, 3)
+    rect(ctx, '#48786f', x - 9, 30, 20, 4)
+    rect(ctx, '#f6d592', x - 8, 34, 18, 2)
+  }
+  rect(ctx, '#987e71', 0, 115, 320, 8)
+  rect(ctx, '#c4ac8f', 0, 123, 320, 49)
+  rect(ctx, '#d2b998', 0, 124, 320, 3)
+  for (const y of [140, 156, 169]) {
+    rect(ctx, '#b49a82', 0, y, 320, 1)
+    for (let x = y % 3 * 38 + 15; x < 320; x += 91) rect(ctx, '#b49a82', x, y + 1, 1, 13)
+  }
+  rect(ctx, '#65787b', 12, 98, 142, 9)
+  rect(ctx, '#3f5866', 15, 100, 136, 5)
+  for (let x = 18; x < 150; x += 12) rect(ctx, '#a7b4a8', x, 101, 3, 2)
+  for (const x of [21, 132]) {
+    rect(ctx, '#617679', x, 107, 5, 16)
+    rect(ctx, '#505e64', x - 3, 122, 11, 2)
+  }
+  rect(ctx, '#ae6359', 33, 88, 23, 6)
+  rect(ctx, '#e8c27c', 34, 79, 11, 9)
+  rect(ctx, '#668c92', 37, 81, 5, 6)
+  rect(ctx, '#698d85', 47, 84, 8, 4)
+  rect(ctx, '#ac6b5d', 51, 79, 3, 5)
+  pixelCircle(ctx, '#475d66', 38, 95, 3)
+  pixelCircle(ctx, '#475d66', 51, 95, 3)
+  for (const [x, y, paint] of [[91, 87, '#daa36f'], [103, 87, '#79a59a'], [98, 76, '#c98677']] as const) {
+    rect(ctx, paint, x, y, 11, 11)
+    rect(ctx, '#eed2a0', x + 2, y + 2, 5, 1)
+  }
+
+  // The door is centred on the firmware's interaction point (246, 139).
+  rect(ctx, '#a78c78', 211, 139, 72, 4)
+  rect(ctx, '#80584f', 211, 88, 70, 51)
+  rect(ctx, '#cc956a', 215, 90, 62, 46)
+  for (const x of [220, 230, 242, 254, 266]) rect(ctx, '#bb825f', x, 92, 1, 42)
+  for (let row = 0; row < 10; row++) {
+    const x = 242 - row * 4
+    rect(ctx, row < 2 ? '#93645c' : '#af7062', x, 67 + row * 2, 8 + row * 8, 2)
+  }
+  rect(ctx, '#744e4d', 204, 87, 84, 4)
+  rect(ctx, '#e2ac79', 210, 91, 72, 3)
+  rect(ctx, '#966650', 233, 98, 26, 4)
+  rect(ctx, '#966650', 227, 102, 38, 34)
+  rect(ctx, '#695661', 232, 105, 28, 30)
+  rect(ctx, '#695661', 229, 111, 34, 23)
+  rect(ctx, '#a47d71', 230, 130, 32, 6)
+  rect(ctx, '#deb178', 228, 133, 36, 3)
+  drawHutchStraw(ctx)
+}
+
+export function drawHutchStraw(ctx: CanvasRenderingContext2D) {
+  rect(ctx, '#efbc75', 226, 136, 40, 2)
+  rect(ctx, '#a66550', 226, 138, 40, 2)
 }
 
 export function drawPetEffects(
