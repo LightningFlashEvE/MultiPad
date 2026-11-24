@@ -1,5 +1,6 @@
 import { DEVICE_SCREEN_SIZES, type DeviceScreens } from '../../src/utils/deviceScreenFormat'
 import type { DeviceButtons } from '../../src/utils/deviceButtonState'
+import { petStateGeneration } from '../../src/utils/petCatalog'
 
 const REQUEST_MAGIC = Buffer.from([0xaa, 0xbb, 0xc1, 0x53])
 const RESPONSE_MAGIC = Buffer.from([0x4d, 0x50, 0x53, 1])
@@ -36,6 +37,7 @@ export default class ScreenReadback {
   private buttonSampleRequested = false
   private heldButtons?: number
   private pressedButtons = 0
+  private petGeneration?: number
 
   constructor(
     private readonly write: (data: Buffer) => Promise<boolean>,
@@ -149,10 +151,37 @@ export default class ScreenReadback {
   async readPet(request: PetRequest): Promise<PetReply> {
     if (this.closed) return { state: 'disconnected' }
     if (this.busy) return { state: 'busy' }
-    const screen = 'after' in request ? PET_EVENTS : PET_CONTROL
-    // Control requests negotiate the extended state. V1 firmware ignores this field.
-    const generation = 'after' in request ? request.after : 2
-    const offset = 'command' in request ? request.command | (request.value << 8) : 0
+    if ('after' in request) return this.petExchange(PET_EVENTS, request.after, 0)
+    this.reading = true
+    try {
+      if (this.petGeneration === undefined) {
+        // V2 returns the V1 (12-byte) layout for an unknown generation.
+        // Negotiate using state reads only, even when the first caller is sending a command.
+        let probe = await this.petExchange(PET_CONTROL, 3, 0)
+        if (probe.state !== 'ready' || probe.status !== STATUS_OK) return probe
+        if (probe.payload.length === 12) probe = await this.petExchange(PET_CONTROL, 2, 0)
+        if (probe.state !== 'ready' || probe.status !== STATUS_OK) return probe
+        const generation = petStateGeneration(probe.payload)
+        if (!generation) return { state: 'unavailable' }
+        this.petGeneration = generation
+        if (!request.command) return probe
+      }
+      const { command, value } = request
+      if (this.petGeneration < 3 && (command >= 8 || (command === 7 && value > 1))) {
+        return { state: 'unsupported' }
+      }
+      const opcode = command === 10 ? 16 + (value >> 8) : command
+      const offset = opcode | ((value & 255) << 8)
+      const reply = await this.petExchange(PET_CONTROL, this.petGeneration === 1 ? 0 : this.petGeneration, offset)
+      if (reply.state === 'ready' && reply.status === STATUS_OK &&
+          petStateGeneration(reply.payload) !== this.petGeneration) return { state: 'unavailable' }
+      return reply
+    } finally {
+      this.reading = false
+    }
+  }
+
+  private async petExchange(screen: number, generation: number, offset: number): Promise<PetReply> {
     const frame = await this.exchange(screen, generation, offset)
     if (!frame || frame[7] !== screen || frame.readUInt32LE(12) !== offset) {
       return { state: this.closed ? 'disconnected' : 'unavailable' }

@@ -219,7 +219,11 @@ export function drawNursery(ctx: CanvasRenderingContext2D) {
     paint('#a9cdb9', x, 153, 3, 1)
     paint('#dfebd0', x + 1, 152, 1, 3)
   }
+}
 
+export function drawNurseryHutch(ctx: CanvasRenderingContext2D) {
+  const paint = (color: string, x: number, y: number, w: number, h: number) => rect(ctx, color, x, y, w, h)
+  const oval = (color: string, x: number, y: number, rx: number, ry: number) => nurseryOval(ctx, color, x, y, rx, ry)
   // Padded rabbit bed with a curved hood, stitched ears and a blush seat cushion.
   oval('#dbb698', 246, 139, 35, 5)
   for (const x of [224, 267]) {
@@ -251,14 +255,73 @@ export function drawHutchCushion(ctx: CanvasRenderingContext2D) {
   rect(ctx, '#c38277', 226, 138, 40, 2)
 }
 
+const carrotRows = [
+  '......g.g.', '......gg.g', '....xxggg.', '...xhhfx..', '..xhffffx.',
+  '.xfffffx..', '.xfffx....', 'xfffx.....', 'xxx.......'
+]
+const carrotColors: Record<string, string> = { g: '#60996c', h: '#ffcc80', f: '#f29a57', x: '#a7654a' }
+const carrotMotion = [[0, 0], [2, -3], [4, -2], [2, 0]]
+
+export function drawCarrotToy(ctx: CanvasRenderingContext2D, nudging: boolean, elapsed: number) {
+  const [dx, dy] = carrotMotion[nudging ? Math.floor(elapsed / 120) % 4 : 0]
+  carrotRows.forEach((row, y) => {
+    for (let x = 0; x < row.length; x++) {
+      const color = carrotColors[row[x]]
+      if (color) rect(ctx, color, 165 + dx + x * 2, 123 + dy + y * 2, 2, 2)
+    }
+  })
+}
+
+const clockDigits = [0x7b6f, 0x2c97, 0x73e7, 0x73cf, 0x5bc9, 0x79cf, 0x79ef, 0x7249, 0x7bef, 0x7bcf]
+
+export function drawSceneClock(ctx: CanvasRenderingContext2D, hour: number, minute: number) {
+  const digits = [Math.floor(hour / 10), hour % 10, Math.floor(minute / 10), minute % 10]
+  rect(ctx, '#3b314b', 8, 8, 49, 19)
+  const color = '#ffe8c6'
+  const lefts = [15, 23, 35, 43]
+  digits.forEach((digit, index) => {
+    for (let bit = 0; bit < 15; bit++) {
+      if (clockDigits[digit] & (1 << (14 - bit)))
+        rect(ctx, color, lefts[index] + 2 * (bit % 3), 12 + 2 * Math.floor(bit / 3), 2, 2)
+    }
+  })
+  rect(ctx, color, 31, 14, 2, 2)
+  rect(ctx, color, 31, 18, 2, 2)
+}
+
+export function tintNursery(ctx: CanvasRenderingContext2D, hour: number, season: number) {
+  const seasonal = ['', '#ffdb82', '#dd975e', '#b6d7f1'][season]
+  if (seasonal) rect(ctx, seasonal + '20', 0, 0, 320, 172)
+  if (hour >= 20 || hour < 6) rect(ctx, '#3f486a80', 0, 0, 320, 172)
+  else if (hour === 6 || hour === 19) rect(ctx, '#3f486a40', 0, 0, 320, 172)
+}
+
+// Apply the same time and season lighting as the keyboard, leaving the window frame intact.
+export function drawNurseryLight(ctx: CanvasRenderingContext2D, hour: number, season: number) {
+  const night = hour >= 20 || hour < 6
+  if (night) {
+    rect(ctx, '#a7d4dd', 147, 24, 21, 16)
+    rect(ctx, '#bee1e1', 147, 40, 21, 4)
+  }
+  tintNursery(ctx, hour, season)
+  if (night) {
+    for (let y = -7; y <= 7; y++) {
+      for (let x = -7; x <= 7; x++) {
+        if (x * x + y * y <= 49 && (x - 3) ** 2 + (y + 3) ** 2 > 36)
+          rect(ctx, '#ffeac4', 157 + x, 34 + y, 1, 1)
+      }
+    }
+  }
+}
+
 export function drawPetEffects(
   ctx: CanvasRenderingContext2D, x: number, direction: number,
-  action: PetAction, elapsed: number, foreground: boolean
+  action: PetAction, elapsed: number, foreground: boolean, showBowl = true
 ) {
   if (!foreground) {
     rect(ctx, '#587955', x - 23, 138, 46, 3)
     rect(ctx, '#587955', x - 18, 141, 36, 1)
-    if (action === 'eat') {
+    if (action === 'eat' && showBowl) {
       const bowl = x + direction * 29 - 6
       rect(ctx, '#5b4551', bowl, 134, 12, 5)
       rect(ctx, '#f6b886', bowl + 1, 135, 10, 3)

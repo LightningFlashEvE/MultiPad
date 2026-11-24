@@ -1,8 +1,16 @@
+export interface PetOledRow {
+  label: string
+  value: string
+  /** Fraction from zero to one; null when a numeric parameter has no reading. */
+  progress?: number | null
+}
+
 export type ScreenContent =
   | { mode: 'time' | 'date' | 'datetime' }
   | { mode: 'text'; text: string }
   | { mode: 'performance' }
   | { mode: 'pet'; label: string; value: string }
+  | { mode: 'pet'; rows: readonly [PetOledRow, PetOledRow] }
   | { mode: 'api'; url: string; field: string; label: string; interval: number }
 
 export interface ScreenFrame {
@@ -12,6 +20,37 @@ export interface ScreenFrame {
 }
 
 const win = window as any
+
+// The hardware is monochrome, 72 × 40. Each parameter gets a 20-pixel row.
+function renderPetRows(rows: readonly PetOledRow[]) {
+  const canvas = document.createElement('canvas')
+  canvas.width = 72
+  canvas.height = 40
+  const ctx = canvas.getContext('2d')!
+  ctx.fillStyle = '#000'
+  ctx.fillRect(0, 0, 72, 40)
+  ctx.fillStyle = '#fff'
+  ctx.textBaseline = 'middle'
+  rows.forEach(({ label, value, progress }, index) => {
+    const top = index * 20
+    const textY = top + (progress === undefined ? 10 : 7)
+    ctx.font = 'bold 11px "Microsoft YaHei", sans-serif'
+    ctx.textAlign = 'left'
+    ctx.fillText(label, 1, textY)
+    const room = 68 - Math.ceil(ctx.measureText(label).width)
+    ctx.textAlign = 'right'
+    ctx.fillText(value, 71, textY, room)
+    if (progress === undefined) return
+    ctx.fillRect(1, top + 14, 70, 5)
+    ctx.fillStyle = '#000'
+    ctx.fillRect(2, top + 15, 68, 3)
+    ctx.fillStyle = '#fff'
+    if (progress != null && Number.isFinite(progress)) {
+      ctx.fillRect(2, top + 15, Math.round(68 * Math.max(0, Math.min(1, progress))), 3)
+    }
+  })
+  return canvas.toDataURL('image/png')
+}
 
 export async function renderScreenContent(content: ScreenContent, now = new Date()): Promise<string> {
   const twoDigits = (value: number) => String(value).padStart(2, '0')
@@ -36,6 +75,7 @@ export async function renderScreenContent(content: ScreenContent, now = new Date
     case 'performance':
       throw new Error('性能监测仅用于彩屏')
     case 'pet':
+      if ('rows' in content) return renderPetRows(content.rows)
       lines = [content.label, content.value]
       break
     case 'api': {

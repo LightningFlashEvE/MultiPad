@@ -97,9 +97,13 @@ ipcMain.handle('device-screens', (_event, knownGeneration?: number) => {
 ipcMain.handle('device-buttons', () => SerialConnect.readDeviceButtons())
 ipcMain.handle('pc-performance', () => readPcPerformance())
 ipcMain.handle('live-performance', (_event, menu, metrics) => SerialConnect.performance(menu, metrics))
-ipcMain.handle('pet-action', async (_event, command, value) => {
-  if (!Number.isInteger(command) || command < 0 || command > 7 ||
-      !Number.isInteger(value) || value < 0 || value > 255) return { state: 'unavailable' }
+ipcMain.handle('pet-action', async (event, command, value) => {
+  if (!Number.isInteger(command) || command < 0 || command > 13 ||
+      !Number.isInteger(value) || value < 0 || value > (command === 10 ? 1439 : 255) ||
+      (command === 8 && ((value >> 4) > 7 || (value & 15) > 10)) ||
+      (command === 9 && value > 1) || (command === 12 && value > 7) ||
+      ((command === 11 || command === 13) && (value < 1 || value > 2))) return { state: 'unavailable' }
+  if (command >= 8) fromHome(event)
   const reply = await SerialConnect.pet({ command, value })
   return reply.state === 'ready' ? { ...reply, payload: Uint8Array.from(reply.payload) } : reply
 })
@@ -107,7 +111,7 @@ let mainContents: WebContents | undefined
 function fromHome(event: IpcMainInvokeEvent) {
   const frame = event.senderFrame
   if (event.sender !== mainContents || !frame || frame !== event.sender.mainFrame || new URL(frame.url).hash !== '#/home') {
-    throw Error('请在 MultiPad 主窗口使用桌宠 AI 设置')
+    throw Error('请在 MultiPad 主窗口使用宠物设置')
   }
 }
 ipcMain.handle('pet-ai-get', (event: IpcMainInvokeEvent) => {

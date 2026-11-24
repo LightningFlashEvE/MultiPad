@@ -119,8 +119,16 @@ void encoder1_callback(uint8_t encoder_value) {
 
 // 编码器 2
 void encoder2_callback(uint8_t encoder_value) {
+    static bool pet_pressed;
     if (encoder_value == ENCODER_DOWN || encoder_value == ENCODER_UP) {
         button_readback_record(9, encoder_value == ENCODER_DOWN);
+        if (encoder_value == ENCODER_DOWN) pet_pressed = pet_mode_is_active();
+        const bool claimed = pet_pressed;
+        if (encoder_value == ENCODER_UP) pet_pressed = false;
+        if (claimed) return;
+    } else if (pet_pressed && (encoder_value == DOWN_ANTICLOCKWISE || encoder_value == UP_CLOCKWISE)) {
+        pet_mode_cycle_background(encoder_value == UP_CLOCKWISE ? 1 : -1);
+        return;
     } else if (pet_mode_is_active() && (encoder_value == ANTICLOCKWISE || encoder_value == CLOCKWISE)) {
         pet_mode_adjust_scene(encoder_value == CLOCKWISE ? 1 : -1, true);
         return;

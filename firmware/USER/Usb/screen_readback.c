@@ -33,6 +33,7 @@ static const uint8_t response_magic[] = {0x4d, 0x50, 0x53, 1};
 static uint8_t request[REQUEST_SIZE];
 static volatile bool request_pending;
 static uint8_t response[HEADER_SIZE + MAX_CHUNK + CHECKSUM_SIZE];
+static uint16_t response_size;
 static uint8_t active_menu;
 static bool pixels_dirty;
 static uint32_t generation;
@@ -142,10 +143,18 @@ bool screen_readback_needs_refresh(uint8_t menu) {
     return menu == active_menu && pixels_dirty;
 }
 
+static void send_response(void) {
+    if (CDC_Transmit_FS(response, response_size) == USBD_OK) response_size = 0;
+}
+
 void screen_readback_poll(void) {
     if (performance_menu && (pet_mode_is_active() || HAL_GetTick() - performance_updated >= 7000))
         clear_performance();
-    if (!request_pending || !CDC_TransmitReady_FS()) return;
+    if ((!request_pending && !response_size) || !CDC_TransmitReady_FS()) return;
+    if (response_size) {
+        send_response();
+        return;
+    }
 
     uint16_t id = read_u16(request + 4);
     uint32_t requested_generation = read_u32(request + 6);
@@ -179,6 +188,7 @@ void screen_readback_poll(void) {
         } else {
             write_u16(pixels, held_buttons);
             write_u16(pixels + 2, pressed_buttons);
+            pressed_buttons = 0;
             length = 4;
         }
     } else if (screen == MENU_CONFIG) {
@@ -222,7 +232,7 @@ void screen_readback_poll(void) {
             pixels[10] = pet_mode_season();
             pixels[11] = pet_mode_queue_depth();
             length = screen == PET_STATE ? 11 : 12;
-            if (screen == PET_CONTROL && requested_generation == 2) {
+            if (screen == PET_CONTROL && (requested_generation == 2 || requested_generation == 3)) {
                 const PetCare *care = pet_care_get();
                 pixels[12] = care->satiety;
                 pixels[13] = care->sleepiness;
@@ -232,6 +242,25 @@ void screen_readback_poll(void) {
                 pixels[17] = pet_mode_active_toy();
                 pixels[18] = pet_mode_toy_phase();
                 length = 19;
+                if (requested_generation == 3) {
+                    memcpy(pixels + 19, care->bindings, PET_KEY_COUNT);
+                    pixels[27] = (care->follow_time ? 1u : 0u) | (pet_mode_is_bedtime() ? 2u : 0u);
+                    pixels[28] = pet_mode_minute();
+                    pixels[29] = care->placed[PET_GARDEN];
+                    pixels[30] = care->placed[PET_NURSERY];
+                    pixels[31] = pet_mode_toy_drop();
+                    PetFloorFood foods[PET_FLOOR_CAPACITY];
+                    const uint8_t count = pet_mode_foods(foods);
+                    pixels[32] = count;
+                    for (unsigned i = 0; i < count; i++) {
+                        uint8_t *entry = pixels + 33 + 6 * i;
+                        entry[0] = foods[i].id;
+                        write_u16(entry + 1, (uint16_t)foods[i].x);
+                        write_u16(entry + 3, (uint16_t)foods[i].y);
+                        entry[5] = foods[i].stage;
+                    }
+                    length = 33 + 6 * count;
+                }
             }
         }
     } else if (active_menu == 0 || pixels_dirty) {
@@ -266,8 +295,9 @@ void screen_readback_poll(void) {
     response[18] = active_menu;
     uint16_t size = HEADER_SIZE + length;
     write_u16(response + size, crc16(response, size));
-    if (CDC_Transmit_FS(response, size + CHECKSUM_SIZE) == USBD_OK) {
-        if (screen == BUTTON_STATE && status == STATUS_OK) pressed_buttons = 0;
-        request_pending = false;
-    }
+    /* A handshake can take the endpoint after the readiness check. Retry this
+       exact reply without applying the command a second time. */
+    response_size = size + CHECKSUM_SIZE;
+    request_pending = false;
+    send_response();
 }

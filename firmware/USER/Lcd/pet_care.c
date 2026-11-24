@@ -4,18 +4,19 @@
 
 /* External SPI flash. Menu 10's last color sector is 10 * 27 + 22 + 26 = 318.
  * The alternate sector retains a complete record during erase or power loss. */
-enum { FIRST_SECTOR = 319, SECTOR_BYTES = 4096, RECORD_BYTES = 16,
+enum { FIRST_SECTOR = 319, SECTOR_BYTES = 4096, V1_BYTES = 16, RECORD_BYTES = 32,
        PER_SECTOR = SECTOR_BYTES / RECORD_BYTES, SLOTS = 2 * PER_SECTOR };
-static const uint8_t signature[] = {'P', 'E', 'T', 1};
-static PetCare care = {65, 25, 70, 35, PET_GARDEN};
+static const uint8_t signature[] = {'P', 'E', 'T'};
+static const PetCare initial_care = {65, 25, 70, 35, PET_GARDEN, {1,2,3,4,5,6,7,8}, false};
+static PetCare care;
 static uint32_t sequence, metabolism_ms, fatigue_ms;
 static uint16_t next_slot;
 static uint8_t unsaved_minutes;
 static bool dirty, journal_available;
 
-static uint16_t crc16(const uint8_t *data) {
+static uint16_t crc16(const uint8_t *data, unsigned bytes) {
     uint16_t crc = 0xffff;
-    for (unsigned i = 0; i < RECORD_BYTES - 2; i++) {
+    for (unsigned i = 0; i < bytes - 2; i++) {
         crc ^= (uint16_t)data[i] << 8;
         for (unsigned bit = 0; bit < 8; bit++)
             crc = (uint16_t)((crc & 0x8000) ? (crc << 1) ^ 0x1021 : crc << 1);
@@ -27,14 +28,19 @@ static uint32_t address(uint16_t slot) {
     return FIRST_SECTOR * SECTOR_BYTES + slot * RECORD_BYTES;
 }
 
-static bool valid(const uint8_t *record) {
-    return memcmp(record, signature, sizeof(signature)) == 0 &&
-           record[8] <= 100 && record[9] <= 100 && record[10] <= 100 &&
-           record[11] <= 100 && record[12] < PET_SCENE_COUNT &&
-           crc16(record) == (record[14] | record[15] << 8);
+static bool valid(const uint8_t *record, unsigned bytes) {
+    if (memcmp(record, signature, sizeof(signature)) || record[8] > 100 || record[9] > 100 ||
+        record[10] > 100 || record[11] > 100 || record[12] >= PET_SCENE_COUNT) return false;
+    if (bytes == RECORD_BYTES) {
+        if (record[13] > 1 || record[22] > 2 || record[23] > 2 || record[22] == 1) return false;
+        for (unsigned k = 0; k < PET_KEY_COUNT; k++)
+            if (record[14+k] > ITEM_CARROT) return false;
+    }
+    return crc16(record, bytes) == (record[bytes-2] | record[bytes-1] << 8);
 }
 
 void pet_care_init(uint16_t flash_id) {
+    care = initial_care;
     switch (flash_id) {
         case W25Q16: case W25Q32: case W25Q64: case W25Q128: case W25Q256:
         case BY25Q64: case BY25Q128: case NM25Q64: case NM25Q128:
@@ -48,15 +54,28 @@ void pet_care_init(uint16_t flash_id) {
     uint8_t group[256];
     for (uint16_t base = 0; base < SLOTS; base += sizeof(group) / RECORD_BYTES) {
         read_flash(group, address(base), sizeof(group));
-        for (unsigned i = 0; i < sizeof(group); i += RECORD_BYTES) {
+        /* V1 records are 16-byte aligned; v2 records occupy an aligned 32-byte slot. */
+        for (unsigned i = 0; i < sizeof(group); i += V1_BYTES) {
             const uint8_t *record = group + i;
-            if (!valid(record)) continue;
+            unsigned bytes = record[3] == 1 ? V1_BYTES : RECORD_BYTES;
+            if ((record[3] != 1 && (record[3] != 2 || i % RECORD_BYTES)) ||
+                !valid(record, bytes)) continue;
             uint32_t serial;
             memcpy(&serial, record + 4, sizeof(serial));
             if (found && (int32_t)(serial - sequence) <= 0) continue;
             found = true;
             sequence = serial;
-            care = (PetCare){record[8], record[9], record[10], record[11], record[12]};
+            care = initial_care;
+            care.satiety = record[8];
+            care.sleepiness = record[9];
+            care.mood = record[10];
+            care.affection = record[11];
+            care.scene = record[12];
+            if (record[3] == 2) {
+                care.follow_time = record[13];
+                memcpy(care.bindings, record + 14, PET_KEY_COUNT);
+                memcpy(care.placed, record + 22, PET_SCENE_COUNT);
+            }
             next_slot = (base + i / RECORD_BYTES + 1) % SLOTS;
         }
     }
@@ -67,6 +86,27 @@ const PetCare *pet_care_get(void) { return &care; }
 void pet_care_set_scene(uint8_t scene) {
     if (scene == care.scene || scene >= PET_SCENE_COUNT) return;
     care.scene = scene;
+    dirty = true;
+    pet_care_save();
+}
+
+void pet_care_bind(uint8_t key, uint8_t item) {
+    if (key >= PET_KEY_COUNT || item > ITEM_CARROT || care.bindings[key] == item) return;
+    care.bindings[key] = item;
+    dirty = true;
+    pet_care_save();
+}
+
+void pet_care_set_toy(uint8_t scene, uint8_t toy) {
+    if (scene >= PET_SCENE_COUNT || care.placed[scene] == toy) return;
+    care.placed[scene] = toy;
+    dirty = true;
+    pet_care_save();
+}
+
+void pet_care_follow_clock(bool follow) {
+    if (care.follow_time == follow) return;
+    care.follow_time = follow;
     dirty = true;
     pet_care_save();
 }
@@ -121,6 +161,7 @@ void pet_care_save(void) {
     }
     if (!(next_slot % PER_SECTOR)) erase_flash_sector(FIRST_SECTOR + next_slot / PER_SECTOR);
     memcpy(record, signature, sizeof(signature));
+    record[3] = 2;
     uint32_t serial = sequence + 1;
     memcpy(record + 4, &serial, sizeof(serial));
     record[8] = care.satiety;
@@ -128,9 +169,12 @@ void pet_care_save(void) {
     record[10] = care.mood;
     record[11] = care.affection;
     record[12] = care.scene;
-    uint16_t crc = crc16(record);
-    record[14] = (uint8_t)crc;
-    record[15] = (uint8_t)(crc >> 8);
+    record[13] = care.follow_time;
+    memcpy(record + 14, care.bindings, PET_KEY_COUNT);
+    memcpy(record + 22, care.placed, PET_SCENE_COUNT);
+    uint16_t crc = crc16(record, sizeof(record));
+    record[RECORD_BYTES-2] = (uint8_t)crc;
+    record[RECORD_BYTES-1] = (uint8_t)(crc >> 8);
     write_to_flash(record, address(next_slot), sizeof(record));
     read_flash(previous, address(next_slot), sizeof(previous));
     if (memcmp(previous, record, sizeof(record)) == 0) {
