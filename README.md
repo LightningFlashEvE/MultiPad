@@ -14,6 +14,8 @@ Windows 上位机和 STM32 固件在同一仓库维护。涉及 USB 协议的改
 
 键盘彩屏性能监测、软件控制宠物和小屏动态刷新需要配套固件及 USB。切回工作模式后，OLED 恢复该菜单下的工作内容。
 
+养宠模式下，点击软件彩屏，进入 **宠物设置 → AI 控制**。填写支持工具调用的 OpenAI 兼容 API 地址、模型名和 API Key，默认预填百炼北京 Token Plan 地址及 qwen3.8-flash，使用该地址时请填写 Token Plan 专用 Key。保存后可测试连接和实机苹果投喂。启用兔子自主动作后，模型根据宠物状态每分钟最多决策一次。
+
 ## 本地构建
 
 - 上位机在 `app/` 运行 `pnpm install` 后，可用 `pnpm start` 启动开发窗口，或用 `pnpm electron:build` 打包。仓库导入前，本机已成功打包 Windows x64 并连接实机。上游 TypeScript 全量检查仍有历史报错。

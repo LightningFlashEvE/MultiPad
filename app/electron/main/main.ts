@@ -12,7 +12,8 @@ import { setItem, getItem, delItem } from "../controller/storage"
 import { fileReadListener } from "../controller/fileRead"
 import { fetchScreenValue } from '../controller/screenApi'
 import { startPetMcp } from '../controller/petMcp'
-import type { WebContents } from 'electron'
+import { getPetAi, savePetAi, startPetAi, stopPetAi, testPetAi } from '../controller/petAi'
+import type { IpcMainInvokeEvent, WebContents } from 'electron'
 
 // A detached Windows launcher can close its logging pipes while MultiPad is open.
 for (const stream of [process.stdout, process.stderr]) {
@@ -102,6 +103,26 @@ ipcMain.handle('pet-action', async (_event, command, value) => {
   const reply = await SerialConnect.pet({ command, value })
   return reply.state === 'ready' ? { ...reply, payload: Uint8Array.from(reply.payload) } : reply
 })
+let mainContents: WebContents | undefined
+function fromHome(event: IpcMainInvokeEvent) {
+  const frame = event.senderFrame
+  if (event.sender !== mainContents || !frame || frame !== event.sender.mainFrame || new URL(frame.url).hash !== '#/home') {
+    throw Error('请在 MultiPad 主窗口使用桌宠 AI 设置')
+  }
+}
+ipcMain.handle('pet-ai-get', (event: IpcMainInvokeEvent) => {
+  fromHome(event)
+  return getPetAi()
+})
+ipcMain.handle('pet-ai-save', (event: IpcMainInvokeEvent, settings: unknown) => {
+  fromHome(event)
+  return savePetAi(settings)
+})
+ipcMain.handle('pet-ai-test', (event: IpcMainInvokeEvent, kind: unknown) => {
+  fromHome(event)
+  if (kind !== 'connection' && kind !== 'feed') throw Error('无效的测试项目')
+  return testPetAi(kind)
+})
 ipcMain.handle('live-oled', (_event, operation) => SerialConnect.liveOled(operation))
 ipcMain.handle('screen-api-value', (_event, url: unknown, field: unknown) => fetchScreenValue(url, field))
 
@@ -156,7 +177,7 @@ ipcMain.handle('device-configuring', async (event, enabled: boolean) => {
 // 创建主窗口
 const createMainWindow = async () => {
   let mainW = new CreateWindow()
-  mainW.createWindow({
+  const window = mainW.createWindow({
     route: '/home',
     isMainWin: true,
   }, {
@@ -170,6 +191,7 @@ const createMainWindow = async () => {
     hasShadow: false,
     roundedCorners: false,
   })
+  if (window) mainContents = window.webContents
 }
 
 app.commandLine.appendSwitch('--ignore-certificate-errors', 'true')
@@ -183,6 +205,8 @@ app.whenReady().then(() => {
   } catch (error) {
     console.error('MultiPad MCP startup failed', error)
   }
+  startPetAi()
+  app.once('before-quit', stopPetAi)
   // 创建窗口
   createMainWindow()
   app.on('activate', () => {

@@ -16,6 +16,7 @@ import type { DeviceButtons } from '../utils/deviceButtonState'
 import { createLiveScreens } from '../components/screenPage/liveScreens'
 import { renderScreenContent, type ScreenFrame } from '../components/screenPage/screenContent'
 import PetDisplay from '../components/screenPage/PetDisplay.vue'
+import PetAiSettings from '../components/screenPage/PetAiSettings.vue'
 import PerformanceDisplay from '../components/screenPage/PerformanceDisplay.vue'
 import { petParameters, petValue, petFruits, petSeasons, type PetParameter, type PetState } from '../components/screenPage/petDisplay'
 
@@ -39,6 +40,7 @@ const performanceValues = ref<number[]>([])
 const performanceUnavailable = ref(false)
 const petDialog = ref<HTMLDialogElement>()
 const petScreen = ref(0)
+const showPetAi = ref(false)
 const fruitSelection = ref(1)
 const pendingScene = new Map<number, number>()
 
@@ -145,6 +147,7 @@ watch(() => [appMode.value, petContent(0).value, petContent(1).value, ...petPara
 
 function configurePetScreen(screen: number) {
   petScreen.value = screen
+  showPetAi.value = false
   petDialog.value?.showModal()
 }
 
@@ -672,13 +675,15 @@ const showAppInfo = () => {
     </div>
     <p v-if="appMode === 'work' && performanceUnavailable && configStore.screenData[0].content?.mode === 'performance'"
       class="firmware-hint" role="status">彩屏性能监测需要升级键盘固件。</p>
-    <dialog ref="petDialog" class="pet-dialog">
+    <dialog ref="petDialog" class="pet-dialog" @close="showPetAi = false">
       <form method="dialog">
         <header>
-          <h2>{{ petScreen === 0 ? '宠物设置' : screenLabels[petScreen] + ' · 宠物参数' }}</h2>
-          <button type="submit">完成</button>
+          <h2>{{ showPetAi ? 'AI 控制' : petScreen === 0 ? '宠物设置' : screenLabels[petScreen] + ' · 宠物参数' }}</h2>
+          <button v-if="showPetAi" type="button" @click="showPetAi = false">返回宠物设置</button>
+          <button v-else type="submit">完成</button>
         </header>
-        <template v-if="petScreen === 0">
+        <PetAiSettings v-if="showPetAi" :device-ready="petLinked && petState.active" />
+        <template v-else-if="petScreen === 0">
           <PetDisplay :state="petState" :connected="petLinked && petState.active" />
           <div class="pet-fields">
             <label>场景时间
@@ -696,6 +701,7 @@ const showAppInfo = () => {
                 <option v-for="(fruit, index) in petFruits.slice(1)" :key="fruit" :value="index + 1">{{ fruit }}</option>
               </select>
             </label>
+            <button type="button" @click="showPetAi = true">AI 控制</button>
             <button type="button" @click="interactWithPet(2, fruitSelection)">投喂</button>
             <button type="button" @click="interactWithPet(3, petState.action === 2 ? 0 : 2)">{{ petState.action === 2 ? '叫醒' : '睡觉' }}</button>
           </div>
@@ -718,7 +724,7 @@ const showAppInfo = () => {
 .mode-switch button[aria-pressed="true"] { color: white; background: #263d46; }
 .mode-status { grid-column: 1 / -1; align-self: center; font-size: 12px; color: #405058; }
 .firmware-hint { position: absolute; bottom: 0; left: 22px; margin: 0; font-size: 12px; }
-.pet-dialog { box-sizing: border-box; width: min(430px, 90%); padding: 18px; color: #24323a; border: 1px solid #aab7bd; border-radius: 14px; background: #f7fafb; }
+.pet-dialog { box-sizing: border-box; width: min(450px, 92%); max-height: calc(100vh - 28px); overflow: auto; padding: 18px; color: #24323a; border: 1px solid #aab7bd; border-radius: 14px; background: #f7fafb; }
 .pet-dialog::backdrop { background: #15222d80; }
 .pet-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .pet-dialog h2 { margin: 0; font-size: 18px; }

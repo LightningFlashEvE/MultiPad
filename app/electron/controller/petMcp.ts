@@ -90,7 +90,7 @@ async function result(run: () => Promise<Record<string, unknown>>) {
   }
 }
 
-function createPetMcp() {
+export function createPetMcp() {
   const server = new McpServer({ name: 'multipad-pet', version: '1.0.0' })
   server.registerTool('pet_get_state', {
     description: '读取键盘桌宠当前模式、动作、位置、水果、场景时间与季节。',
