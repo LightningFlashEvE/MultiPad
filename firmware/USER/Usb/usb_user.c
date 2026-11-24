@@ -1,6 +1,7 @@
 #include "usb_user.h"
 #include "screen_readback.h"
 #include "live_oled.h"
+#include "pet_mode.h"
 #include "usb_update.h"
 #include "oled_user.h"
 #include "flash_user.h"
@@ -46,7 +47,7 @@ static uint8_t handshake[] = {0xaa, 0xbb, 0xcc, 0x4d, 0x50, 0x53, 0x43, 1
 #ifdef MULTIPAD_USB_APP
     , 0x55
 #endif
-    , BUTTON_READBACK_CAPABILITY, LIVE_OLED_CAPABILITY
+    , BUTTON_READBACK_CAPABILITY, LIVE_OLED_CAPABILITY, PET_API_CAPABILITY, 0x56
 };
 
 static void oled_data_handle(void);

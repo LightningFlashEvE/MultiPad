@@ -14,7 +14,11 @@ import { XBox } from 'ilx1-x-box'
 import { renderDeviceScreens, type DeviceScreens } from '../utils/deviceScreenFormat'
 import type { DeviceButtons } from '../utils/deviceButtonState'
 import { createLiveScreens } from '../components/screenPage/liveScreens'
-import type { ScreenFrame } from '../components/screenPage/screenContent'
+import { renderScreenContent, type ScreenFrame } from '../components/screenPage/screenContent'
+import PetDisplay from '../components/screenPage/PetDisplay.vue'
+import PetAiSettings from '../components/screenPage/PetAiSettings.vue'
+import PerformanceDisplay from '../components/screenPage/PerformanceDisplay.vue'
+import { petParameters, petValue, petFruits, petSeasons, type PetParameter, type PetState } from '../components/screenPage/petDisplay'
 
 const router = useRouter()
 const win = window as any
@@ -22,6 +26,136 @@ const configStore = useConfigStore()
 const menuStore = useMenuStore()
 const popBoxRef = ref<HTMLElement | null>(null)
 let liveTimer: ReturnType<typeof setInterval> | undefined
+let petTimer: ReturnType<typeof setInterval> | undefined
+let petTask: Promise<void> | undefined
+let petSession: string | undefined
+let requestedMode: 'work' | 'pet' | undefined
+const appMode = ref<'work' | 'pet'>('work')
+const petState = ref<PetState>({ active: false, action: 1, x: 0, fruit: 0, hour: 18, season: 0, queue: 0 })
+const petLinked = ref(false)
+const petNotice = ref('')
+const petParameterIds = ref<[PetParameter, PetParameter]>(['action', 'hour'])
+const petImages = ref(['', ''])
+const performanceValues = ref<number[]>([])
+const performanceUnavailable = ref(false)
+const petDialog = ref<HTMLDialogElement>()
+const petScreen = ref(0)
+const showPetAi = ref(false)
+const fruitSelection = ref(1)
+const pendingScene = new Map<number, number>()
+
+function storeMode() {
+  win.myApi.storageMenu('displayMode', appMode.value)
+}
+
+function setAppMode(mode: 'work' | 'pet') {
+  if (appMode.value === mode) return
+  requestedMode = mode
+  appMode.value = mode
+  storeMode()
+  showDeviceScreens.value = false
+  refreshPetDevice()
+  liveScreens.tick()
+}
+
+function applyPetReply(reply: { session?: string; payload: Uint8Array }) {
+  const p = reply.payload
+  petSession = reply.session
+  petLinked.value = true
+  petNotice.value = ''
+  petState.value = { active: p[0] === 1, action: p[1], x: p[2] | (p[3] << 8), fruit: p[8],
+    hour: pendingScene.get(4) ?? p[9], season: pendingScene.get(5) ?? p[10], queue: p[11] }
+}
+
+function refreshPetDevice() {
+  if (petTask || !conState.value || progressShow.value || firmwareUpdating.value) return
+  petTask = (async () => {
+    const status = await win.myApi.petAction(0)
+    if (status.state === 'busy') return
+    if (status.state !== 'ready' || status.payload.length !== 12) {
+      petLinked.value = false
+      petSession = undefined
+      petNotice.value = status.state === 'unsupported' ? '键盘固件需要升级才能同步养宠模式。' : ''
+      return
+    }
+    if (appMode.value === 'pet' && petSession !== status.session) requestedMode ??= 'pet'
+    const actualMode = status.payload[0] ? 'pet' : 'work'
+    if (requestedMode && actualMode !== requestedMode) {
+      const target = requestedMode
+      const result = await win.myApi.petAction(1, target === 'pet' ? 1 : 0)
+      if (result.state === 'ready' && result.status === 0 && result.payload.length === 12) {
+        if (requestedMode === target) requestedMode = undefined
+        applyPetReply(result)
+      }
+      return
+    }
+    requestedMode = undefined
+    applyPetReply(status)
+    if (appMode.value !== actualMode) {
+      if (actualMode === 'pet') showDeviceScreens.value = false
+      appMode.value = actualMode
+      storeMode()
+    }
+    if (actualMode === 'pet') {
+      for (const [command, value] of pendingScene) {
+        const result = await win.myApi.petAction(command, value)
+        if (result.state !== 'ready' || result.status !== 0 || result.payload.length !== 12) break
+        if (pendingScene.get(command) === value) pendingScene.delete(command)
+        applyPetReply(result)
+      }
+    }
+  })().catch(() => { petLinked.value = false }).finally(() => { petTask = undefined })
+}
+
+function setScene(command: 4 | 5, event: Event) {
+  const value = Number((event.target as HTMLSelectElement).value)
+  petState.value = { ...petState.value, [command === 4 ? 'hour' : 'season']: value }
+  pendingScene.set(command, value)
+  const { hour, season } = petState.value
+  win.myApi.storageMenu('petSceneSettings', JSON.stringify({ hour, season }))
+  refreshPetDevice()
+}
+
+async function interactWithPet(command: number, value: number) {
+  if (petTask || progressShow.value || firmwareUpdating.value) return
+  if (!petLinked.value) {
+    petState.value = { ...petState.value, action: command === 2 ? 3 : value, fruit: command === 2 ? value : 0 }
+    return
+  }
+  petTask = (async () => {
+    const result = await win.myApi.petAction(command, value)
+    if (result.state === 'ready' && result.status === 0 && result.payload.length === 12) applyPetReply(result)
+    else petNotice.value = '宠物暂时忙碌，请稍后再试。'
+  })().catch(() => { petNotice.value = '未能同步宠物操作。' }).finally(() => { petTask = undefined })
+  await petTask
+}
+
+function petContent(index: number) {
+  const id = petParameterIds.value[index]
+  const label = petParameters.find(item => item.id === id)!.label
+  return { mode: 'pet', label, value: petValue(id, petState.value) } as const
+}
+
+watch(() => [appMode.value, petContent(0).value, petContent(1).value, ...petParameterIds.value],
+  async (_current, _previous, onCleanup) => {
+    if (appMode.value !== 'pet') return
+    let stale = false
+    onCleanup(() => { stale = true })
+    const images = await Promise.all([renderScreenContent(petContent(0)), renderScreenContent(petContent(1))])
+    if (!stale) petImages.value = images
+  })
+
+function configurePetScreen(screen: number) {
+  petScreen.value = screen
+  showPetAi.value = false
+  petDialog.value?.showModal()
+}
+
+function setPetParameter(event: Event) {
+  petParameterIds.value[petScreen.value - 1] = (event.target as HTMLSelectElement).value as PetParameter
+  win.myApi.storageMenu('petScreenParameters', JSON.stringify(petParameterIds.value))
+  liveScreens.tick()
+}
 
 const test = async () => {
   console.info('test begin')
@@ -35,14 +169,38 @@ onMounted(async () => {
   let jsonStr = await win.myApi.getMenu('configData')
   if(jsonStr != '' && jsonStr != undefined && jsonStr != null)
     parseMenuConfig(jsonStr)
-  // console.info(jsonStr)
+  const savedMode = await win.myApi.getMenu('displayMode')
+  if (savedMode === 'pet' || savedMode === 'work') {
+    appMode.value = savedMode
+    requestedMode = savedMode
+  }
+  try {
+    const savedParameters = JSON.parse(await win.myApi.getMenu('petScreenParameters') || 'null')
+    if (Array.isArray(savedParameters) && savedParameters.length === 2 &&
+        savedParameters.every(id => petParameters.some(option => option.id === id))) petParameterIds.value = [savedParameters[0], savedParameters[1]]
+  } catch { /* Fall back to the default OLED parameters. */ }
+  try {
+    const savedScene = JSON.parse(await win.myApi.getMenu('petSceneSettings') || 'null')
+    if (Number.isInteger(savedScene?.hour) && savedScene.hour >= 0 && savedScene.hour < 24 &&
+        Number.isInteger(savedScene?.season) && savedScene.season >= 0 && savedScene.season < 4) {
+      petState.value = { ...petState.value, hour: savedScene.hour, season: savedScene.season }
+      pendingScene.set(4, savedScene.hour)
+      pendingScene.set(5, savedScene.season)
+    }
+  } catch { /* Use the device scene or the default preview. */ }
   // 连接硬件
   conState.value = await testConnection()
   refreshDeviceScreens()
   screenPoll = setInterval(refreshDeviceScreens, 1800)
   buttonPoll = setInterval(refreshDeviceButtons, 45)
   liveScreens.tick()
-  liveTimer = setInterval(() => liveScreens.tick(), 2000)
+  liveTimer = setInterval(() => {
+    if (appMode.value === 'work' && hasPerformanceScreens()) void samplePerformance()
+    liveScreens.tick()
+  }, 1500)
+  if (hasPerformanceScreens()) void samplePerformance()
+  refreshPetDevice()
+  petTimer = setInterval(refreshPetDevice, 700)
   // 主页面监听
   win.myApi.storeChangeListen((objData) => {
     // console.info('homePage listening', objData)
@@ -71,6 +229,7 @@ onMounted(async () => {
           configStore.menuConfig[menu] = { ...saved, screenConfig }
         }
         closeStorage()
+        if (screen === 0 && frame.content?.mode === 'performance') void samplePerformance()
         liveScreens.tick()
         return
       }
@@ -110,6 +269,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   clearInterval(liveTimer)
+  clearInterval(petTimer)
   clearInterval(screenPoll)
   clearInterval(buttonPoll)
   clearButtonHighlights()
@@ -159,25 +319,17 @@ const createWindow = (route: string, windowOptions = {}) => {
   )
 }
 
-const openPetPreview = () => createWindow('/pet', {
-  title: 'MultiPad 桌宠',
-  width: 680,
-  height: 520,
-  minWidth: 680,
-  minHeight: 520,
-  resizable: false,
-  maximizable: false
-})
-
 // 连接状态
 const conState = ref<boolean>(false)
 // 手动重新连接
 const titleClick = async () => {
   buttonSyncUnsupported = false
+  petSession = undefined
   conState.value = await testConnection()
   liveScreens.forgetDevice()
   liveScreens.tick()
   refreshDeviceScreens()
+  refreshPetDevice()
 }
 
 
@@ -196,16 +348,36 @@ watch(
 // 数据上传页面显示
 const progressShow = ref<boolean>(false)
 const firmwareUpdating = ref(false)
-const hasDynamicScreens = () => configStore.menuConfig.some(menu => menu.screenConfig.some((screen: ScreenFrame) =>
+const hasPerformanceScreens = () => configStore.menuConfig.some(menu => menu.screenConfig[0]?.content?.mode === 'performance')
+const hasDynamicScreens = () => appMode.value === 'pet' || configStore.menuConfig.some(menu => menu.screenConfig.some((screen: ScreenFrame) =>
   screen?.content && screen.content.mode !== 'text'))
-const liveScreens = createLiveScreens(menu => configStore.menuConfig[menu]?.screenConfig,
-  () => progressShow.value || firmwareUpdating.value, hasDynamicScreens,
-  connected => { conState.value = connected })
+const samplePerformance = async () => { performanceValues.value = await win.myApi.pcPerformance().catch(() => []) }
+let performanceMenu = 0
+const liveScreens = createLiveScreens(menu => appMode.value === 'work' || !petState.value.active
+  ? configStore.menuConfig[menu]?.screenConfig
+  : [{ baseData: '', buffData: [] }, ...[0, 1].map(index => ({ baseData: '', buffData: [], content: petContent(index) }))],
+  () => progressShow.value || firmwareUpdating.value || Boolean(petTask), hasDynamicScreens,
+  connected => {
+    conState.value = connected
+    if (!connected) {
+      petLinked.value = false
+      petSession = undefined
+    }
+  },
+  async menu => {
+    const enabled = appMode.value === 'work' && configStore.menuConfig[menu]?.screenConfig[0]?.content?.mode === 'performance'
+    if (enabled && performanceValues.value.length !== 3) return
+    if (!enabled && !performanceMenu) return
+    const result = await win.myApi.livePerformance(enabled ? menu + 1 : 0,
+      enabled ? [...performanceValues.value] : undefined)
+    if (result === 'ready' || result === 'unsupported') performanceUnavailable.value = result === 'unsupported'
+    if (result === 'ready') performanceMenu = enabled ? menu + 1 : 0
+  }, () => appMode.value === 'pet' && petState.value.active)
 const updateFirmware = async () => {
   if (firmwareUpdating.value || progressShow.value) return
   firmwareUpdating.value = true
   try {
-    await Promise.all([screenReadTask, buttonReadTask, liveScreens.wait()])
+    await Promise.all([screenReadTask, buttonReadTask, petTask, liveScreens.wait()])
     clearButtonHighlights()
     const result = await win.myApi.updateFirmware()
     if (result.state === 'cancelled') return
@@ -229,13 +401,16 @@ const sendFinalData = async () => {
   const curMenu = configStore.curMenu
   configStore.setProgressMes(0)
   progressShow.value = true
+  let ownsTransfer = false
   try {
-    await Promise.all([screenReadTask, buttonReadTask, liveScreens.wait()])
+    await Promise.all([screenReadTask, buttonReadTask, petTask, liveScreens.wait()])
     conState.value = await win.myApi.connectHardware()
     if (!conState.value) {
       XBox.popMes('硬件已经断开连接')
       return
     }
+    await win.myApi.setDeviceConfiguring(true)
+    ownsTransfer = true
     await sendMenu()
     const activeCount = configStore.activeMenu.filter(Boolean).length
     let count = 0
@@ -253,6 +428,8 @@ const sendFinalData = async () => {
       configStore.setProgressMes(Math.ceil((count / activeCount) * 10))
     }
     configStore.setProgressMes(100)
+    await win.myApi.setDeviceConfiguring(false)
+    ownsTransfer = false
     if (hasDynamicScreens()) {
       const live = await win.myApi.liveOled().catch(() => undefined)
       if (live?.state === 'unsupported') XBox.popMes('当前固件需要升级后才能自动刷新小屏')
@@ -262,6 +439,7 @@ const sendFinalData = async () => {
     console.error(error)
     XBox.popMes('发送中断，请检查 USB 连接后重试')
   } finally {
+    if (ownsTransfer) await win.myApi.setDeviceConfiguring(false).catch(() => {})
     if (configStore.curMenu !== curMenu) setMenu(curMenu)
     progressShow.value = false
     liveScreens.tick()
@@ -299,6 +477,7 @@ const storageCurMenu = () => {
 
 // 显示屏幕编辑
 const openScreenPage = (curScreen: number) => {
+  if (appMode.value === 'pet') return configurePetScreen(curScreen)
   showDeviceScreens.value = false
   storageCurMenu()
   closeStorage()
@@ -334,7 +513,7 @@ async function readDeviceScreens() {
 }
 
 function refreshDeviceScreens() {
-  if (!conState.value || progressShow.value || firmwareUpdating.value || screenReadTask) return
+  if (!conState.value || !showDeviceScreens.value || appMode.value === 'pet' || progressShow.value || firmwareUpdating.value || screenReadTask) return
   screenReadTask = readDeviceScreens().finally(() => { screenReadTask = undefined })
 }
 
@@ -399,7 +578,7 @@ async function readDeviceButtons() {
 }
 
 function refreshDeviceButtons() {
-  if (!conState.value || buttonSyncUnsupported || progressShow.value || firmwareUpdating.value || buttonReadTask) return
+  if (!conState.value || buttonSyncUnsupported || progressShow.value || firmwareUpdating.value || petTask || buttonReadTask) return
   buttonReadTask = readDeviceButtons().catch(clearButtonHighlights).finally(() => { buttonReadTask = undefined })
 }
 
@@ -434,17 +613,20 @@ const showAppInfo = () => {
             title="重新连接键盘" @click="titleClick">
             {{ conState ? '已连接' : '未连接' }}
           </button>
-          <button v-if="conState" class="screen-source" type="button"
-            :disabled="!deviceScreens" :aria-pressed="Boolean(deviceScreens && showDeviceScreens)"
+          <button v-if="conState && appMode === 'work'" class="screen-source" type="button"
+            :aria-pressed="Boolean(deviceScreens && showDeviceScreens)"
             :title="deviceScreens ? '切换设备画面与本机预览' : undefined"
-            @click="showDeviceScreens = !showDeviceScreens">
+            @click="showDeviceScreens = !showDeviceScreens; refreshDeviceScreens()">
             {{ screenSourceLabel }}
           </button>
           <button class="firmware-update" type="button" :disabled="firmwareUpdating || progressShow"
             title="通过 USB 升级键盘固件" @click="updateFirmware">
             {{ firmwareUpdating ? '升级中' : 'USB 升级' }}
           </button>
-          <button class="pet-preview-button" type="button" @click="openPetPreview">桌宠</button>
+          <div class="mode-switch" role="group" aria-label="显示模式">
+            <button type="button" :aria-pressed="appMode === 'work'" :disabled="progressShow || firmwareUpdating" @click="setAppMode('work')">工作模式</button>
+            <button type="button" :aria-pressed="appMode === 'pet'" :disabled="progressShow || firmwareUpdating" @click="setAppMode('pet')">养宠模式</button>
+          </div>
         </div>
       </template>
     </WindowTitle>
@@ -457,13 +639,20 @@ const showAppInfo = () => {
       </div>
       <div class="screen-panel">
         <button v-for="(label, index) in screenLabels" :key="label" class="screen-card" type="button"
-          :title="`编辑${label}内容`" @click="openScreenPage(index)">
+          :title="appMode === 'pet' ? (index ? `设置${label}宠物参数` : '打开宠物设置') : `编辑${label}内容`" @click="openScreenPage(index)">
           <span class="screen-image">
-            <img v-if="screenPreviews[index]" :src="screenPreviews[index]" alt="" />
+            <PetDisplay v-if="appMode === 'pet' && index === 0" :state="petState" :connected="petLinked && petState.active" />
+            <img v-else-if="appMode === 'pet' && index && petImages[index - 1]" :src="petImages[index - 1]" alt="" />
+            <PerformanceDisplay v-else-if="index === 0 && configStore.screenData[0].content?.mode === 'performance'"
+              :values="performanceValues" />
+            <img v-else-if="appMode === 'work' && screenPreviews[index]" :src="screenPreviews[index]" alt="" />
           </span>
-          <span>{{ label }}</span>
+          <span>{{ appMode === 'pet' ? (index ? petContent(index - 1).label : '宠物设置') : label }}</span>
         </button>
-        <div class="layer-actions">
+        <div v-if="appMode === 'pet'" class="mode-status" role="status">
+          {{ petNotice || (petLinked && petState.active ? '键盘养宠模式已同步' : '本机宠物预览') }}
+        </div>
+        <div v-else class="layer-actions">
           <button id="send-box" type="button" :disabled="progressShow || firmwareUpdating"
             @click="sendFinalData">发送到键盘</button>
           <div id="menu-box" role="group" aria-label="本机配置层">
@@ -484,11 +673,67 @@ const showAppInfo = () => {
         :class="{ 'device-active': isDeviceButtonActive(10) }"
         @click.stop="openConfigWindow(10)">旋钮 3</button>
     </div>
+    <p v-if="appMode === 'work' && performanceUnavailable && configStore.screenData[0].content?.mode === 'performance'"
+      class="firmware-hint" role="status">彩屏性能监测需要升级键盘固件。</p>
+    <dialog ref="petDialog" class="pet-dialog" @close="showPetAi = false">
+      <form method="dialog">
+        <header>
+          <h2>{{ showPetAi ? 'AI 控制' : petScreen === 0 ? '宠物设置' : screenLabels[petScreen] + ' · 宠物参数' }}</h2>
+          <button v-if="showPetAi" type="button" @click="showPetAi = false">返回宠物设置</button>
+          <button v-else type="submit">完成</button>
+        </header>
+        <PetAiSettings v-if="showPetAi" :device-ready="petLinked && petState.active" />
+        <template v-else-if="petScreen === 0">
+          <PetDisplay :state="petState" :connected="petLinked && petState.active" />
+          <div class="pet-fields">
+            <label>场景时间
+              <select :value="petState.hour" @change="setScene(4, $event)">
+                <option v-for="hour in 24" :key="hour" :value="hour - 1">{{ String(hour - 1).padStart(2, '0') }}:00</option>
+              </select>
+            </label>
+            <label>季节
+              <select :value="petState.season" @change="setScene(5, $event)">
+                <option v-for="(season, index) in petSeasons" :key="season" :value="index">{{ season }}</option>
+              </select>
+            </label>
+            <label>投喂水果
+              <select v-model.number="fruitSelection">
+                <option v-for="(fruit, index) in petFruits.slice(1)" :key="fruit" :value="index + 1">{{ fruit }}</option>
+              </select>
+            </label>
+            <button type="button" @click="showPetAi = true">AI 控制</button>
+            <button type="button" @click="interactWithPet(2, fruitSelection)">投喂</button>
+            <button type="button" @click="interactWithPet(3, petState.action === 2 ? 0 : 2)">{{ petState.action === 2 ? '叫醒' : '睡觉' }}</button>
+          </div>
+          <p v-if="petNotice" role="status">{{ petNotice }}</p>
+        </template>
+        <label v-else>显示参数
+          <select :value="petParameterIds[petScreen - 1]" @change="setPetParameter">
+            <option v-for="option in petParameters" :key="option.id" :value="option.id">{{ option.label }}</option>
+          </select>
+        </label>
+      </form>
+    </dialog>
     <ProgressBox v-if="progressShow" />
   </div>
 </template>
 
 <style lang="scss" scoped>
+.mode-switch { -webkit-app-region: no-drag; display: inline-flex; gap: 2px; margin-left: auto; padding: 2px; background: #dce5e8; border-radius: 8px; }
+.mode-switch button { padding: 4px 7px; border: 0; border-radius: 6px; font: inherit; font-size: 12px; white-space: nowrap; color: #263d46; background: transparent; cursor: pointer; }
+.mode-switch button[aria-pressed="true"] { color: white; background: #263d46; }
+.mode-status { grid-column: 1 / -1; align-self: center; font-size: 12px; color: #405058; }
+.firmware-hint { position: absolute; bottom: 0; left: 22px; margin: 0; font-size: 12px; }
+.pet-dialog { box-sizing: border-box; width: min(450px, 92%); max-height: calc(100vh - 28px); overflow: auto; padding: 18px; color: #24323a; border: 1px solid #aab7bd; border-radius: 14px; background: #f7fafb; }
+.pet-dialog::backdrop { background: #15222d80; }
+.pet-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.pet-dialog h2 { margin: 0; font-size: 18px; }
+.pet-dialog canvas { height: auto; border-radius: 8px; }
+.pet-fields { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-top: 12px; }
+.pet-dialog label { display: grid; gap: 4px; font-size: 13px; }
+.pet-dialog button, .pet-dialog select { font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid #aab7bd; background: white; color: inherit; }
+.pet-dialog button { cursor: pointer; }
+.pet-dialog p { margin: 8px 0 0; font-size: 12px; }
 #app-info {
   @include global.full_wh;
   @include global.pos_ab;
@@ -546,7 +791,7 @@ const showAppInfo = () => {
   font-weight: 700;
 }
 
-.connection-state, .screen-source, .firmware-update, .pet-preview-button {
+.connection-state, .screen-source, .firmware-update {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -559,14 +804,8 @@ const showAppInfo = () => {
 
 .home-toolbar .connection-state,
 .home-toolbar .screen-source,
-.home-toolbar .firmware-update,
-.home-toolbar .pet-preview-button {
-  font-size: 13px;
-  font-weight: 600;
-
-  &:hover:not(:disabled) {
-    background: #fff;
-  }
+.home-toolbar .firmware-update {
+  -webkit-app-region: no-drag;
 }
 
 .connection-state {

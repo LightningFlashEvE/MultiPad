@@ -1,6 +1,8 @@
 #include "screen_readback.h"
 #include "flash_user.h"
 #include "live_oled.h"
+#include "lcd_user.h"
+#include <stdio.h>
 #include "pet_mode.h"
 #include "usbd_cdc_if.h"
 #include <string.h>
@@ -12,6 +14,9 @@ enum {
     MAX_CHUNK = 224,
     COLOR_SIZE = 320 * 172 * 2,
     OLED_SIZE = 72 * 40 / 8,
+    PERFORMANCE = 0xf9,
+    PET_CONTROL = 0xfa,
+    PET_EVENTS = 0xfb,
     MENU_CONFIG = 0xfc,
     PET_STATE = 0xfd,
     BUTTON_STATE = 0xfe,
@@ -32,6 +37,37 @@ static bool pixels_dirty;
 static uint32_t generation;
 static uint16_t held_buttons;
 static uint16_t pressed_buttons;
+static uint8_t performance_menu;
+static uint32_t performance_updated;
+static uint8_t last_metrics[3];
+
+static void clear_performance(void) {
+    if (!performance_menu) return;
+    performance_menu = 0;
+    if (!pet_mode_is_active()) restore_menu_color();
+}
+
+static void show_performance(const uint8_t *metrics, bool first) {
+    static const char *labels[] = {"CPU", "MEM", "DISK"};
+    const uint16_t background = 0x1106, track = 0x29ca, accent = 0x575a;
+    if (first) {
+        lcd_fill(0, 0, 320, 172, background, 0);
+        lcd_show_string(14, 10, (const uint8_t *)"PC PERFORMANCE", WHITE, background, 24, 0, 0);
+    }
+    for (uint8_t i = 0; i < 3; i++) {
+        if (!first && last_metrics[i] == metrics[i]) continue;
+        const uint16_t y = 50 + 36 * i;
+        uint8_t value[8];
+        if (metrics[i] == 255) snprintf((char *)value, sizeof(value), "   --");
+        else snprintf((char *)value, sizeof(value), "%4u%%", (unsigned)metrics[i]);
+        lcd_show_string(14, y, (const uint8_t *)labels[i], WHITE, background, 16, 0, 0);
+        lcd_show_string(262, y, value, WHITE, background, 16, 0, 0);
+        lcd_fill(66, y + 3, 254, y + 13, track, 0);
+        if (metrics[i] > 0 && metrics[i] <= 100)
+            lcd_fill(66, y + 3, 66 + 188 * metrics[i] / 100, y + 13, accent, 0);
+    }
+    memcpy(last_metrics, metrics, sizeof(last_metrics));
+}
 
 void button_readback_record(uint8_t index, bool down) {
     uint16_t bit = (uint16_t)(1u << index);
@@ -85,6 +121,7 @@ bool screen_readback_receive(const uint8_t *data, uint32_t length) {
 
 void screen_readback_applied(uint8_t menu) {
     active_menu = menu;
+    performance_menu = 0;
     pixels_dirty = false;
     generation++;
 }
@@ -105,6 +142,8 @@ bool screen_readback_needs_refresh(uint8_t menu) {
 }
 
 void screen_readback_poll(void) {
+    if (performance_menu && (pet_mode_is_active() || HAL_GetTick() - performance_updated >= 7000))
+        clear_performance();
     if (!request_pending || !CDC_TransmitReady_FS()) return;
 
     uint16_t id = read_u16(request + 4);
@@ -115,7 +154,25 @@ void screen_readback_poll(void) {
     uint8_t status = STATUS_OK;
     uint8_t *pixels = response + HEADER_SIZE;
 
-    if (screen == BUTTON_STATE) {
+    if (screen == PERFORMANCE) {
+        uint8_t metrics[] = {(uint8_t)requested_generation, (uint8_t)(requested_generation >> 8),
+                             (uint8_t)(requested_generation >> 16)};
+        if (length || offset > 10 || requested_generation > 0xffffff) {
+            status = STATUS_INVALID;
+        } else if (!offset) {
+            clear_performance();
+        } else if (offset != active_menu || pixels_dirty || pet_mode_is_active()) {
+            status = STATUS_STALE;
+        } else if ((metrics[0] > 100 && metrics[0] != 255) ||
+                   (metrics[1] > 100 && metrics[1] != 255) ||
+                   (metrics[2] > 100 && metrics[2] != 255)) {
+            status = STATUS_INVALID;
+        } else {
+            show_performance(metrics, !performance_menu);
+            performance_menu = (uint8_t)offset;
+            performance_updated = HAL_GetTick();
+        }
+    } else if (screen == BUTTON_STATE) {
         if (offset != 0 || length != 0) {
             status = STATUS_INVALID;
         } else {
@@ -130,10 +187,31 @@ void screen_readback_poll(void) {
             length = 31;
             load_config(pixels, length);
         }
-    } else if (screen == PET_STATE) {
-        if (offset != 0 || length != 0) {
+    } else if (screen == PET_EVENTS) {
+        if (offset || length) {
             status = STATUS_INVALID;
         } else {
+            PetEvent events[PET_EVENTS_PER_REPLY];
+            bool overrun, more;
+            const uint8_t count = pet_mode_events(requested_generation, events, &overrun, &more);
+            *pixels = (overrun ? 1u : 0u) | (more ? 2u : 0u);
+            for (uint8_t i = 0; i < count; i++) {
+                uint8_t *event = pixels + 1 + 12 * i;
+                write_u32(event, events[i].sequence);
+                write_u32(event + 4, events[i].time_ms);
+                event[8] = events[i].kind;
+                event[9] = events[i].value;
+                event[10] = events[i].source;
+                event[11] = events[i].detail;
+            }
+            length = 1 + 12 * count;
+        }
+    } else if (screen == PET_STATE || screen == PET_CONTROL) {
+        if (length || offset > UINT16_MAX || (screen == PET_STATE && offset)) {
+            status = STATUS_INVALID;
+        } else {
+            if (screen == PET_CONTROL && offset)
+                status = pet_mode_control((uint8_t)offset, (uint8_t)(offset >> 8));
             pixels[0] = pet_mode_is_active();
             pixels[1] = pet_mode_action();
             write_u16(pixels + 2, pet_mode_x());
@@ -141,7 +219,8 @@ void screen_readback_poll(void) {
             pixels[8] = pet_mode_fruit();
             pixels[9] = pet_mode_hour();
             pixels[10] = pet_mode_season();
-            length = 11;
+            pixels[11] = pet_mode_queue_depth();
+            length = screen == PET_STATE ? 11 : 12;
         }
     } else if (active_menu == 0 || pixels_dirty) {
         status = STATUS_EMPTY;

@@ -1,4 +1,5 @@
 #include "pet_mode.h"
+#include "live_oled.h"
 #include "lcd_user.h"
 
 #include "pet_art.inc"
@@ -8,8 +9,6 @@ enum {
     FRAME_MS = 48,
     SLEEP_AFTER_MS = 18000,
     ENCODER_HOLD_MS = 1200,
-    RABBIT_WIDTH = 56,
-    RABBIT_HEIGHT = 44,
     GROUND = 139,
     WALK_MIN = 46,
     WALK_MAX = 274,
@@ -60,10 +59,41 @@ static bool previous_fruit_visible;
 
 static bool encoder_down, encoder_rotated, encoder_toggled, encoder_claimed;
 static uint32_t encoder_since;
+static uint8_t fruit_source, fruit_origins[FRUIT_COUNT];
+static bool manual_idle;
+static PetEvent events[PET_EVENT_CAPACITY];
+static uint32_t event_sequence;
+static uint8_t event_count;
 
-static void set_action(PetAction next, uint32_t now) {
+enum { SOURCE_AUTOMATIC, SOURCE_PHYSICAL, SOURCE_MCP };
+
+static void record_event(PetEventKind kind, uint8_t value, uint8_t source, uint8_t detail) {
+    const uint32_t sequence = ++event_sequence;
+    events[(sequence - 1) % PET_EVENT_CAPACITY] =
+        (PetEvent){sequence, HAL_GetTick(), kind, value, source, detail};
+    if (event_count < PET_EVENT_CAPACITY) event_count++;
+}
+
+uint8_t pet_mode_events(uint32_t after, PetEvent *out, bool *overrun, bool *more) {
+    const uint32_t before_oldest = event_sequence - event_count;
+    *overrun = after < before_oldest || after > event_sequence;
+    if (*overrun) after = before_oldest;
+    const uint32_t available = event_sequence - after;
+    *more = available > PET_EVENTS_PER_REPLY;
+    const uint8_t count = *more ? PET_EVENTS_PER_REPLY : (uint8_t)available;
+    for (uint8_t i = 0; i < count; i++) out[i] = events[(after + i) % PET_EVENT_CAPACITY];
+    return count;
+}
+
+static void set_action_from(PetAction next, uint32_t now, uint8_t source) {
     action = next;
     action_since = now;
+    manual_idle = next == PET_IDLE && source == SOURCE_MCP;
+    record_event(PET_EVENT_ACTION, next, source, fruit);
+}
+
+static void set_action(PetAction next, uint32_t now) {
+    set_action_from(next, now, SOURCE_AUTOMATIC);
 }
 
 static void start_mode(uint32_t now) {
@@ -79,6 +109,18 @@ static void start_mode(uint32_t now) {
     frame = (PetFrame){0};
 }
 
+static void set_mode(bool enabled, uint8_t source, uint32_t now) {
+    if (active == enabled) return;
+    record_event(PET_EVENT_MODE, enabled, source, 0);
+    live_oled_mode_changed();
+    if (enabled) {
+        start_mode(now);
+    } else {
+        active = false;
+        restore_menu_color();
+    }
+}
+
 bool pet_mode_is_active(void) { return active; }
 PetAction pet_mode_action(void) { return active ? action : PET_IDLE; }
 uint16_t pet_mode_x(void) { return active ? (uint16_t)x : 0; }
@@ -86,6 +128,7 @@ uint32_t pet_mode_frames(void) { return frames; }
 uint8_t pet_mode_fruit(void) { return active ? fruit : 0; }
 uint8_t pet_mode_hour(void) { return hour; }
 uint8_t pet_mode_season(void) { return season; }
+uint8_t pet_mode_queue_depth(void) { return active ? fruit_pending : 0; }
 
 bool pet_mode_encoder_button(bool down) {
     const uint32_t now = HAL_GetTick();
@@ -99,7 +142,8 @@ bool pet_mode_encoder_button(bool down) {
         if (encoder_claimed && active && !fruit && !encoder_toggled && !encoder_rotated &&
             now - encoder_since >= 40) {
             last_input = now;
-            set_action(PET_EAT, now);
+            record_event(PET_EVENT_SNACK, 0, SOURCE_PHYSICAL, 3);
+            set_action_from(PET_EAT, now, SOURCE_PHYSICAL);
         }
     }
     return encoder_claimed;
@@ -109,30 +153,79 @@ void pet_mode_encoder_rotated(void) {
     if (encoder_down) encoder_rotated = true;
 }
 
+static bool queue_fruit(uint8_t requested, uint8_t source, uint32_t now) {
+    if (fruit_pending >= FRUIT_COUNT) return false;
+    const uint8_t tail = (fruit_head + fruit_pending) % FRUIT_COUNT;
+    fruit_queue[tail] = requested;
+    fruit_origins[tail] = source;
+    fruit_pending++;
+    last_input = now;
+    record_event(PET_EVENT_FRUIT_QUEUED, requested, source, fruit_pending);
+    return true;
+}
+
 void pet_mode_key_down(uint8_t key) {
-    if (!active || key >= FRUIT_COUNT || fruit_pending >= FRUIT_COUNT) return;
+    if (!active || key >= FRUIT_COUNT) return;
     const uint32_t now = HAL_GetTick();
     const uint8_t bit = (uint8_t)(1u << key);
     if ((keys_seen & bit) && now - key_at[key] < 65) return;
     keys_seen |= bit;
     key_at[key] = now;
-    fruit_queue[(fruit_head + fruit_pending) % FRUIT_COUNT] = key + 1;
-    fruit_pending++;
-    last_input = now;
+    record_event(PET_EVENT_KEY, key + 1, SOURCE_PHYSICAL, 0);
+    queue_fruit(key + 1, SOURCE_PHYSICAL, now);
+}
+
+static void set_scene_value(uint8_t value, bool change_season, uint8_t source) {
+    uint8_t *current = change_season ? &season : &hour;
+    if (*current == value) return;
+    record_event(change_season ? PET_EVENT_SEASON : PET_EVENT_HOUR, value, source, *current);
+    *current = value;
+    redraw_scene = true;
 }
 
 void pet_mode_adjust_scene(int8_t direction_step, bool change_season) {
     if (!active) return;
     if (change_season) {
-        season = (season + 4 + direction_step) % 4;
+        set_scene_value((season + 4 + direction_step) % 4, true, SOURCE_PHYSICAL);
     } else {
-        hour = (hour + 24 + direction_step) % 24;
+        set_scene_value((hour + 24 + direction_step) % 24, false, SOURCE_PHYSICAL);
     }
-    redraw_scene = true;
+}
+
+uint8_t pet_mode_control(uint8_t opcode, uint8_t value) {
+    enum { OK = 0, INVALID = 3, BUSY = 4, INACTIVE = 5 };
+    enum { MODE = 1, FEED, PLAY, HOUR, SEASON };
+    const uint32_t now = HAL_GetTick();
+    if (opcode == MODE && value <= 1) {
+        set_mode(value != 0, SOURCE_MCP, now);
+        return OK;
+    }
+    if (opcode < FEED || opcode > SEASON) return INVALID;
+    if (!active) return INACTIVE;
+    switch (opcode) {
+        case FEED:
+            if (!value || value > FRUIT_COUNT) return INVALID;
+            return queue_fruit(value, SOURCE_MCP, now) ? OK : BUSY;
+        case PLAY:
+            if (value > PET_BLINK || value == PET_FALL || value == PET_FETCH) return INVALID;
+            if (fruit || fruit_pending) return BUSY;
+            last_input = now;
+            walk_remainder = 0;
+            set_action_from((PetAction)value, now, SOURCE_MCP);
+            return OK;
+        case HOUR:
+        case SEASON:
+            if (value >= (opcode == HOUR ? 24 : 4)) return INVALID;
+            set_scene_value(value, opcode == SEASON, SOURCE_MCP);
+            return OK;
+        default:
+            return INVALID;
+    }
 }
 
 static void launch_fruit(uint32_t now) {
     fruit = fruit_queue[fruit_head];
+    fruit_source = fruit_origins[fruit_head];
     fruit_head = (fruit_head + 1) % FRUIT_COUNT;
     fruit_pending--;
     const int16_t distance = 69 + (fruit % 4) * 8;
@@ -151,6 +244,16 @@ static int16_t walking_step(uint32_t step_ms, uint8_t speed) {
     return direction * step;
 }
 
+static bool move_in_garden(uint32_t step_ms, uint8_t speed) {
+    x += walking_step(step_ms, speed);
+    if ((direction < 0 && x <= WALK_MIN) || (direction > 0 && x >= WALK_MAX)) {
+        x = direction < 0 ? WALK_MIN : WALK_MAX;
+        direction = -direction;
+        return true;
+    }
+    return false;
+}
+
 static void update_action(uint32_t now, uint32_t step_ms) {
     const uint32_t elapsed = now - action_since;
     if (!fruit && fruit_pending) {
@@ -161,10 +264,14 @@ static void update_action(uint32_t now, uint32_t step_ms) {
         case PET_SLEEP:
             return;
         case PET_FALL:
-            if (elapsed >= FALL_MS) set_action(PET_FETCH, now);
+            if (elapsed >= FALL_MS) {
+                record_event(PET_EVENT_FRUIT_DROPPED, fruit, fruit_source, 0);
+                set_action(PET_FETCH, now);
+            }
             return;
         case PET_FETCH: {
-            const int16_t target = fruit_x - direction * 25;
+            const int16_t feeding_distance = RABBIT_FRUIT_CONTACT_X - RABBIT_ANCHOR_X + FRUIT_RADIUS;
+            const int16_t target = fruit_x - direction * feeding_distance;
             x += walking_step(step_ms, 88);
             if ((direction > 0 && x >= target) || (direction < 0 && x <= target)) {
                 x = target;
@@ -174,10 +281,23 @@ static void update_action(uint32_t now, uint32_t step_ms) {
         }
         case PET_EAT:
             if (elapsed >= (fruit ? FRUIT_EAT_MS : 2100u)) {
+                if (fruit) record_event(PET_EVENT_FRUIT_EATEN, fruit, fruit_source, 0);
                 fruit = 0;
                 last_input = now;
                 set_action(PET_IDLE, now);
             }
+            return;
+        case PET_JUMP:
+        case PET_BLINK:
+        case PET_DAYDREAM: {
+            const uint32_t duration = action == PET_JUMP ? 500u : action == PET_BLINK ? 125u : 1750u;
+            if (elapsed >= duration) set_action(PET_IDLE, now);
+            return;
+        }
+        case PET_RUN:
+        case PET_FLEE:
+            if (elapsed >= 2300) set_action(PET_IDLE, now);
+            else if (action == PET_RUN || elapsed >= 250) move_in_garden(step_ms, action == PET_RUN ? 110 : 145);
             return;
         case PET_IDLE:
         case PET_WALK:
@@ -189,12 +309,7 @@ static void update_action(uint32_t now, uint32_t step_ms) {
     } else if (action == PET_IDLE) {
         if (elapsed >= 1700) set_action(PET_WALK, now);
     } else {
-        x += walking_step(step_ms, 37);
-        if ((direction < 0 && x <= WALK_MIN) || (direction > 0 && x >= WALK_MAX)) {
-            x = direction < 0 ? WALK_MIN : WALK_MAX;
-            direction = -direction;
-            set_action(PET_IDLE, now);
-        } else if (elapsed >= 3600) {
+        if (move_in_garden(step_ms, 37) || elapsed >= 3600) {
             set_action(PET_IDLE, now);
         }
     }
@@ -226,20 +341,41 @@ static void update_palette(void) {
     }
 }
 
+static RabbitClipId action_clip(uint32_t elapsed) {
+    switch (action) {
+        case PET_IDLE:
+            if (manual_idle) return RABBIT_IDLE;
+            return elapsed >= 1400 && elapsed < 1525 ? RABBIT_BLINK : RABBIT_DAYDREAM;
+        case PET_WALK:
+        case PET_FETCH: return RABBIT_WALK;
+        case PET_SLEEP: return RABBIT_SLEEP;
+        case PET_EAT: return RABBIT_EAT;
+        case PET_FALL:
+        case PET_JUMP: return RABBIT_JUMP;
+        case PET_RUN: return RABBIT_RUN;
+        case PET_BLINK: return RABBIT_BLINK;
+        case PET_DAYDREAM: return RABBIT_DAYDREAM;
+        case PET_FLEE: return RABBIT_FLEE;
+    }
+    return RABBIT_IDLE;
+}
+
+static uint8_t sprite_frame(RabbitClipId id, uint32_t elapsed) {
+    const RabbitClip *clip = &rabbit_clips[id];
+    uint32_t tick = (elapsed / 1000) * RABBIT_TICK_RATE + (elapsed % 1000) * RABBIT_TICK_RATE / 1000;
+    if (tick >= clip->duration) {
+        if (!clip->loop) return clip->first + clip->count - 1;
+        tick = clip->loop_start + (tick - clip->loop_start) % (clip->duration - clip->loop_start);
+    }
+    for (uint8_t index = 0; index < clip->count; index++) {
+        if (tick < clip->ticks[index]) return clip->first + index;
+        tick -= clip->ticks[index];
+    }
+    return clip->first;
+}
+
 static void begin_frame(uint32_t now) {
     const uint32_t elapsed = now - action_since;
-    uint8_t sprite = 0;
-    uint16_t hop = 0;
-    switch (action) {
-        case PET_IDLE: sprite = elapsed % 1400 > 1260; break;
-        case PET_WALK:
-        case PET_FETCH: sprite = 2 + elapsed / (action == PET_FETCH ? 85 : 110) % 4; break;
-        case PET_SLEEP: sprite = 6; break;
-        case PET_EAT: sprite = 7 + elapsed / 140 % 2; break;
-        case PET_FALL:
-            if (elapsed < 360) hop = (56u * elapsed * (360u - elapsed)) / (360u * 360u);
-            break;
-    }
     int16_t left = (x < last_x ? x : last_x) - DIRTY_MARGIN;
     int16_t right = (x > last_x ? x : last_x) + DIRTY_MARGIN;
     int16_t top = DIRTY_TOP;
@@ -260,8 +396,9 @@ static void begin_frame(uint32_t now) {
     }
     frame = (PetFrame){
         .left = left > 0 ? left : 0, .right = right < LCD_WIDTH ? right : LCD_WIDTH,
-        .row = top > 0 ? top : 0, .bottom = DIRTY_BOTTOM, .x = x, .y = GROUND - hop,
-        .direction = direction, .sprite = sprite, .action = action, .elapsed = elapsed,
+        .row = top > 0 ? top : 0, .bottom = DIRTY_BOTTOM, .x = x, .y = GROUND,
+        .direction = direction, .sprite = sprite_frame(action_clip(elapsed), elapsed),
+        .action = action, .elapsed = elapsed,
         .fruit = visible ? fruit : 0, .fruit_x = fruit_x, .fruit_y = fruit_y,
         .hour = hour, .season = season, .bowl = action == PET_EAT && !fruit
     };
@@ -295,7 +432,7 @@ static void paint_rect(uint8_t *line, uint16_t row, int16_t left, int16_t top,
 }
 
 static void paint_rabbit(uint8_t *line, uint16_t row) {
-    const int16_t sprite_y = row - frame.y + RABBIT_HEIGHT;
+    const int16_t sprite_y = row - frame.y + RABBIT_ANCHOR_Y;
     if (sprite_y < 0 || sprite_y >= RABBIT_HEIGHT) return;
     const uint16_t row_index = frame.sprite * RABBIT_HEIGHT + sprite_y;
     uint8_t offset = 0;
@@ -303,8 +440,8 @@ static void paint_rabbit(uint8_t *line, uint16_t row) {
         const uint8_t count = rabbit_runs[run * 2];
         const uint8_t color = rabbit_runs[run * 2 + 1];
         if (color) {
-            const int16_t left = frame.direction > 0 ? frame.x - RABBIT_WIDTH / 2 + offset :
-                                 frame.x + RABBIT_WIDTH / 2 - offset - count;
+            const int16_t left = frame.direction > 0 ? frame.x - RABBIT_ANCHOR_X + offset :
+                                 frame.x + RABBIT_ANCHOR_X - offset - count;
             paint_span(line, left, left + count, pet_palette[color]);
         }
         offset += count;
@@ -458,12 +595,7 @@ void pet_mode_poll(void) {
     const uint32_t now = HAL_GetTick();
     if (encoder_down && !encoder_toggled && !encoder_rotated && now - encoder_since >= ENCODER_HOLD_MS) {
         encoder_toggled = true;
-        if (active) {
-            active = false;
-            restore_menu_color();
-        } else {
-            start_mode(now);
-        }
+        set_mode(!active, SOURCE_PHYSICAL, now);
     }
     if (!active) return;
 

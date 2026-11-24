@@ -64,64 +64,6 @@ export function drawGarden(ctx: CanvasRenderingContext2D) {
   }
 }
 
-export function drawRabbit(
-  ctx: CanvasRenderingContext2D, x: number, y: number, direction: number,
-  action: PetAction, stride: number, elapsed: number
-) {
-  const outline = '#483440'
-  const fur = '#e9bd91'
-  const cream = '#ffe6c8'
-  const ear = '#b77c66'
-  const pink = '#ec9e9d'
-  const sleeping = action === 'sleep'
-  const eating = action === 'eat'
-  const bob = action === 'walk' ? [0, 2, 3, 1][stride] : 0
-  const headY = sleeping ? -8 : eating ? -11 + Math.floor(elapsed / 140) % 2 : -15 - bob
-
-  ctx.save()
-  ctx.translate(x, y)
-  ctx.scale(direction * 2, 2)
-
-  const bodyY = sleeping ? -7 : -12 - bob
-  // Tail, haunches and feet.
-  rect(ctx, outline, -14, bodyY + 4, 6, 5)
-  rect(ctx, cream, -13, bodyY + 5, 4, 3)
-  rect(ctx, outline, -10, bodyY + 2, 15, sleeping ? 5 : 9)
-  rect(ctx, outline, -8, bodyY, 11, 2)
-  rect(ctx, fur, -9, bodyY + 3, 13, sleeping ? 3 : 7)
-  rect(ctx, fur, -7, bodyY + 1, 9, 4)
-  rect(ctx, cream, -7, bodyY + 3, 4, 2)
-  if (sleeping) {
-    rect(ctx, cream, -7, -3, 7, 2)
-  } else {
-    const rear = [-8, -10, -8, -6][stride]
-    const front = [3, 4, 2, 1][stride]
-    rect(ctx, outline, rear, -4 - bob, 6, 4)
-    rect(ctx, cream, rear + 1, -3 - bob, 4, 2)
-    rect(ctx, outline, front, -3 - bob, 5, 3)
-    rect(ctx, cream, front + 1, -2 - bob, 3, 1)
-  }
-
-  // Rounded face, cream muzzle and a folded ear that hangs past the eye.
-  rect(ctx, outline, 0, headY + 2, 12, 9)
-  rect(ctx, outline, 2, headY, 8, 2)
-  rect(ctx, outline, 10, headY + 6, 3, 4)
-  rect(ctx, fur, 1, headY + 3, 10, 7)
-  rect(ctx, fur, 3, headY + 1, 6, 3)
-  rect(ctx, cream, 7, headY + 7, 5, 3)
-
-  rect(ctx, outline, 1, headY - 2, 5, 5)
-  rect(ctx, outline, -1, headY + 1, 6, sleeping ? 6 : 10)
-  rect(ctx, outline, 0, headY + (sleeping ? 6 : 10), 4, 2)
-  rect(ctx, ear, 2, headY - 1, 3, 4)
-  rect(ctx, ear, 0, headY + 2, 4, sleeping ? 5 : 8)
-  rect(ctx, pink, 1, headY + 3, 2, sleeping ? 2 : 5)
-  const blink = sleeping || (action === 'idle' && elapsed % 1400 > 1260)
-  rect(ctx, outline, 8, headY + 4, blink ? 2 : 1, blink ? 1 : 2)
-  rect(ctx, pink, 10, headY + 7, 2, 1)
-  ctx.restore()
-}
-
 export function drawPetEffects(
   ctx: CanvasRenderingContext2D, x: number, direction: number,
   action: PetAction, elapsed: number, foreground: boolean

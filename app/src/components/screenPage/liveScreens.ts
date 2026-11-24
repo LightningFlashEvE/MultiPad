@@ -13,7 +13,9 @@ export function createLiveScreens(
   getScreens: (menu: number) => ScreenFrame[],
   paused: () => boolean,
   hasDynamicScreens: () => boolean,
-  setConnected: (connected: boolean) => void
+  setConnected: (connected: boolean) => void,
+  updateColor: (menu: number) => Promise<void>,
+  allowUnconfiguredMenu: () => boolean
 ) {
   const win = window as any
   const cache = shallowReactive(new Map<string, CachedFrame>())
@@ -38,13 +40,13 @@ export function createLiveScreens(
       displayed.clear()
       return
     }
-    if (device.code !== 0 || device.menu < 1 || device.menu > 10) return
+    if (device.code !== 0 || device.menu > 10 || device.menu < (allowUnconfiguredMenu() ? 0 : 1)) return
     if (lastGeneration !== device.generation) {
       lastGeneration = device.generation
       displayed.clear()
     }
 
-    const menu = device.menu - 1
+    const menu = Math.max(0, device.menu - 1)
     await Promise.all([1, 2].map(async screen => {
       const config = getScreens(menu)?.[screen]?.content
       if (!config || config.mode === 'text') return
@@ -56,7 +58,8 @@ export function createLiveScreens(
       const interval = config.mode === 'api' ? Math.max(15, Math.min(3600, Number(config.interval) || 60)) : 60
       const refreshAt = config.mode === 'api'
         ? now.getTime() + interval * 1000
-        : now.getTime() - now.getSeconds() * 1000 - now.getMilliseconds() + 60_000
+        : config.mode === 'pet' ? now.getTime() + 1000
+          : now.getTime() - now.getSeconds() * 1000 - now.getMilliseconds() + 60_000
       try {
         cache.set(key, { settings, refreshAt, frame: await encodeOled(await renderScreenContent(config, now)) })
       } catch (error) {
@@ -86,6 +89,7 @@ export function createLiveScreens(
       if (result.state !== 'ready' || result.code !== 0) return
       displayed.set(screen, frame.baseData)
     }
+    if (!paused()) await updateColor(menu)
   }
 
   return {
