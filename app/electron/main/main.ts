@@ -9,6 +9,7 @@ import SerialConnect from '../controller/serialPort'
 import { picDataListener } from '../controller/picDataEditor'
 import { setItem, getItem, delItem } from "../controller/storage"
 import { fileReadListener } from "../controller/fileRead"
+import { fetchScreenValue } from '../controller/screenApi'
 // 窗口监听
 windowControlListener()
 // 图片处理监听
@@ -77,6 +78,32 @@ ipcMain.handle('connection-state', async () => {
 })
 
 // 发送数据
+ipcMain.handle('device-screens', (_event, knownGeneration?: number) => {
+  return SerialConnect.readDeviceScreens(knownGeneration)
+})
+
+ipcMain.handle('device-buttons', () => SerialConnect.readDeviceButtons())
+ipcMain.handle('live-oled', (_event, operation) => SerialConnect.liveOled(operation))
+ipcMain.handle('screen-api-value', (_event, url: unknown, field: unknown) => fetchScreenValue(url, field))
+
+ipcMain.handle('update-firmware', async (event) => {
+  const options = {
+    title: '选择 MultiPad USB 升级固件',
+    filters: [{ name: 'USB 升级固件', extensions: ['bin'] }],
+    properties: ['openFile']
+  }
+  const window = BrowserWindow.fromWebContents(event.sender)
+  const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
+  if (result.canceled) return { state: 'cancelled' }
+  try {
+    const { updateFirmware } = require(path.join(__dirname, '../../scripts/firmware-update.cjs'))
+    await SerialConnect.withFirmwareUpdate(() => updateFirmware(result.filePaths[0], console.info))
+    return { state: 'updated' }
+  } catch (error) {
+    return { state: 'failed', message: error instanceof Error ? error.message : String(error) }
+  }
+})
+
 ipcMain.handle('send-data', async (event, data: string | Uint8Array) => {
   return await SerialConnect.sendData(data)
 })
