@@ -9,6 +9,13 @@ const BUTTON_STATE = 0xfe
 const INFO = 0xff
 const STATUS_OK = 0
 const STATUS_EMPTY = 1
+const PET_CONTROL = 0xfa
+const PET_EVENTS = 0xfb
+
+export type PetRequest = { command: number; value: number } | { after: number }
+export type PetReply =
+  | { state: 'ready'; status: number; payload: Buffer }
+  | { state: 'busy' | 'unavailable' | 'unsupported' | 'disconnected' }
 
 function crc16(bytes: Buffer) {
   let crc = 0xffff
@@ -128,6 +135,19 @@ export default class ScreenReadback {
     const pressed = this.pressedButtons
     this.pressedButtons = 0
     return { state: 'ready', held: this.heldButtons, pressed }
+  }
+
+  async readPet(request: PetRequest): Promise<PetReply> {
+    if (this.closed) return { state: 'disconnected' }
+    if (this.busy) return { state: 'busy' }
+    const screen = 'after' in request ? PET_EVENTS : PET_CONTROL
+    const cursor = 'after' in request ? request.after : 0
+    const offset = 'command' in request ? request.command | (request.value << 8) : 0
+    const frame = await this.exchange(screen, cursor, offset)
+    if (!frame || frame[7] !== screen || frame.readUInt32LE(12) !== offset) {
+      return { state: this.closed ? 'disconnected' : 'unavailable' }
+    }
+    return { state: 'ready', status: frame[6], payload: frame.subarray(HEADER_SIZE) }
   }
 
   async read(knownGeneration?: number): Promise<DeviceScreens> {

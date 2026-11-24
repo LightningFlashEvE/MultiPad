@@ -229,6 +229,7 @@ const sendFinalData = async () => {
   const curMenu = configStore.curMenu
   configStore.setProgressMes(0)
   progressShow.value = true
+  let ownsTransfer = false
   try {
     await Promise.all([screenReadTask, buttonReadTask, liveScreens.wait()])
     conState.value = await win.myApi.connectHardware()
@@ -236,6 +237,8 @@ const sendFinalData = async () => {
       XBox.popMes('硬件已经断开连接')
       return
     }
+    await win.myApi.setDeviceConfiguring(true)
+    ownsTransfer = true
     await sendMenu()
     const activeCount = configStore.activeMenu.filter(Boolean).length
     let count = 0
@@ -253,6 +256,8 @@ const sendFinalData = async () => {
       configStore.setProgressMes(Math.ceil((count / activeCount) * 10))
     }
     configStore.setProgressMes(100)
+    await win.myApi.setDeviceConfiguring(false)
+    ownsTransfer = false
     if (hasDynamicScreens()) {
       const live = await win.myApi.liveOled().catch(() => undefined)
       if (live?.state === 'unsupported') XBox.popMes('当前固件需要升级后才能自动刷新小屏')
@@ -262,6 +267,7 @@ const sendFinalData = async () => {
     console.error(error)
     XBox.popMes('发送中断，请检查 USB 连接后重试')
   } finally {
+    if (ownsTransfer) await win.myApi.setDeviceConfiguring(false).catch(() => {})
     if (configStore.curMenu !== curMenu) setMenu(curMenu)
     progressShow.value = false
     liveScreens.tick()

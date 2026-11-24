@@ -1,7 +1,8 @@
 import type { SerialPort as SerialPortInstance } from 'serialport'
 import type { DeviceButtons } from '../../src/utils/deviceButtonState'
 import type { DeviceScreens } from '../../src/utils/deviceScreenFormat'
-import ScreenReadback from './screenReadback'
+import ScreenReadback, { type PetReply, type PetRequest } from './screenReadback'
+import { randomUUID } from 'node:crypto'
 import { exchangeLiveOled } from './liveOled'
 
 const { SerialPort }: typeof import('serialport') = require('serialport')
@@ -10,6 +11,7 @@ const READBACK_CAPABILITY = Buffer.from([0xaa, 0xbb, 0xcc, 0x4d, 0x50, 0x53, 0x4
 const BUTTON_CAPABILITY = 0x4b
 const UPDATE_CAPABILITY = 0x55
 const LIVE_OLED_CAPABILITY = 0x4c
+const PET_API_CAPABILITY = 0x50
 
 export default class SerialConnect {
   private static port?: SerialPortInstance
@@ -17,6 +19,8 @@ export default class SerialConnect {
   private static screenReadback?: ScreenReadback
   private static waitState = false
   private static upgrading = false
+  private static configuring = false
+  private static petSession?: string
   private static liveOledSupported = false
   private static liveOledTask?: Promise<Awaited<ReturnType<typeof exchangeLiveOled>>>
 
@@ -30,7 +34,7 @@ export default class SerialConnect {
   }
 
   static async withFirmwareUpdate<T>(run: () => Promise<T>): Promise<T> {
-    if (this.upgrading) throw Error('固件升级正在进行')
+    if (this.upgrading || this.configuring) throw Error('键盘正在传输数据')
     this.upgrading = true
     try {
       await this.connectionAttempt
@@ -39,6 +43,7 @@ export default class SerialConnect {
       this.screenReadback?.close()
       this.screenReadback = undefined
       this.liveOledSupported = false
+      this.petSession = undefined
       this.port = undefined
       this.waitState = false
       if (port?.isOpen) await new Promise<void>((resolve, reject) =>
@@ -70,6 +75,7 @@ export default class SerialConnect {
           this.port = undefined
           this.screenReadback = undefined
           this.liveOledSupported = false
+          this.petSession = undefined
           this.waitState = false
           if (port.isOpen) port.close(() => {})
         }
@@ -99,6 +105,7 @@ export default class SerialConnect {
           const suffix = reply.subarray(capabilityStart + READBACK_CAPABILITY.length)
           const buttonFlag = suffix[0] === UPDATE_CAPABILITY ? suffix[1] : suffix[0]
           this.liveOledSupported = suffix.includes(LIVE_OLED_CAPABILITY)
+          this.petSession = suffix.includes(PET_API_CAPABILITY) ? randomUUID() : undefined
           this.screenReadback = new ScreenReadback(
             (data) => this.writePort(port, data), buttonFlag === BUTTON_CAPABILITY
           )
@@ -120,14 +127,14 @@ export default class SerialConnect {
   static async readDeviceScreens(knownGeneration?: number): Promise<DeviceScreens> {
     if (!this.port?.isOpen) return { state: 'disconnected' }
     if (!this.screenReadback) return { state: 'unsupported' }
-    if (this.liveOledTask) return { state: 'busy' }
+    if (this.liveOledTask || this.configuring) return { state: 'busy' }
     return this.screenReadback.read(knownGeneration)
   }
 
   static async readDeviceButtons(): Promise<DeviceButtons> {
     if (!this.port?.isOpen) return { state: 'disconnected' }
     if (!this.screenReadback) return { state: 'unsupported' }
-    if (this.liveOledTask) return { state: 'busy' }
+    if (this.liveOledTask || this.configuring) return { state: 'busy' }
     return this.screenReadback.readButtons()
   }
 
@@ -136,10 +143,49 @@ export default class SerialConnect {
     return this.writePort(this.port, typeof data === 'string' ? Buffer.from(data, 'utf8') : Buffer.from(data))
   }
 
+  static async setConfiguring(enabled: boolean) {
+    if (!enabled) {
+      this.configuring = false
+      return
+    }
+    if (this.upgrading || this.configuring) throw Error('键盘正在传输数据')
+    this.configuring = true
+    // Prevent new MCP exchanges, then let pending reads finish before the first write.
+    const deadline = Date.now() + 2200
+    while (this.screenReadback?.busy || this.liveOledTask) {
+      if (Date.now() >= deadline) {
+        this.configuring = false
+        throw Error('键盘正在读取数据，请稍后重试')
+      }
+      await new Promise(resolve => setTimeout(resolve, 15))
+    }
+  }
+
+  static async pet(request: PetRequest, cursorSession?: string): Promise<PetReply & { session?: string; reset?: boolean }> {
+    if (this.upgrading || this.configuring) return { state: 'busy' }
+    if (!await this.connectHardware()) return { state: 'disconnected' }
+    const reader = this.screenReadback
+    const session = this.petSession
+    if (!reader || !session) return { state: 'unsupported' }
+    const reset = Boolean(cursorSession && cursorSession !== session)
+    if (reset && 'after' in request) request = { after: 0 }
+    const deadline = Date.now() + 1500
+    do {
+      if (this.upgrading || this.configuring) return { state: 'busy' }
+      if (this.screenReadback !== reader) return { state: 'disconnected' }
+      if (!this.liveOledTask) {
+        const reply = await reader.readPet(request)
+        if (reply.state !== 'busy') return { ...reply, session, reset }
+      }
+      await new Promise(resolve => setTimeout(resolve, 15))
+    } while (Date.now() < deadline)
+    return { state: 'busy' }
+  }
+
   static async liveOled(operation?: Parameters<typeof exchangeLiveOled>[1]) {
     if (this.upgrading || !this.port?.isOpen) return { state: 'disconnected' }
     if (!this.liveOledSupported) return { state: 'unsupported' }
-    if (this.liveOledTask || this.screenReadback?.busy) return { state: 'busy' }
+    if (this.liveOledTask || this.screenReadback?.busy || this.configuring) return { state: 'busy' }
     const task = exchangeLiveOled(this.port, operation)
     this.liveOledTask = task
     try {

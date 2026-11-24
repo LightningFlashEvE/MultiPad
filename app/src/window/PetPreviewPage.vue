@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
 import WindowTitle from '../components/tools/WindowTitle.vue'
-import { drawRabbit, drawGarden, drawPetEffects } from '../components/screenPage/petScene'
+import { drawGarden, drawPetEffects } from '../components/screenPage/petScene'
+import { drawRabbit, rabbitAtlasUrl } from '../components/screenPage/petAnimation'
 
 const canvas = ref<HTMLCanvasElement | null>(null)
 const labels = {
@@ -61,7 +62,7 @@ function update(now: number) {
   }
 
   x += direction * Math.min(now - previousFrame, 50) * 0.037
-  if (x <= 46 || x >= 274) {
+  if ((direction < 0 && x <= 46) || (direction > 0 && x >= 274)) {
     x = Math.max(46, Math.min(274, x))
     direction *= -1
     setAction('idle', now)
@@ -80,6 +81,8 @@ onMounted(() => {
   if (!backdrop) return
   drawGarden(backdrop)
   display.imageSmoothingEnabled = false
+  const atlas = new Image()
+  atlas.src = rabbitAtlasUrl
   previousFrame = lastInput = actionSince = performance.now()
 
   function frame(now: number) {
@@ -87,11 +90,8 @@ onMounted(() => {
     update(now)
     display.drawImage(background, 0, 0)
     const elapsed = now - actionSince
-    const walking = action.value === 'walk'
-    const stride = walking ? Math.floor(elapsed / 110) % 4 : 0
-    const hop = action.value === 'react' ? Math.round(17 * Math.sin(Math.PI * Math.min(elapsed / 460, 1))) : 0
     drawPetEffects(display, Math.round(x), direction, action.value, elapsed, false)
-    drawRabbit(display, Math.round(x), 139 - hop, direction, action.value, stride, elapsed)
+    drawRabbit(display, atlas, Math.round(x), 139, direction, action.value, elapsed)
     drawPetEffects(display, Math.round(x), direction, action.value, elapsed, true)
     previousFrame = now
     frameId = requestAnimationFrame(frame)

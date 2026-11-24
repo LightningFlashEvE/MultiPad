@@ -1,0 +1,122 @@
+{
+  "width": 56,
+  "height": 44,
+  "anchorX": 28,
+  "anchorY": 41,
+  "fruitContactX": 44,
+  "tickRateHz": 16,
+  "compatibilityFrames": [
+    "idle",
+    "blink",
+    "walk_gather",
+    "walk_push",
+    "walk_air",
+    "walk_land",
+    "sleep",
+    "eat_bite",
+    "eat_chew"
+  ],
+  "clips": {
+    "idle": {
+      "first": 0,
+      "ticks": [
+        1
+      ],
+      "loop": true
+    },
+    "blink": {
+      "first": 1,
+      "ticks": [
+        2
+      ],
+      "loop": false
+    },
+    "walk": {
+      "first": 9,
+      "ticks": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "loop": true
+    },
+    "jump": {
+      "first": 17,
+      "ticks": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "loop": false
+    },
+    "sleep": {
+      "first": 25,
+      "ticks": [
+        6,
+        7,
+        6,
+        7
+      ],
+      "loop": true
+    },
+    "daydream": {
+      "first": 29,
+      "ticks": [
+        12,
+        4,
+        6,
+        6
+      ],
+      "loop": true
+    },
+    "eat": {
+      "first": 33,
+      "ticks": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "loop": true
+    },
+    "run": {
+      "first": 37,
+      "ticks": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "loop": true
+    },
+    "flee": {
+      "first": 45,
+      "ticks": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "loop": true,
+      "loopFrom": 4
+    }
+  }
+}

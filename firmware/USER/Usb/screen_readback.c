@@ -12,6 +12,8 @@ enum {
     MAX_CHUNK = 224,
     COLOR_SIZE = 320 * 172 * 2,
     OLED_SIZE = 72 * 40 / 8,
+    PET_CONTROL = 0xfa,
+    PET_EVENTS = 0xfb,
     MENU_CONFIG = 0xfc,
     PET_STATE = 0xfd,
     BUTTON_STATE = 0xfe,
@@ -130,10 +132,31 @@ void screen_readback_poll(void) {
             length = 31;
             load_config(pixels, length);
         }
-    } else if (screen == PET_STATE) {
-        if (offset != 0 || length != 0) {
+    } else if (screen == PET_EVENTS) {
+        if (offset || length) {
             status = STATUS_INVALID;
         } else {
+            PetEvent events[PET_EVENTS_PER_REPLY];
+            bool overrun, more;
+            const uint8_t count = pet_mode_events(requested_generation, events, &overrun, &more);
+            *pixels = (overrun ? 1u : 0u) | (more ? 2u : 0u);
+            for (uint8_t i = 0; i < count; i++) {
+                uint8_t *event = pixels + 1 + 12 * i;
+                write_u32(event, events[i].sequence);
+                write_u32(event + 4, events[i].time_ms);
+                event[8] = events[i].kind;
+                event[9] = events[i].value;
+                event[10] = events[i].source;
+                event[11] = events[i].detail;
+            }
+            length = 1 + 12 * count;
+        }
+    } else if (screen == PET_STATE || screen == PET_CONTROL) {
+        if (length || offset > UINT16_MAX || (screen == PET_STATE && offset)) {
+            status = STATUS_INVALID;
+        } else {
+            if (screen == PET_CONTROL && offset)
+                status = pet_mode_control((uint8_t)offset, (uint8_t)(offset >> 8));
             pixels[0] = pet_mode_is_active();
             pixels[1] = pet_mode_action();
             write_u16(pixels + 2, pet_mode_x());
@@ -141,7 +164,8 @@ void screen_readback_poll(void) {
             pixels[8] = pet_mode_fruit();
             pixels[9] = pet_mode_hour();
             pixels[10] = pet_mode_season();
-            length = 11;
+            pixels[11] = pet_mode_queue_depth();
+            length = screen == PET_STATE ? 11 : 12;
         }
     } else if (active_menu == 0 || pixels_dirty) {
         status = STATUS_EMPTY;

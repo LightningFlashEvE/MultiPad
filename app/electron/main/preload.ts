@@ -108,6 +108,7 @@ contextBridge.exposeInMainWorld('myApi', {
   connectHardware,
   readDeviceScreens: (knownGeneration?: number) => ipcRenderer.invoke('device-screens', knownGeneration),
   readDeviceButtons: () => ipcRenderer.invoke('device-buttons'),
+  setDeviceConfiguring: (enabled: boolean) => ipcRenderer.invoke('device-configuring', enabled),
   liveOled: (operation?: object) => ipcRenderer.invoke('live-oled', operation),
   fetchScreenValue: (url: string, field: string) => ipcRenderer.invoke('screen-api-value', url, field),
   updateFirmware: () => ipcRenderer.invoke('update-firmware'),

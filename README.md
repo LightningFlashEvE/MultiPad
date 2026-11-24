@@ -31,3 +31,4 @@ Windows 上位机和 STM32 固件在同一仓库维护。涉及 USB 协议的改
 - 从 Git Tag 发布。上位机可以用 `app-v*`，固件可以用 `fw-v*`。协议相关 Release 在说明里链接配套版本，附对应构建产物和实机验证结果。
 - 原作者的历史和 [GPL-3.0 许可证](LICENSE)保留。分发二进制时提供对应源码和构建脚本。
 - [屏幕回读设计](docs/screen-readback.md)。
+- [桌宠 MCP 接入说明](docs/pet-mcp.md)。

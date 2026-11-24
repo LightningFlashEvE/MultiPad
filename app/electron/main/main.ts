@@ -10,6 +10,8 @@ import { picDataListener } from '../controller/picDataEditor'
 import { setItem, getItem, delItem } from "../controller/storage"
 import { fileReadListener } from "../controller/fileRead"
 import { fetchScreenValue } from '../controller/screenApi'
+import { startPetMcp } from '../controller/petMcp'
+import type { WebContents } from 'electron'
 // 窗口监听
 windowControlListener()
 // 图片处理监听
@@ -108,6 +110,32 @@ ipcMain.handle('send-data', async (event, data: string | Uint8Array) => {
   return await SerialConnect.sendData(data)
 })
 
+let configOwner: WebContents | undefined
+const releaseConfiguration = () => {
+  configOwner = undefined
+  void SerialConnect.setConfiguring(false)
+}
+ipcMain.handle('device-configuring', async (event, enabled: boolean) => {
+  const sender = event.sender
+  if (!enabled) {
+    if (configOwner === sender) {
+      sender.removeListener('destroyed', releaseConfiguration)
+      releaseConfiguration()
+    }
+    return
+  }
+  if (configOwner) throw Error('键盘配置正在发送')
+  configOwner = sender
+  sender.once('destroyed', releaseConfiguration)
+  try {
+    await SerialConnect.setConfiguring(true)
+  } catch (error) {
+    sender.removeListener('destroyed', releaseConfiguration)
+    if (configOwner === sender) configOwner = undefined
+    throw error
+  }
+})
+
 // 创建主窗口
 const createMainWindow = async () => {
   let mainW = new CreateWindow()
@@ -132,6 +160,12 @@ app.commandLine.appendSwitch('--ignore-certificate-errors', 'true')
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { secure: true, standard: true } }])
 
 app.whenReady().then(() => {
+  try {
+    const petMcp = startPetMcp()
+    if (petMcp) app.once('before-quit', () => petMcp.close())
+  } catch (error) {
+    console.error('MultiPad MCP startup failed', error)
+  }
   // 创建窗口
   createMainWindow()
   app.on('activate', () => {
