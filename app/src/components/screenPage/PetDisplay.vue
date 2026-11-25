@@ -132,24 +132,22 @@ onMounted(() => {
       sampleAt = now
     }
     const nursery = petScenes[scene] === 'nursery'
-    const liveNurseryLight = nursery && (!props.connected || props.state.minute !== undefined)
+    const minute = props.state.minute ?? 0
     const lampInstalled = nursery && props.state.pendantLamp === true
     const lampLit = lampInstalled && petLampIsLit(hour)
-    const lighting = liveNurseryLight ? ((season * 24 + hour) * 60 + (props.state.minute ?? 0)) * 2 + Number(lampInstalled) : -1
+    const lighting = ((season * 24 + hour) * 60 + minute) * 2 + Number(lampInstalled)
     if (lastScene !== scene || lastLighting !== lighting) {
       if (nursery) {
-        drawNursery(context!, liveNurseryLight ? hour : 12, liveNurseryLight ? props.state.minute ?? 0 : 0)
+        drawNursery(context!, hour, minute)
         hutchContext.clearRect(205, 73, hutch.width, hutch.height)
         drawNurseryHutch(hutchContext)
-        if (liveNurseryLight) {
-          drawNurseryLight(context!, hour, season, lampLit)
-          hutchContext.save()
-          hutchContext.globalCompositeOperation = 'source-atop'
-          tintNursery(hutchContext, hour, season, lampLit)
-          hutchContext.restore()
-        }
+        drawNurseryLight(context!, hour, minute, season, lampLit)
+        hutchContext.save()
+        hutchContext.globalCompositeOperation = 'source-atop'
+        tintNursery(hutchContext, hour, minute, season, lampLit)
+        hutchContext.restore()
         if (lampInstalled) drawPendantLamp(context!, lampLit)
-      } else drawGarden(context!)
+      } else drawGarden(context!, hour, minute)
       lastScene = scene
       lastLighting = lighting
     }
