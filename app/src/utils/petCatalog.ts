@@ -8,10 +8,13 @@ export const petActionLabels: Record<typeof petActions[number], string> = {
 }
 export const petStats = [
   { id: 'satiety', command: 23, label: '饱食度' },
-  { id: 'sleepiness', command: 24, label: '困意' },
+  { id: 'energy', command: 24, label: '精神值' },
   { id: 'mood', command: 25, label: '心情值' },
   { id: 'affection', command: 26, label: '好感度' }
 ] as const
+
+// Flash journals and all supported USB generations encode the second stat as fatigue.
+export const invertPetEnergy = (value: number) => 100 - value
 
 export function isStatCommand(command: number) {
   return Number.isInteger(command) && command >= 23 && command <= 26

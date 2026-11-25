@@ -55,7 +55,7 @@ export function petValue(parameter: PetParameter, state: PetState) {
 }
 
 const shortLabels = { action: '动作', hour: '时间', season: '季节', fruit: '水果', queue: '队列',
-  satiety: '饱食度', sleepiness: '困意', mood: '心情值', affection: '好感度' }
+  satiety: '饱食度', energy: '精神值', mood: '心情值', affection: '好感度' }
 
 function petParameterRow(id: PetParameter, state: PetState): PetOledRow {
   const label = shortLabels[id]

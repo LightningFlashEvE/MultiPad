@@ -192,7 +192,7 @@ int main(void) {
         advance(i ? 2250 : 1750);
         assert(pet_mode_action() == PET_IDLE && pet_mode_x() == x && pet_care_get()->affection == affection);
     }
-    pet_care_adjust(100, -100, 0, 0);
+    pet_care_adjust(100, 100, 0, 0);
     bool saw_lookout = false, saw_table = false;
     for (unsigned i = 0; i < 1200 && !(saw_lookout && saw_table); i++) {
         advance(75);

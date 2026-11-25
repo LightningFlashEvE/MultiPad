@@ -254,6 +254,8 @@ test('model sees its personality, the complete available event window and care s
   const snapshot=(await auto()).observation.state
   for (const behavior of ['sleep','visit_hutch','apple','eat','gaze_owner','place_carrot'])
     assert(!snapshot.automaticBehaviors.includes(behavior))
+  assert.equal(snapshot.stats.energy,100)
+  assert.equal('sleepiness' in snapshot.stats,false)
   assert(snapshot.keyBindings && snapshot.deployedToys);assert.deepEqual(Object.keys(snapshot.availableNow).sort(),['actions','careNote'])
   assert.deepEqual(f.board.requests.filter(r=>r.command>0).map(r=>r.value),[10,7])
   assert(activity.some(a=>a.message.includes('1/2') && a.message.includes('眨眼') && a.session===session))

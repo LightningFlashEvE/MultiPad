@@ -28,7 +28,7 @@ The rabbit eats snacks one at a time, returns to its hutch to sleep and sometime
 
 ## Adjust a stat
 
-In Pet mode, click the color display, then **属性数值** (Stat values). Enter a whole number from 0 to 100 and click **保存** (Save) on that row. You can change fullness, sleepiness, mood or affection. A higher sleepiness value means a more tired rabbit. The keyboard confirms the value and saves it in flash. Edits made while disconnected only affect the local preview. Manual editing requires pet protocol generation 10 or later.
+In Pet mode, click the color display, then **属性数值** (Stat values). Enter a whole number from 0 to 100 and click **保存** (Save) on that row. You can change fullness, energy, mood or affection. Higher energy means the rabbit is more rested. Sleep restores energy. Walking and vigorous movement consume both fullness and energy. Older saves retain their equivalent energy level. The keyboard confirms the value and saves it in flash. Edits made while disconnected only affect the local preview. Manual editing requires pet protocol generation 10 or later.
 
 ![Stat editor with the current reading, numeric input and Save button for each attribute](docs/images/pet-stats.png)
 

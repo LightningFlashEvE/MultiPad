@@ -7,7 +7,7 @@ import { z } from 'zod'
 import SerialConnect from './serialPort'
 import { petCareGuide, petServerInstructions } from './petCareGuide'
 import type { PetRequest } from './screenReadback'
-import { petActions, playableActions, petScenes, petRoomItems, petToyIds, petToyPhases, petFruitIds as fruits,
+import { invertPetEnergy, petActions, playableActions, petScenes, petRoomItems, petToyIds, petToyPhases, petFruitIds as fruits,
   petItems, toysForScene, petStateGeneration, petFoodStages, petHeadGestures, petDecorations, hutchBounds } from '../../src/utils/petCatalog'
 
 const seasons = ['spring', 'summer', 'autumn', 'winter'] as const
@@ -80,7 +80,7 @@ function decodeState(payload: Buffer, session?: string) {
     minute: generation >= 3 ? payload[28] : null,
     season: seasons[payload[10]],
     queuedFruit: payload[11],
-    stats: extended ? { satiety: payload[12], sleepiness: payload[13], mood: payload[14], affection: payload[15] } : null,
+    stats: extended ? { satiety: payload[12], energy: invertPetEnergy(payload[13]), mood: payload[14], affection: payload[15] } : null,
     scene,
     activeToy: extended && !visitingHutch && !visitingTable ? toyForWireId(payload[17]) : null,
     toyPhase: visitingHutch || visitingTable ? 'idle' : phase,
@@ -116,7 +116,7 @@ function careNote(state: State) {
   if (state.fruit) return '兔子正在取食 ' + state.fruit + '。可等 fruit_eaten 再决定下一步。'
   if (state.bedtime) return state.action === 'sleep'
     ? '兔子正在窝里长睡。可以继续休息，或用 idle 叫醒。'
-    : '兔子正在走回窝里睡觉。等到 using，再看困意。'
+    : '兔子正在走回窝里睡觉。等到 using，再看精神值。'
   if (state.activeToy || state.activeDecoration) return '兔子正在靠近或使用道具。等 finished 事件，就能判断互动是否自然结束。'
   if (state.generation >= 3 && leavesFoodOnGround(state)) return '兔子吃饱了。已经落地的食物会留到下次饿时再吃。'
   if (state.foods?.length || state.queuedFruit) return '已有水果，接下来会落地或取食。'
@@ -237,16 +237,17 @@ function automaticBehaviors(s: Awaited<ReturnType<typeof command>>, rabbitOnly =
   const a = s.availableNow, stats = s.stats
   if ((s.activeDecoration || s.activeToy) && !(s.bedtime && s.action === 'sleep')) return []
   const canEat = !!stats && stats.satiety < 90
-  const canSleep = !!stats && stats.sleepiness >= 25
-  const canPlay = !!stats && stats.mood < 90 && stats.sleepiness < 85
+  const canSleep = !!stats && stats.energy <= 75
+  const canPlay = !!stats && stats.mood < 90 && stats.energy > 15
   if (canEat && (s.foods?.length || s.queuedFruit)) return []
   return (rabbitOnly ? playableActions : behaviors).filter(b => {
-    if (s.bedtime && s.action === 'sleep') return b === 'idle' && (stats?.sleepiness ?? 0) <= 5
+    if (s.bedtime && s.action === 'sleep') return b === 'idle' && (stats?.energy ?? 0) >= 95
     if (fruits.some(f => f === b)) return canEat && a.feed && !s.foods?.length && !s.queuedFruit
     if (b === 'place_carrot') return canPlay && a.placeToys.includes('carrot_toy') && s.scene && !s.deployedToys?.[s.scene]
     if (b === 'play_carrot') return canPlay && a.interactToys.includes('carrot_toy')
     if (b === 'visit_hutch') return canSleep && a.visitDecorations.length > 0
     if (b === 'garden' || b === 'nursery') return s.scene !== b && a.scenes.includes(b)
+    if (stats && stats.energy <= 15 && (b === 'run' || b === 'jump' || b === 'binky' || b === 'flee')) return false
     if (b === 'eat' && !canEat || b === 'sleep' && !canSleep || b === 'gaze_owner' && (stats?.affection ?? 100) >= 90) return false
     return a.actions.some(action => action === b)
   })

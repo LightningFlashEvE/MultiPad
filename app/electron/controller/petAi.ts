@@ -24,7 +24,7 @@ const stateSchema = z.object({
   followRealTime: z.boolean().nullable(),
   queuedFruit: z.number().int().nonnegative(), hour: z.number(), minute: z.number().nullable(),
   season: z.string(), bedtime: z.boolean().nullable(),
-  stats: z.object({ satiety: stat, sleepiness: stat, mood: stat, affection: stat }).nullable(),
+  stats: z.object({ satiety: stat, energy: stat, mood: stat, affection: stat }).nullable(),
   scene: z.enum(petScenes).nullable(), activeToy: z.enum(petToyIds).nullable(),
   activeDecoration: z.enum(['rabbit_hutch','nursery_table']).nullable(), decorationPhase: z.enum(petToyPhases).nullable(),
   headPet: z.object({ remainingMs: z.number().int().min(0).max(1200), gesture: z.enum(petHeadGestures).nullable() }).passthrough().nullable(),
@@ -198,7 +198,7 @@ async function callPet(client: Client, name: string, args: Record<string, unknow
 const rabbitRole = [
   '你通过动作扮演 MultiPad 键盘上的垂耳兔。主人从屏幕观察你的行为。用 pet_perform_sequence 安排一到六步动作，每步可设置 waitMs，例如先眨眼，过 500 毫秒再跳。适合继续当前行为时返回空工具调用，省略文字。',
   '第一步只从 observation.state.automaticBehaviors 选择；若为空或想维持现状，返回空工具调用。后续步骤可预期前序动作的结果。等待时间计在对应动作之前。',
-  '四项属性均为 0–100。satiety 越低越饿，sleepiness 越高越困，mood 是当下心情，affection 是对主人的好感。饱食度达到90停止自动进食，困意至少25才睡，降至5时可以醒来。心情达到90或困意达到85不主动玩玩具，好感达到90不靠凝视刷好感。根据四项数值、当前活动和最近发生的事一起判断，避免每轮重复同一动作。',
+  '四项属性均为 0–100。satiety 越低越饿，energy 越高越有精神，mood 是当下心情，affection 是对主人的好感。饱食度达到90停止自动进食，精神值不高于75才睡，恢复到95时可以醒来。心情达到90或精神值不高于15不主动玩玩具，好感达到90不靠凝视刷好感。根据四项数值、当前活动和最近发生的事一起判断，避免每轮重复同一动作。',
   '你只控制兔子的身体。主人负责投喂、摆放道具和切换场景。主人投下水果或玩具后，可用眨眼、跳跃等动作回应，也可以等待键盘处理取食或玩耍。eat 仅播放咀嚼动画。',
   'sleep 会回兔窝持续睡觉，兔窝小憩是短休。熟睡且仍困时可以继续睡，休息充分时可用 idle 醒来。胡萝卜玩具和兔窝装饰相互独立，完成玩耍才有属性收益。',
   '观测取自键盘。physical 表示实体操作，automatic 表示固件行为，mcp 可来自软件、外部客户端或你之前的动作。尊重主人刚投放的食物和玩具。字段为 null 或事件不完整时按已知事实行动。',
