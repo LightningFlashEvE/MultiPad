@@ -288,6 +288,41 @@ static void pendant_lamp_brightens_only_the_room_at_night(void) {
     assert(lcd[45][10] == dawn_wall && lcd[31][222] != unlit_bulb);
 }
 
+static void lamp_manual_override_expires_at_clock_boundaries(void) {
+    assert(pet_mode_control(9, 0) == 0);
+    assert(pet_mode_control(4, 15) == 0 && pet_mode_control(28, 1) == 0);
+    assert(!pet_mode_lamp_is_lit());
+    encoder2_callback(ENCODER_DOWN);
+    encoder2_callback(ENCODER_UP);
+    assert(pet_mode_lamp_is_lit());
+    assert(pet_mode_control(4, 16) == 0 && pet_mode_lamp_is_lit());
+    assert(pet_mode_control(4, 19) == 0 && pet_mode_lamp_is_lit());
+    assert(pet_mode_control(4, 23) == 0 && pet_mode_lamp_is_lit());
+    assert(pet_mode_control(4, 0) == 0 && pet_mode_lamp_is_lit());
+    assert(pet_mode_control(4, 6) == 0 && !pet_mode_lamp_is_lit());
+
+    const uint8_t scene = pet_care_get()->scene;
+    encoder2_callback(ENCODER_DOWN);
+    encoder2_callback(UP_CLOCKWISE);
+    encoder2_callback(ENCODER_UP);
+    assert(!pet_mode_lamp_is_lit() && pet_care_get()->scene != scene);
+    assert(pet_mode_control(6, scene) == 0);
+
+    assert(pet_mode_control(9, 1) == 0);
+    assert(pet_mode_control(20, 115) == 0); /* 18:59 */
+    assert(!pet_mode_lamp_is_lit());
+    advance(60000);
+    assert(pet_mode_hour() == 19 && pet_mode_lamp_is_lit());
+    assert(pet_mode_control(32, 0) == 0 && !pet_mode_lamp_is_lit());
+    assert(pet_mode_control(17, 103) == 0); /* 05:59 */
+    assert(!pet_mode_lamp_is_lit());
+    assert(pet_mode_control(32, 0) == 0 && pet_mode_lamp_is_lit());
+    advance(60000);
+    assert(pet_mode_hour() == 6 && !pet_mode_lamp_is_lit());
+    assert(pet_mode_control(9, 0) == 0);
+    assert(pet_mode_control(28, 0) == 0 && pet_mode_control(32, 0) != 0);
+}
+
 static void dance_and_window(void) {
     assert(pet_mode_control(3, PET_BINKY) == 0);
     const int origin = pet_mode_x(), facing = (pet_mode_room_flags() & 1) ? 1 : -1;
@@ -361,6 +396,44 @@ static void small_encoders_keep_work_layers_out_of_pet_mode(void) {
     assert(menu_loads == 1);
 }
 
+static void run_reaches_edge_without_mid_stride_reversal(void) {
+    assert(pet_mode_control(1, 1) == 0);
+    assert(pet_mode_control(3, PET_RUN) == 0);
+    int last = pet_mode_x();
+    for (unsigned i = 0; i < 2400 && pet_mode_action() == PET_RUN; ++i) {
+        advance(1);
+        assert(pet_mode_x() >= last && (pet_mode_room_flags() & 1));
+        last = pet_mode_x();
+    }
+    assert(last == 274 && pet_mode_action() == PET_IDLE);
+    assert(pet_mode_control(3, PET_RUN) == 0);
+    advance(150);
+    assert(pet_mode_action() == PET_RUN && pet_mode_x() < last && !(pet_mode_room_flags() & 1));
+    assert(pet_mode_control(1, 0) == 0);
+}
+
+static void empty_snacks_report_stock_and_show_a_temporary_lcd_notice(void) {
+    assert(pet_mode_control(1, 1) == 0);
+    pet_care_bind(0, 1);
+    while (pet_care_take_snack(1)) {}
+    assert(pet_mode_control(5, 0) == 0);
+    advance(150);
+    const uint16_t scene_pixel = lcd[8][133];
+    const uint16_t notice_background = (10u << 11) | (11u << 5) | 7u;
+    const uint8_t queued = pet_mode_queue_depth();
+
+    assert(pet_mode_key_down(0));
+    advance(120);
+    assert(lcd[8][133] == notice_background);
+    assert(pet_mode_queue_depth() == queued && pet_care_get()->stock[0] == 0);
+
+    assert(pet_mode_control(2, 1) == PET_STATUS_OUT_OF_STOCK);
+    assert(pet_mode_control(12, 0) == PET_STATUS_OUT_OF_STOCK);
+    advance(2300);
+    assert(lcd[8][133] == scene_pixel);
+    assert(pet_mode_queue_depth() == queued);
+}
+
 int main(void) {
     pet_care_init(0); /* In-memory care. Separate NOR tests exercise durable storage. */
     gestures_and_framebuffer();
@@ -368,6 +441,7 @@ int main(void) {
     table_and_food_positions();
     dance_and_window();
     pendant_lamp_brightens_only_the_room_at_night();
+    lamp_manual_override_expires_at_clock_boundaries();
     ambient_light_uses_manual_time_and_synced_minutes();
     assert(pet_mode_control(6, 1) == 0);
     const PetAction grooming[] = {PET_GROOM_FUR, PET_GROOM_EAR};
@@ -428,15 +502,21 @@ int main(void) {
     advance(1);
     assert(pet_mode_action() == PET_IDLE && pet_mode_timed_remaining() == 0);
     assert(pet_care_get()->energy < 60);
-    pet_care_adjust(0, 59, 0, 0);
+    pet_care_adjust(0, 59 - pet_care_get()->energy, 0, 0);
     assert(pet_care_get()->energy == 59);
     assert(pet_mode_play_timed(PET_SLEEP | (90u << 5) | (60u << 14)) == 0);
-    advance(23000);
+    for (unsigned i = 0; i < 5000 && pet_mode_action() != PET_SLEEP; ++i) advance(1);
+    assert(pet_mode_action() == PET_SLEEP);
+    advance(PET_SLEEP_RECOVERY_MS - 1);
+    assert(pet_mode_action() == PET_SLEEP && pet_care_get()->energy == 59);
+    advance(1);
     assert(pet_mode_action() != PET_SLEEP && pet_mode_timed_remaining() == 0);
-    assert(pet_care_get()->energy >= 59 && pet_care_get()->energy <= 60);
+    assert(pet_care_get()->energy == 60);
     small_encoders_keep_work_layers_out_of_pet_mode();
     assert(pet_mode_control(1, 1) == 0);
     restore_performance_without_image();
+    run_reaches_edge_without_mid_stride_reversal();
+    empty_snacks_report_stock_and_show_a_temporary_lcd_notice();
     puts("Pet encoder gesture and performance transition tests passed");
     return 0;
 }

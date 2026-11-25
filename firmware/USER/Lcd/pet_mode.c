@@ -22,6 +22,8 @@ enum {
     GROUND = 139,
     WALK_MIN = 46,
     WALK_MAX = 274,
+    RUN_BRAKE_DISTANCE = 24,
+    RUN_DURATION_MS = 2300,
     DIRTY_MARGIN = 38,
     DIRTY_TOP = 73,
     DIRTY_BOTTOM = 147,
@@ -29,7 +31,12 @@ enum {
     FRUIT_RADIUS = 9,
     FRUIT_GROUND = 129,
     FALL_MS = 650,
-    FRUIT_EAT_MS = 850
+    FRUIT_EAT_MS = 850,
+    STOCK_NOTICE_MS = 2200,
+    STOCK_NOTICE_X = 132,
+    STOCK_NOTICE_Y = 7,
+    STOCK_NOTICE_WIDTH = 56,
+    STOCK_NOTICE_HEIGHT = 24
 };
 
 #define RGB565(r, g, b) (((r) >> 3) << 11 | ((g) >> 2) << 5 | ((b) >> 3))
@@ -48,7 +55,7 @@ typedef struct {
     uint32_t elapsed;
     PetFloorFood foods[PET_FLOOR_CAPACITY];
     uint8_t food_count, hour, minute, season, scene, visible_toy, using_toy, drop;
-    uint8_t pat_kind, pat_phase;
+    uint8_t pat_kind, pat_phase, stock_notice;
     bool bowl, patting, lamp_installed, lamp_lit;
 } PetFrame;
 
@@ -66,6 +73,7 @@ static PetFrame frame;
 static uint8_t pixels[LCD_WIDTH * SLICE_ROWS * 2];
 static uint16_t scene_palette[24];
 static uint8_t hour = 8, minute, season;
+static bool pendant_lit;
 static uint32_t clock_anchor;
 static uint16_t nursery_palette[sizeof(pet_palette) / sizeof(pet_palette[0])];
 static bool redraw_scene;
@@ -82,7 +90,8 @@ typedef struct {
     bool toy_falling, awaiting_play;
 } PetFloor;
 static PetFloor floors[PET_SCENE_COUNT];
-static uint8_t fruit, keys_seen;
+static uint8_t fruit, keys_seen, stock_notice;
+static uint32_t stock_notice_at;
 static uint32_t key_at[PET_KEY_COUNT];
 
 static PetFloor *current_floor(void) { return &floors[pet_care_get()->scene]; }
@@ -154,6 +163,8 @@ uint8_t pet_mode_events(uint32_t after, PetEvent *out, bool *overrun, bool *more
 }
 
 static void set_action_from(PetAction next, uint32_t now, uint8_t source) {
+    if (next == PET_RUN &&
+        (direction < 0 ? x - WALK_MIN : WALK_MAX - x) <= RUN_BRAKE_DISTANCE) direction = -direction;
     if (next == PET_BINKY) {
         dance_origin = x;
         dance_direction = x < WALK_MIN + 36 ? 1 : x > WALK_MAX - 36 ? -1 : direction;
@@ -308,6 +319,7 @@ static void set_mode(bool enabled, uint8_t source, uint32_t now) {
     if (active == enabled) return;
     if (encoder_down && source != SOURCE_PHYSICAL) encoder_cancelled = true;
     hand_on_encoder = head_pat_active = false;
+    stock_notice = 0;
     record_event(PET_EVENT_MODE, enabled, source, 0);
     live_oled_mode_changed();
     if (enabled) {
@@ -454,9 +466,16 @@ bool pet_mode_encoder_rotated(bool clockwise, bool pressed_detent) {
     return encoder_claimed || encoder_cancelled || encoder_toggled;
 }
 
-static bool queue_fruit(uint8_t requested, uint8_t source, uint32_t now) {
+static uint8_t queue_fruit(uint8_t requested, uint8_t source, uint32_t now) {
+    if (!pet_care_get()->stock[requested - 1]) {
+        stock_notice = requested;
+        stock_notice_at = now;
+        return PET_STATUS_OUT_OF_STOCK;
+    }
     PetFloor *floor = current_floor();
-    if (floor->count == PET_FLOOR_CAPACITY || !pet_care_take_snack(requested)) return false;
+    if (floor->count == PET_FLOOR_CAPACITY) return BUSY;
+    if (!pet_care_take_snack(requested)) return BUSY;
+    stock_notice = 0;
     if (bedtime && wants_food()) end_toy(true, source, now);
     /* Choose the closest free landing site to the original toss, keeping fruit distinct. */
     const int preferred = x + (requested % 2 ? 77 : -77);
@@ -471,14 +490,14 @@ static bool queue_fruit(uint8_t requested, uint8_t source, uint32_t now) {
     floor->foods[floor->count++] = (FloorFood){now, best, requested, FOOD_FALLING, source};
     last_owner_input = last_input = now;
     record_event(PET_EVENT_FRUIT_QUEUED, requested, source, pet_mode_queue_depth());
-    return true;
+    return OK;
 }
 
 static uint8_t trigger_key(uint8_t key, uint8_t source, uint32_t now) {
     const uint8_t item = pet_care_get()->bindings[key];
     record_event(PET_EVENT_KEY, key + 1, source, item);
     if (!item) return OK;
-    if (item <= FRUIT_COUNT) return queue_fruit(item, source, now) ? OK : BUSY;
+    if (item <= FRUIT_COUNT) return queue_fruit(item, source, now);
     if (item == ITEM_HUTCH) {
         if (fruit) return BUSY;
         visit_hutch(false, source, now);
@@ -508,10 +527,31 @@ static void set_scene_value(uint8_t value, bool change_season, uint8_t source) {
     redraw_scene = true;
 }
 
+static bool nursery_night(void) { return hour < 6 || hour >= 19; }
+
+static void set_lamp_light(bool lit) {
+    if (pendant_lit == lit) return;
+    pendant_lit = lit;
+    redraw_scene = true;
+}
+
+bool pet_mode_lamp_is_lit(void) {
+    return pet_care_get()->pendant_lamp && pendant_lit;
+}
+
+bool pet_mode_toggle_lamp(void) {
+    if (!active || !pet_care_get()->pendant_lamp) return false;
+    set_lamp_light(!pendant_lit);
+    last_owner_input = HAL_GetTick();
+    return true;
+}
+
 static void set_time(uint16_t minutes, uint8_t source) {
+    const bool was_night = nursery_night();
     if (minute != minutes % 60) redraw_scene = true;
     minute = minutes % 60;
     set_scene_value(minutes / 60, false, source);
+    if (was_night != nursery_night()) set_lamp_light(nursery_night());
 }
 
 void pet_mode_cycle_background(int8_t step) {
@@ -533,7 +573,7 @@ void pet_mode_adjust_scene(int8_t direction_step, bool change_season) {
 
 uint8_t pet_mode_control(uint8_t opcode, uint8_t value) {
     if (opcode == 31) return active && pet_care_buy_snacks(value) ? OK : INVALID;
-    enum { MODE = 1, FEED, PLAY, HOUR, SEASON, SCENE, DEPLOY_TOY, BIND_KEY, FOLLOW_CLOCK, PLAY_TOY = 11, TRIGGER_KEY, PLACE_IF_EMPTY, VISIT_HUTCH = 15, CLOCK_BASE = 16, PAT_HEAD = 22, SET_SATIETY, SET_ENERGY, SET_MOOD, SET_AFFECTION, SET_PENDANT_LAMP = 28 };
+    enum { MODE = 1, FEED, PLAY, HOUR, SEASON, SCENE, DEPLOY_TOY, BIND_KEY, FOLLOW_CLOCK, PLAY_TOY = 11, TRIGGER_KEY, PLACE_IF_EMPTY, VISIT_HUTCH = 15, CLOCK_BASE = 16, PAT_HEAD = 22, SET_SATIETY, SET_ENERGY, SET_MOOD, SET_AFFECTION, SET_PENDANT_LAMP = 28, TOGGLE_PENDANT_LAMP = 32 };
     const uint32_t now = HAL_GetTick();
     if (opcode == MODE && value <= 1) {
         set_mode(value != 0, SOURCE_MCP, now);
@@ -556,9 +596,12 @@ uint8_t pet_mode_control(uint8_t opcode, uint8_t value) {
             if (value > 1) return INVALID;
             if (pet_care_get()->pendant_lamp != (bool)value) {
                 pet_care_set_pendant_lamp(value != 0);
+                set_lamp_light(value && nursery_night());
                 redraw_scene = true;
             }
             return OK;
+        case TOGGLE_PENDANT_LAMP:
+            return !value && pet_mode_toggle_lamp() ? OK : INVALID;
         case PAT_HEAD:
             if (value == 5 || value == 6) {
                 if (!hand_on_encoder && head_pat_remaining(now) && head_pat_kind)
@@ -578,7 +621,7 @@ uint8_t pet_mode_control(uint8_t opcode, uint8_t value) {
             return OK;
         case FEED:
             if (!value || value > FRUIT_COUNT) return INVALID;
-            return queue_fruit(value, SOURCE_MCP, now) ? OK : BUSY;
+            return queue_fruit(value, SOURCE_MCP, now);
         case PLAY:
             if (value > PET_GROOM_EAR || value == PET_FALL || value == PET_FETCH) return INVALID;
             if (fruit || (value == PET_EAT && !hungry())) return BUSY;
@@ -810,10 +853,25 @@ static void update_action(uint32_t now, uint32_t step_ms) {
             if (elapsed >= duration) set_action(PET_IDLE, now);
             return;
         }
-        case PET_RUN:
+        case PET_RUN: {
+            const int16_t boundary = direction < 0 ? WALK_MIN : WALK_MAX;
+            const int16_t distance = direction * (boundary - x);
+            if (elapsed >= RUN_DURATION_MS || distance <= 0) {
+                set_action(PET_IDLE, now);
+                return;
+            }
+            const uint8_t speed = distance >= RUN_BRAKE_DISTANCE ? 110 :
+                30 + 80 * distance / RUN_BRAKE_DISTANCE;
+            const int16_t step = walking_step(step_ms, speed);
+            if (direction * step >= distance) {
+                x = boundary;
+                set_action(PET_IDLE, now);
+            } else x += step;
+            return;
+        }
         case PET_FLEE:
             if (elapsed >= 2300) set_action(PET_IDLE, now);
-            else if (action == PET_RUN || elapsed >= 250) move_in_garden(step_ms, action == PET_RUN ? 110 : 145);
+            else if (elapsed >= 250) move_in_garden(step_ms, 145);
             return;
         case PET_IDLE:
         case PET_WALK:
@@ -823,7 +881,11 @@ static void update_action(uint32_t now, uint32_t step_ms) {
     if (pet_care_get()->energy <= AUTO_SLEEP_ENERGY && (!floor->count || !wants_food()) && now - last_input >= SLEEP_AFTER_MS) {
         visit_hutch(true, SOURCE_AUTOMATIC, now);
     } else if (action == PET_IDLE) {
-        if (elapsed >= 1700) set_action(PET_WALK, now);
+        if (elapsed >= 1700) {
+            if (x <= WALK_MIN) direction = 1;
+            else if (x >= WALK_MAX) direction = -1;
+            set_action(PET_WALK, now);
+        }
     } else {
         if (move_in_garden(step_ms, 37) || elapsed >= 3600) {
             /* A short look toward the owner between walks. Most pauses stay idle. */
@@ -857,8 +919,6 @@ static uint16_t blend(uint16_t from, uint16_t to, uint8_t part, uint8_t total) {
 }
 
 static uint8_t ambient_darkness;
-
-static bool nursery_night(void) { return hour < 6 || hour >= 19; }
 
 static uint16_t nursery_tint(uint16_t color, bool lamp_lit) {
     static const uint16_t seasons[] = {0, HEX565(0xffdb82), HEX565(0xdd975e), HEX565(0xb6d7f1)};
@@ -993,8 +1053,8 @@ static void begin_frame(uint32_t now) {
         .direction = direction, .sprite = sprite_frame(action_clip(elapsed), elapsed),
         .action = action, .elapsed = elapsed, .hour = hour, .minute = minute, .season = season,
         .scene = scene, .visible_toy = pet_care_get()->placed[scene], .using_toy = using,
-        .drop = pet_mode_toy_drop(), .bowl = action == PET_EAT && !fruit && !active_toy,
-        .lamp_installed = lamp, .lamp_lit = lamp && nursery_night()
+        .stock_notice = stock_notice, .drop = pet_mode_toy_drop(), .bowl = action == PET_EAT && !fruit && !active_toy,
+        .lamp_installed = lamp, .lamp_lit = lamp && pet_mode_lamp_is_lit()
     };
     uint16_t remaining = head_pat_remaining(now);
     if (remaining) {
@@ -1024,6 +1084,8 @@ static void begin_frame(uint32_t now) {
         if (i < next.food_count) include_rect(&area, fresh->x - FRUIT_RADIUS, fresh->y - FRUIT_RADIUS, 2 * FRUIT_RADIUS);
         if (i < frame.food_count) include_rect(&area, old->x - FRUIT_RADIUS, old->y - FRUIT_RADIUS, 2 * FRUIT_RADIUS);
     }
+    if (frame.stock_notice != next.stock_notice)
+        include_rect(&area, STOCK_NOTICE_X, STOCK_NOTICE_Y, STOCK_NOTICE_WIDTH);
     next.left = area.left > 0 ? area.left : 0;
     next.right = area.right < LCD_WIDTH ? area.right : LCD_WIDTH;
     next.row = area.top > 0 ? area.top : 0;
@@ -1179,6 +1241,24 @@ static void paint_sky(uint8_t *line, uint16_t row) {
             paint_rect(line, row, stars[i][0], stars[i][1], 2, 2, HEX565(0xedddc8));
         }
     }
+}
+
+static void paint_stock_notice(uint8_t *line, uint16_t row) {
+    if (!frame.stock_notice || row < STOCK_NOTICE_Y || row >= STOCK_NOTICE_Y + STOCK_NOTICE_HEIGHT) return;
+
+    const uint16_t background = HEX565(0x512d39);
+    const uint16_t foreground = HEX565(0xffdfa7);
+    const uint8_t offset = row - STOCK_NOTICE_Y;
+    const PetFloorFood icon = {.x = STOCK_NOTICE_X + 15, .y = STOCK_NOTICE_Y + 12, .id = frame.stock_notice};
+    paint_rect(line, row, STOCK_NOTICE_X, STOCK_NOTICE_Y, STOCK_NOTICE_WIDTH, STOCK_NOTICE_HEIGHT, background);
+    paint_fruit(line, row, &icon);
+    if (offset >= 8 && offset < 16) {
+        const uint8_t diagonal = offset - 8;
+        paint_span(line, STOCK_NOTICE_X + 28 + diagonal, STOCK_NOTICE_X + 30 + diagonal, foreground);
+        paint_span(line, STOCK_NOTICE_X + 35 - diagonal, STOCK_NOTICE_X + 37 - diagonal, foreground);
+    }
+    paint_rect(line, row, STOCK_NOTICE_X + 41, STOCK_NOTICE_Y + 6, 8, 12, foreground);
+    paint_rect(line, row, STOCK_NOTICE_X + 43, STOCK_NOTICE_Y + 8, 4, 8, background);
 }
 
 static void paint_controls(uint8_t *line, uint16_t row) {
@@ -1338,6 +1418,7 @@ static void paint_row(uint8_t *line, uint16_t row) {
     }
     paint_head_pat(line, row);
     paint_controls(line, row);
+    paint_stock_notice(line, row);
 }
 
 static void draw_slice(void) {
@@ -1355,8 +1436,12 @@ void pet_mode_poll(void) {
     if (pet_care_get()->follow_time && now - clock_anchor >= 60000u) {
         const uint32_t elapsed_minutes = (now - clock_anchor) / 60000u;
         clock_anchor += elapsed_minutes * 60000u;
-        set_time((hour * 60u + minute + elapsed_minutes) % 1440u, SOURCE_AUTOMATIC);
+        const uint16_t current_minute = hour * 60u + minute;
+        const uint16_t next_boundary = hour < 6 ? 360 : hour < 19 ? 1140 : 1800;
+        set_time((current_minute + elapsed_minutes) % 1440u, SOURCE_AUTOMATIC);
+        if (elapsed_minutes >= (uint32_t)(next_boundary - current_minute)) set_lamp_light(nursery_night());
     }
+    if (stock_notice && now - stock_notice_at >= STOCK_NOTICE_MS) stock_notice = 0;
     if (head_pat_active && !head_pat_remaining(now)) head_pat_active = false;
     /* A pet-origin hold stays undecided until release so a late turn still strokes the rabbit. */
     if (encoder_down && !encoder_claimed && !encoder_cancelled && !encoder_toggled && !encoder_rotated &&
@@ -1375,7 +1460,7 @@ void pet_mode_poll(void) {
         if (action == PET_WALK || action == PET_FETCH) exertion = 1;
         if (action == PET_RUN || action == PET_FLEE || action == PET_JUMP || action == PET_BINKY) exertion = 2;
     }
-    pet_care_tick(step_ms, action == PET_SLEEP, exertion, unattended(now));
+    pet_care_tick(step_ms, action == PET_SLEEP && bedtime, exertion, unattended(now));
     settle_drops(now);
     if (head_pat_remaining(now)) action_since += step_ms;
     else update_action(now, step_ms > 60 ? 60 : step_ms);

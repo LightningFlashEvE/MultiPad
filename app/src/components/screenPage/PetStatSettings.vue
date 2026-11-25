@@ -32,12 +32,12 @@ async function apply(stat: Stat) {
         <span class="current">{{ stats?.[stat.id] ?? '—' }} / 100</span>
         <progress :value="stats?.[stat.id] ?? 0" max="100" :aria-label="stat.label + '当前值'" />
       </div>
-      <input :id="'edit-' + stat.id" type="number" inputmode="numeric" min="0" max="100" step="1"
+      <input :id="'edit-' + stat.id" class="settings-field" type="number" inputmode="numeric" min="0" max="100" step="1"
         :value="drafts[stat.id] ?? stats?.[stat.id]" :disabled="busy || !supported || !stats"
         :aria-invalid="drafts[stat.id] !== undefined && !valid(stat)"
         @input="drafts[stat.id] = ($event.target as HTMLInputElement).value"
         @keydown.enter.prevent="apply(stat)">
-      <button type="button" :aria-label="'保存' + stat.label"
+      <button type="button" class="settings-button" :aria-label="'保存' + stat.label"
         :disabled="busy || !supported || !stats || !valid(stat) || Number(drafts[stat.id]) === stats[stat.id]"
         @click="apply(stat)">保存</button>
     </div>
@@ -45,13 +45,11 @@ async function apply(stat: Stat) {
 </template>
 
 <style scoped>
-.stat-editor p { margin: 0 0 10px; color: #435851; font-size: 13px; }
-.stat-row { display: grid; grid-template-columns: minmax(0, 1fr) 64px auto; align-items: center; gap: 14px; padding: 10px 2px; border-top: 1px solid #d5dfdc; }
+.stat-editor { padding:12px 14px 5px; background:var(--settings-surface); border-radius:10px; }
+.stat-editor p { margin:0 0 10px; color:var(--settings-muted); font-size:13px; }
+.stat-row { display:grid; grid-template-columns:minmax(0,1fr) 64px auto; align-items:center; gap:12px; padding:11px 0; border-top:1px solid var(--settings-line); }
 .stat-row label { font-weight: 600; }
 .current { margin-left: 10px; color: #526660; font-size: 12px; font-variant-numeric: tabular-nums; }
 .stat-row progress { display: block; width: 100%; height: 6px; margin-top: 6px; accent-color: #39796b; }
-.stat-row input { box-sizing: border-box; width: 100%; padding: 5px; border: 1px solid #91a59f; border-radius: 4px; font: inherit; }
 .stat-row input[aria-invalid=true] { border-color: #a34432; }
-.stat-row button { cursor: pointer; }
-.stat-row button:disabled { opacity: .5; cursor: default; }
 </style>

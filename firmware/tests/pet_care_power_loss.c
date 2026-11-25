@@ -85,7 +85,7 @@ static void actual_changes_survive_unplug(void) {
     assert(programs == 2); /* Fatigue, metabolism and mood share one snapshot. */
     pet_care_init(W25Q128);
     stats(19, 12, 56, 57);
-    tick(19999, true);
+    tick(PET_SLEEP_RECOVERY_MS - 1, true);
     assert(programs == 2);
     tick(1, true);
     assert(programs == 3);
@@ -211,26 +211,39 @@ static void exercise_charges_both_stats(void) {
     assert(flash[9] == 26); /* The record keeps the existing fatigue encoding. */
     pet_care_init(W25Q128);
     stats(64, 74, 70, 35);
-    pet_care_tick(20000, true, 0, false);
+    pet_care_tick(PET_SLEEP_RECOVERY_MS, true, 0, false);
     stats(64, 75, 70, 35);
 }
 
 static void unattended_care_declines_slowly(void) {
     new_flash();
-    pet_care_tick(60000, true, 2, true);
-    pet_care_tick(59999, true, 2, true);
+    pet_care_tick(60000, false, 2, true);
+    pet_care_tick(59999, false, 2, true);
     stats(65, 75, 70, 35);
-    pet_care_tick(1, true, 2, true);
+    pet_care_tick(1, false, 2, true);
     stats(64, 74, 69, 34);
-    pet_care_tick(60000, true, 0, true);
+    pet_care_tick(60000, false, 0, true);
     pet_care_tick(1, false, 0, false); /* The owner returned, clearing partial neglect time. */
-    pet_care_tick(60000, true, 0, true);
+    pet_care_tick(60000, false, 0, true);
     stats(64, 74, 69, 34);
-    pet_care_tick(60000, true, 0, true);
+    pet_care_tick(60000, false, 0, true);
     pet_care_init(W25Q128);
     stats(63, 73, 68, 33);
 }
 
+static void sleep_restores_energy_even_while_unattended(void) {
+    new_flash();
+    assert(pet_care_set_stat(1, 0));
+    pet_care_tick(29999, true, 0, true);
+    stats(65, 0, 70, 35);
+    pet_care_tick(1, true, 0, true);
+    stats(65, 1, 70, 35);
+    pet_care_tick(30000, true, 0, true);
+    stats(65, 2, 70, 35);
+    pet_care_tick(60000, true, 0, true);
+    pet_care_init(W25Q128);
+    stats(64, 4, 69, 34);
+}
 static void pendant_lamp_persists(void) {
     new_flash();
     assert(!pet_care_get()->pendant_lamp);
@@ -274,6 +287,7 @@ static void legacy_furniture_and_warehouse_survive_reboot(void) {
 }
 
 int main(void) {
+    sleep_restores_energy_even_while_unattended();
     legacy_furniture_and_warehouse_survive_reboot();
     pendant_lamp_persists();
     unattended_care_declines_slowly();

@@ -1,4 +1,11 @@
 const { contextBridge, ipcRenderer, dialog } = require('electron')
+import type { PetSettingsAction, PetSettingsSnapshot } from '../../src/utils/petSettings'
+
+function listen(channel: string, callback: (...args: any[]) => void) {
+  const listener = (_event: unknown, ...values: any[]) => callback(...values)
+  ipcRenderer.on(channel, listener)
+  return () => ipcRenderer.removeListener(channel, listener)
+}
 
 const latestDownload = (link: string) => {
   ipcRenderer.send('latest-download', link)
@@ -114,6 +121,17 @@ contextBridge.exposeInMainWorld('myApi', {
   pcPerformancePreview: (menu: number) => ipcRenderer.invoke('pc-performance-preview', menu),
   livePerformance: (menu: number, metrics?: number[]) => ipcRenderer.invoke('live-performance', menu, metrics),
   petAction: (command: number, value = 0) => ipcRenderer.invoke('pet-action', command, value),
+  openPetSettings: (snapshot: PetSettingsSnapshot) => ipcRenderer.invoke('pet-settings-open', snapshot),
+  updatePetSettings: (snapshot: PetSettingsSnapshot) => ipcRenderer.send('pet-settings-update', snapshot),
+  onPetSettingsClosed: (callback: () => void) => listen('pet-settings-closed', callback),
+  onPetSettingsCommand: (callback: (id: number, action: PetSettingsAction) => void) => listen('pet-settings-command', callback),
+  finishPetSettingsCommand: (id: number, applied: boolean) => ipcRenderer.send('pet-settings-result', id, applied),
+  onPetSettingsSnapshot: (callback: (snapshot: PetSettingsSnapshot) => void) => {
+    const stop = listen('pet-settings-snapshot', callback)
+    ipcRenderer.send('pet-settings-subscribe')
+    return stop
+  },
+  runPetSettingsAction: (action: PetSettingsAction) => ipcRenderer.invoke('pet-settings-action', action),
   getPetAiActivity: () => ipcRenderer.invoke('pet-ai-activity-get'),
   onPetAiActivity: (callback: (activity: unknown) => void) => {
     const listener = (_event: unknown, activity: unknown) => callback(activity)

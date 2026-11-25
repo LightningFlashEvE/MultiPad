@@ -61,79 +61,24 @@ const funcArray = reactive([
 </script>
 
 <template>
-  <div id="func-content">
+  <div id="func-content" class="settings-scroll">
     <ul>
-      <li v-for="v in funcArray" :key="v.funcIndex" @click="showFuncBox(v.funcIndex)">
-        <div class="func-name">
-          {{ v.funcName }}
-          <div class="func-desc"></div>
-          <span>
-            {{ v.funcDesc }}
-          </span>
-        </div>
+      <li v-for="v in funcArray" :key="v.funcIndex">
+        <button type="button" class="func-option" @click="showFuncBox(v.funcIndex)">
+          <strong>{{ v.funcName }}</strong>
+          <small>{{ v.funcDesc }}</small>
+        </button>
       </li>
     </ul>
   </div>
 </template>
 
 <style lang="scss" scoped>
-#func-content {
-  width: 100%;
-  height: 100%;
-  ul {
-    width: 100%;
-    height: 100%;
-    overflow: scroll;
-  }
-  .func-name {
-    width: 100%;
-    height: 80px;
-    background: rgba(255, 255, 255, 0.7);
-    margin-bottom: 20px;
-    border-radius: 12px;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    font-size: 23px;
-    cursor: pointer;
-    position: relative;
-    overflow: hidden;
-    .func-desc {
-      width: 20px;
-      height: 20px;
-      border-radius: 50%;
-      background: rgba(72, 76, 85, 1);
-      position: absolute;
-      top: -160%;
-      right: 0%;
-      z-index: 66;
-      transition: all 0.7s ease-in-out;
-    }
-    span {
-      width: 100%;
-      height: 100%;
-      font-size: 17px;
-      position: absolute;
-      color: rgba(255, 255, 255, 1);
-      word-break: break-all;
-      z-index: 67;
-      transition: all 0.7s ease-in-out;
-      opacity: 0%;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      padding: 0.2em 2em ;
-
-    }
-  }
-  .func-name:hover {
-    .func-desc {
-      width: 500px;
-      height: 500px;
-    }
-    span {
-      opacity: 100%;
-    }
-  }
-}
+#func-content { min-height:0; flex:1; }
+ul { list-style:none; display:grid; gap:5px; padding:2px; }
+.func-option { display:block; width:100%; padding:6px 9px; border:0; border-radius:8px; background:var(--settings-canvas); color:var(--settings-ink); font:inherit; text-align:left; cursor:pointer; }
+.func-option:hover { background:var(--settings-selected); }
+.func-option strong, .func-option small { display:block; }
+.func-option strong { font-size:13px; font-weight:650; }
+.func-option small { margin-top:2px; color:var(--settings-muted); font-size:12px; line-height:1.4; }
 </style>

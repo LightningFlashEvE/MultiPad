@@ -27,6 +27,10 @@ const router = createRouter({
       component: () => import('../window/PetPreviewPage.vue')
     },
     {
+      path: '/pet-settings',
+      component: () => import('../window/PetSettingsPage.vue')
+    },
+    {
       path: '/config',
       component: () => import('../window/KeyConfigPage.vue'),
       // component: KeyConfigPage,

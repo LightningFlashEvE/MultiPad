@@ -1,4 +1,4 @@
-import { hutchBounds, petFruitLabels, petScenes, petDaydreamMs, petGazeOwnerMs } from '../../src/utils/petCatalog'
+import { hutchBounds, petFruitLabels, petScenes, petDaydreamMs, petGazeOwnerMs, petSleepRecoveryMs } from '../../src/utils/petCatalog'
 
 export const petServerInstructions = '你控制的是实体键盘上的宠物兔。先读 pet_get_care_guide 了解动作和属性，再读 pet_get_state。' +
   '自主活动时按 automaticBehaviors 选择行为，用 pet_perform_sequence 编排顺序与等待。availableNow 记录设备当前支持的操作。按钮和兔子的自主行为也会改变状态。工作模式是否切换由主人决定。' +
@@ -10,16 +10,16 @@ export const petServerInstructions = '你控制的是实体键盘上的宠物兔
 export const petCareGuide = {
   stats: {
     range: [0, 100],
-    unattended: '养宠时连续 5 分钟没有摸头、投喂或道具互动后，四项属性每 2 分钟各 −1。睡眠恢复暂停，互动后恢复正常照料与代谢。自主动作不会重置计时。',
+    unattended: '养宠时连续 5 分钟没有摸头、投喂或道具互动后，饱食度、心情、好感每 2 分钟各 −1。清醒时精神值也 −1，睡着时仍照常恢复。自主动作不会重置计时。',
     satiety: '越高越饱。养宠模式累计每分钟 −1。第 6 代起达到 90 时暂停吃水果，旧版达到 100 时暂停，剩下的留在原场景。',
-    energy: '越高越有精神。清醒每满 60 秒 −1，睡着每满 20 秒 +1。散步或取食移动累计 60 秒，饱食度和精神值各额外 −1；跑、跳、逃跑、兔子舞按双倍运动时间累计。精神值 ≤15 时避免主动剧烈运动。',
+    energy: '越高越有精神。清醒每满 60 秒 −1，配套新版固件睡着每满 ' + petSleepRecoveryMs / 1000 + ' 秒 +1。散步或取食移动累计 60 秒，饱食度和精神值各额外 −1；跑、跳、逃跑、兔子舞按双倍运动时间累计。精神值 ≤15 时避免主动剧烈运动。',
     mood: '越高越开心。当前固件吃完一份水果 +3，玩完一次玩具 +6。每个代谢周期开始时，若饱食度低于 25 或精神值低于 15，心情 −1。',
     affection: '越高越亲近主人。当前固件每轮摸头、吃完主人投喂的一份水果、玩完主人安排的一次玩具互动各 +1。饱食度≤25、心情≤30 或精神值≤20 时，持续每 5 分钟好感 −1。'
   },
   actions: {
     idle: '待机，长睡时可叫醒。约 1.7 秒后可能自行散步。',
     blink: '眨眼，约 0.125 秒。', walk: '散步，到边界或约 3.6 秒后会自行停下。',
-    run: '奔跑，约 2.3 秒。', jump: '跳一下，约 0.5 秒。', daydream: '自然发呆，约 ' + petDaydreamMs / 1000 + ' 秒。',
+    run: '奔跑，最多约 2.3 秒，接近场景边缘会减速停下。', jump: '跳一下，约 0.5 秒。', daydream: '自然发呆，约 ' + petDaydreamMs / 1000 + ' 秒。',
     flee: '受惊逃跑，约 2.3 秒。', eat: '仅播放约 2.1 秒的进食动作，没有水果和饱食度收益。',
     stand_watch: '用后腿撑起身体，直立观察约 3 秒，再落回四足。',
     groom_fur: '原地回头舔理身侧的毛约 2.5 秒。',

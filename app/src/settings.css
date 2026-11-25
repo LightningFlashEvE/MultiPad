@@ -1,0 +1,86 @@
+:root {
+  --settings-font: "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+  --settings-surface: #fff;
+  --settings-canvas: #f5f7f6;
+  --settings-group: #edf1ef;
+  --settings-line: #dce4e0;
+  --settings-input-line: #c3d0ca;
+  --settings-ink: #20322d;
+  --settings-muted: #526761;
+  --settings-accent: #285b4e;
+  --settings-accent-hover: #204b40;
+  --settings-selected: #e0eee8;
+  --settings-radius: 8px;
+}
+
+.settings-window {
+  font: 14px/1.45 var(--settings-font);
+  color: var(--settings-ink);
+  background: var(--settings-surface);
+  border: 1px solid var(--settings-line);
+  border-radius: 14px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.settings-window > .top-title {
+  flex: none;
+  height: 49px;
+  padding-inline: 16px 10px;
+  border-bottom: 1px solid var(--settings-line);
+  color: inherit;
+  font-size: 16px;
+}
+
+.settings-scroll {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #b8c6bf transparent;
+}
+
+.settings-scroll::-webkit-scrollbar { display: initial; width: 6px; height: 6px; }
+.settings-scroll::-webkit-scrollbar-thumb { border-radius: 6px; background: #b8c6bf; }
+
+.settings-button {
+  min-height: 32px;
+  padding: 6px 11px;
+  border: 1px solid transparent;
+  border-radius: var(--settings-radius);
+  background: var(--settings-group);
+  color: var(--settings-ink);
+  font: 600 13px/1.3 var(--settings-font);
+  cursor: pointer;
+}
+
+.settings-button:hover:enabled { background: #e4ebe7; }
+.settings-button.is-primary { color: white; background: var(--settings-accent); }
+.settings-button.is-primary:hover:enabled { background: var(--settings-accent-hover); }
+.settings-button:disabled { opacity: .54; cursor: default; }
+.settings-button:enabled:active { transform: scale(.98); }
+
+.settings-window :is(button, input, textarea, select):focus-visible {
+  outline: 2px solid #427c6a;
+  outline-offset: 2px;
+}
+
+.settings-field {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 9px;
+  border: 1px solid var(--settings-input-line);
+  border-radius: var(--settings-radius);
+  background: var(--settings-surface);
+  color: var(--settings-ink);
+  font: inherit;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-button:enabled:active { transform: none; }
+}

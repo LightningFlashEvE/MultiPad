@@ -104,7 +104,7 @@ export default class CreateWindow {
     // 传递的选项与默认选项创建新的对象
     let windowOptions = Object.assign({}, this.defaultOptions, options)
     // 设定其他窗口的父窗口
-    if (!windowConfig.isMainWin && CreateWindow.main) {
+    if (!windowConfig.isMainWin && CreateWindow.main && !Object.hasOwn(options, 'parent')) {
       windowOptions.parent = CreateWindow.main
     }
     // 创建窗口

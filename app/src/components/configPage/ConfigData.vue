@@ -1,47 +1,19 @@
 <script setup lang="ts">
-import { watch, ref } from 'vue';
+import { computed } from 'vue'
 import { useConfigStore } from '../../stores/configStore'
 
-const win = window as any
 const configStore = useConfigStore()
-const configStr = ref<string>('ConfigData')
-
-// 切换不同事件
-watch(() => configStore.curEvent, () => {
-  // console.info(configStore.keyConfig[configStore.curEvent])
-  configStr.value = configStore.keyConfig[configStore.curEvent].userKey && configStore.keyConfig[configStore.curEvent].userKey
-})
-
-// 同步编辑的功能
-watch(() => configStore.keyConfig, () => {
-  // console.info(configStore.keyConfig[configStore.curEvent])
-  configStr.value = configStore.keyConfig[configStore.curEvent].userKey
-}, {
-  deep: true
-})
+const configStr = computed(() => configStore.keyConfig[configStore.curEvent]?.userKey)
 </script>
 
 <template>
-  <div id="config-data-content">
-    <div v-html="configStr">
-    </div>
+  <div id="config-data-content" class="settings-scroll">
+    <div v-if="configStr" v-html="configStr"></div>
+    <p v-else class="empty">此触发方式尚未配置。</p>
   </div>
 </template>
 
 <style lang="scss" scoped>
-#config-data-content {
-  width: 100%;
-  height: 100%;
-  color: rgb(255, 255, 255, 0.9);
-  font-size: 33px;
-  overflow: hidden;
-  padding: 0.5em;
-  word-break: break-all;
-  line-height: 42px;
-  div {
-    width: 100%;
-    height: 100%;
-    overflow: scroll;
-  }
-}
+#config-data-content { flex:1; display:grid; align-content:start; min-height:56px; padding:12px; border-radius:7px; background:var(--settings-canvas); color:var(--settings-ink); font-size:15px; overflow-wrap:anywhere; }
+.empty { color:var(--settings-muted); font-size:13px; }
 </style>

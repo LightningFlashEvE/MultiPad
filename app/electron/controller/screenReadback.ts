@@ -1,7 +1,7 @@
 import { DEVICE_SCREEN_SIZES, type DeviceScreens } from '../../src/utils/deviceScreenFormat'
 import type { DeviceButtons } from '../../src/utils/deviceButtonState'
 import { isStatCommand, isStatValue, isHeadPetInput, petStateGeneration, petTimedActionCommand, petLampCommand, petLampGeneration,
-  petWarehouseGeneration, petFurniture, furniturePositionValid, petBuySnackCommand, petFruitIds } from '../../src/utils/petCatalog'
+  petWarehouseGeneration, petFurniture, furniturePositionValid, petBuySnackCommand, petFruitIds, petToggleLampCommand } from '../../src/utils/petCatalog'
 
 const REQUEST_MAGIC = Buffer.from([0xaa, 0xbb, 0xc1, 0x53])
 const RESPONSE_MAGIC = Buffer.from([0x4d, 0x50, 0x53, 1])
@@ -183,6 +183,8 @@ export default class ScreenReadback {
       const { command, value } = request
       if (command === petLampCommand && this.petGeneration < petLampGeneration) return { state: 'unsupported' }
       if (command === petLampCommand && value !== 0 && value !== 1) return { state: 'unavailable' }
+      if (command === petToggleLampCommand && this.petGeneration < petWarehouseGeneration) return { state: 'unsupported' }
+      if (command === petToggleLampCommand && value !== 0) return { state: 'unavailable' }
       if (command === petTimedActionCommand && this.petGeneration < 11) return { state: 'unsupported' }
       if (command === petTimedActionCommand && (!Number.isInteger(value) || value < 0 || value > 0x1fffff)) return { state: 'unavailable' }
       if (isStatCommand(command) && this.petGeneration < 10) return { state: 'unsupported' }

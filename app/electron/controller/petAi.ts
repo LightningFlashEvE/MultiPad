@@ -7,7 +7,7 @@ import { setTimeout as waitFor } from 'node:timers/promises'
 import { z } from 'zod'
 import { actionTiming, createPetMcp, readPetEvents, validActionTiming } from './petMcp'
 import { defaultRabbitPersonality, personalityLimit, tokenPlanModels } from '../../src/utils/petPersonality'
-import { petActionLabels, playableActions, petScenes, petToys, timedPetActions, petMaxDurationSeconds,
+import { petActionLabels, playableActions, petScenes, petToys, timedPetActions, petMaxDurationSeconds, petRecoveredEnergy,
   petFruitIds as fruits, petFruitLabels as fruitLabel } from '../../src/utils/petCatalog'
 
 const settingsSchema = z.object({
@@ -42,7 +42,9 @@ const completionSchema = z.object({
 
 interface Settings { apiUrl: string; model: string; encryptedKey: string; enabled: boolean; personality?: string }
 interface DecisionStep { label: string; index: number; total: number; next?: string }
-interface Status { step?: DecisionStep; lastDecision?: string; phase: 'idle' | 'thinking' | 'action' | 'error'; message: string }
+interface Status { step?: DecisionStep; lastDecision?: string; source?: string; phase: 'idle' | 'thinking' | 'action' | 'error'; message: string }
+class ProviderError extends Error {}
+
 interface Provider { endpoint: string; model: string; key: string }
 
 let settingsStore: Store<{ settings: Settings }> | undefined
@@ -79,7 +81,10 @@ let activityVersion = 0
 let activityListener: ((activity: ReturnType<typeof getPetAiActivity>) => void) | undefined
 
 export function getPetAiActivity() {
-  return { version: activityVersion, enabled: !!store().get('settings')?.enabled, session: activitySession, phase: status.phase, message: status.message, step: status.step, lastDecision: status.lastDecision, nextDecisionAt }
+  const next = idleSteps[0]
+  return { version: activityVersion, enabled: !!store().get('settings')?.enabled, session: activitySession,
+    phase: status.phase, message: status.message, step: status.step, lastDecision: status.lastDecision, source: status.source, nextDecisionAt,
+    queue: next ? { next: behaviorLabel(next.action), remaining: idleSteps.length } : undefined }
 }
 
 function setStatus(next: Status) {
@@ -112,7 +117,7 @@ export function getPetAi() {
   const saved = store().get('settings')
   return { apiUrl: saved?.apiUrl ?? defaultUrl, model: saved?.model ?? defaultModel, enabled: saved?.enabled ?? false,
     personality: saved?.personality || defaultRabbitPersonality,
-    hasKey: !!saved?.encryptedKey, running, status }
+    hasKey: !!saved?.encryptedKey, running, status, activity: getPetAiActivity() }
 }
 
 export function savePetAi(input: unknown) {
@@ -178,7 +183,9 @@ async function callPet(client: Client, name: string, args: Record<string, unknow
 
 const rabbitRole = '你扮演 MultiPad 键盘上的垂耳兔。选择符合性格、属性和主人互动的动作。' +
   'satiety 越高越饱，energy 越高越有精神，mood 越高越开心，affection 越高越亲近主人。' +
-  '精神低时可短睡，恢复到够用就醒，无需每次回满。避免连续重复动作。rest 表示保留当前活动。不要输出解释。'
+  '精神低时可睡，恢复到够用就醒。饱食或精神偏低时少做剧烈动作。' +
+  '空闲时多发呆，偶尔散步或梳毛，避免频繁切换、连续重复和无缘无故蹦跳。' +
+  '主人投喂或给玩具时，优先留出时间吃东西或玩。rest 表示保留当前活动。只调用工具，不输出解释。'
 
 const actionTool = 'pet_perform_sequence'
 const automaticStepSchema = z.object({ behavior: z.enum([...playableActions, 'rest']),
@@ -227,7 +234,7 @@ async function decide(provider: Provider, observation: object | string, actions:
           behavior: { type: 'string', enum: choices },
           ...(typeof observation === 'string' ? { waitMs: { type: 'integer', enum: [0] } } : {}),
           ...(supportsTiming ? {
-            durationSeconds: { type: 'integer', minimum: 1, maximum: petMaxDurationSeconds,
+            durationSeconds: { type: 'integer', minimum: 1, maximum: petMaxDurationSeconds, petRecoveredEnergy,
               description: '执行时长，自动作开始计时，适用于 ' + timedPetActions.join(', ') },
             untilEnergy: { type: 'integer', minimum: 40, maximum: 90,
               description: '仅用于带时长的 sleep。达到此精神值可提前醒来，一般建议 60–75。' }
@@ -256,16 +263,16 @@ async function decide(provider: Provider, observation: object | string, actions:
     if (!response.ok) {
       await response.body?.cancel().catch(() => {})
       if (response.status === 401 && host === new URL(defaultUrl).hostname) {
-        throw Error('Token Plan 返回 401，请使用对应套餐的专用 API Key')
+        throw new ProviderError('Token Plan 返回 401，请使用对应套餐的专用 API Key')
       }
-      throw Error('模型 API 返回 HTTP ' + response.status + '，请检查地址、模型和 Key')
+      throw new ProviderError('模型 API 返回 HTTP ' + response.status + '，请检查地址、模型和 Key')
     }
     body = await response.json()
   } catch (error) {
     signal.throwIfAborted()
     if (timeout.aborted) return { timedOut: true } as const
-    if (error instanceof SyntaxError) throw Error('模型未返回有效 JSON')
-    if (error instanceof TypeError) throw Error('无法连接模型 API，请检查网络或代理')
+    if (error instanceof SyntaxError) throw new ProviderError('模型未返回有效 JSON')
+    if (error instanceof TypeError) throw new ProviderError('无法连接模型 API，请检查网络或代理')
     throw error
   }
   const parsed = completionSchema.safeParse(body)
@@ -274,7 +281,7 @@ async function decide(provider: Provider, observation: object | string, actions:
     throw Error('模型未返回有效的工具调用格式')
   }
   const calls = parsed.data.choices[0].message.tool_calls ?? []
-  if (!calls.length) return {}
+  if (!calls.length) return { invalidReply: true } as const
   if (typeof observation !== 'string') {
     const inputs = calls.slice(0, maxIdleActions).flatMap(call => {
       const sequence = sequenceCallSchema.safeParse(call)
@@ -282,9 +289,10 @@ async function decide(provider: Provider, observation: object | string, actions:
       const plan = stepsSchema.safeParse(readToolArguments(sequence.data.function.arguments))
       return plan.success ? plan.data.steps.slice(0, maxIdleActions) : []
     })
-    if (planning && inputs.length) {
-      return { steps: inputs.slice(0, limit).map(input =>
-        automaticStep(input, choices, supportsTiming) ?? { behavior: 'rest' as const }) }
+    if (planning) {
+      const steps = inputs.slice(0, limit).map(input => automaticStep(input, choices, supportsTiming))
+      return steps.some(Boolean) ? { steps: steps.map(step => step ?? { behavior: 'rest' as const }) }
+        : { invalidReply: true } as const
     }
     for (const input of inputs) {
       const step = automaticStep(input, choices, supportsTiming)
@@ -304,6 +312,17 @@ async function decide(provider: Provider, observation: object | string, actions:
 }
 
 const readState = async (client: Client) => stateSchema.parse(await callPet(client, 'pet_get_state'))
+
+function localDecision(pet: z.infer<typeof stateSchema>, reaction: boolean, previous?: RabbitAction) {
+  const actions = reaction ? pet.reactionBehaviors : pet.automaticBehaviors
+  if (reaction) return actions.includes('blink') ? { behavior: 'blink' as const } : undefined
+  const calm = (['daydream', 'groom_fur', 'walk'] as const).filter(action => actions.includes(action))
+  const behavior = pet.stats && pet.stats.energy <= 25 && actions.includes('sleep') ? 'sleep'
+    : calm.find(action => action !== previous) ?? calm[0]
+  if (pet.generation >= 11 && behavior === 'sleep') return { behavior, durationSeconds: petMaxDurationSeconds, untilEnergy: petRecoveredEnergy }
+  if (pet.generation >= 11 && behavior === 'daydream') return { behavior, durationSeconds: 25 }
+  return behavior ? { behavior } : undefined
+}
 
 let previousAction: { session: string; action: RabbitAction } | undefined
 
@@ -332,7 +351,7 @@ async function run(kind: 'auto' | 'connection' | 'blink', scheduled?: PlannedSte
       const stillEnabled = () => startingRevision === revision
       let pet = kind === 'connection' ? undefined : await readState(client)
       if (!stillEnabled()) return
-      activitySession = pet?.session
+      if (pet) activitySession = pet.session
       if (pet && !pet.active) {
         if (kind === 'blink') throw Error('请先让键盘进入养宠模式')
         setStatus({ phase: 'idle', message: '等待键盘进入养宠模式' })
@@ -361,24 +380,35 @@ async function run(kind: 'auto' | 'connection' | 'blink', scheduled?: PlannedSte
                 timedRemainingSeconds: pet.timedRemainingSeconds, foodPending: pet.foodPending } }
           : '调用 pet_perform_sequence，只安排一步 blink，waitMs 为 0。'
         const timeoutMs = kind === 'connection' ? 15_000 : trigger ? reactionTimeoutMs : idleTimeoutMs
-        const result = await decide(providerFor(saved), request, actions, timeoutMs, controller.signal, planning, kind === 'auto' && (pet?.generation ?? 0) >= 11)
-        if (!stillEnabled()) return
-        if (trigger && automatic.includes('blink')) {
-          if (result.timedOut) fallbackReason = '模型超时'
-          else if (result.invalidReply) fallbackReason = '模型未给出可执行的动作'
+        let result: Awaited<ReturnType<typeof decide>> | undefined
+        try {
+          result = await decide(providerFor(saved), request, actions, timeoutMs, controller.signal, planning, kind === 'auto' && (pet?.generation ?? 0) >= 11)
+        } catch (error) {
+          if (kind !== 'auto' || !(error instanceof ProviderError)) throw error
+          fallbackReason = error.message
         }
-        const first = result.steps?.[0]
-        action = fallbackReason ? 'blink' : first?.behavior === 'rest' ? undefined : first?.behavior
+        if (!stillEnabled()) return
+        if (kind === 'auto') {
+          if (result?.timedOut) fallbackReason = '模型超时'
+          else if (result?.invalidReply) fallbackReason = '模型未给出可执行的动作'
+        }
+        if (fallbackReason && pet) {
+          const session = pet.session
+          pet = await readState(client)
+          if (!stillEnabled() || pet.session !== session || !pet.active) return
+        }
+        const first = fallbackReason && pet ? localDecision(pet, !!trigger, last) : result?.steps?.[0]
+        action = first?.behavior === 'rest' ? undefined : first?.behavior
         durationSeconds = first?.durationSeconds
         untilEnergy = first?.untilEnergy
         if (kind !== 'auto' && action !== 'blink') {
-          throw Error(result.timedOut ? '模型未在 ' + timeoutMs / 1000 + ' 秒内回复' : '模型没有返回预期的单步眨眼动作')
+          throw Error(result?.timedOut ? '模型未在 ' + timeoutMs / 1000 + ' 秒内回复' : '模型没有返回预期的单步眨眼动作')
         }
         if (kind === 'connection') {
           setStatus({ phase: 'idle', message: '模型连接正常，已验证工具调用' })
           return
         }
-        if (pet && planning && result.steps) {
+        if (pet && planning && result?.steps) {
           const session = pet.session
           const playbackStart = Date.now()
           playBy = playbackStart + slotMs
@@ -392,15 +422,15 @@ async function run(kind: 'auto' | 'connection' | 'blink', scheduled?: PlannedSte
           nextIdleAt = Math.max(roundStart + intervalMs, at)
         }
         if (!action) {
-          setStatus({ phase: 'idle', message: result.timedOut ? '模型超时，兔子继续当前活动'
-            : result.invalidReply ? '模型未给出可执行的动作，兔子继续当前活动'
-            : planning && result.steps ? '已编排下一轮，兔子先自由活动' : 'AI 让兔子保持当前状态' })
+          setStatus({ phase: 'idle', message: fallbackReason ? fallbackReason + ' · 兔子继续当前活动'
+            : planning && result?.steps ? '已编排本轮动作，兔子先自由活动' : 'AI 让兔子保持当前状态' })
           return
         }
       }
 
       if (!pet || !action) return
-      const eligible = (state: typeof pet) => kind === 'auto' ? state?.interruptibleBehaviors ?? [] : state?.automaticBehaviors ?? []
+      const interrupt = !!trigger
+      const eligible = (state: typeof pet) => interrupt ? state?.interruptibleBehaviors ?? [] : state?.automaticBehaviors ?? []
       if (trigger?.events.some(event => event.type === 'head_petted')) {
         // Decide as soon as the gesture is seen. Wait only to deliver the selected
         // response so a held encoder cannot interrupt or be interrupted by the AI.
@@ -426,14 +456,16 @@ async function run(kind: 'auto' | 'connection' | 'blink', scheduled?: PlannedSte
       }
       const outcome = z.object({ accepted: z.array(z.string()) })
         .parse(await callPet(client, actionTool, { steps: [{ behavior: action, durationSeconds, untilEnergy }],
-          session: pet.session, interrupt: kind === 'auto' }, controller.signal))
+          session: pet.session, interrupt }, controller.signal))
       if (!stillEnabled()) return
       if (!outcome.accepted.length) {
         setStatus({ phase: 'idle', message: '兔子状态已变化，已跳过' + label })
         return
       }
       if (kind === 'auto') previousAction = { session: pet.session, action }
-      setStatus({ phase: 'action', lastDecision: label, message: (fallbackReason ? fallbackReason + ' · 本地回应 · ' : '最近决定 · ') + label })
+      const source = fallbackReason ? (trigger ? '本地回应' : '本地活动') : undefined
+      setStatus({ phase: 'action', lastDecision: label, source,
+        message: (source ? fallbackReason + ' · ' + source + ' · ' : '最近决定 · ') + label })
     })
   } catch (error) {
     if (startingRevision === revision) setStatus({ phase: 'error', message: error instanceof z.ZodError ? '模型或设备返回的参数格式不正确'

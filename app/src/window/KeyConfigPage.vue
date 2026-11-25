@@ -65,85 +65,97 @@ watch(
 
 <template>
   <PopBox ref="popBoxRef" />
-  <div class="container">
+  <div class="settings-window">
     <WindowTitle>
       <template #title>按键配置</template>
     </WindowTitle>
-    <div id="key-config-content">
-      <div class="div1">
-        <ConfigData />
+    <div id="key-config-content" class="settings-scroll">
+      <div class="key-config-main">
+        <section class="key-section mapping">
+          <h2>当前映射</h2>
+          <ConfigData />
+        </section>
+        <section class="key-section">
+          <h2>触发方式</h2>
+          <EventBox />
+        </section>
       </div>
-      <div class="div2">
-        <EventBox />
-      </div>
-      <div class="div3">
+      <section class="key-section function-section">
+        <h2>功能类型</h2>
         <FuncBox />
-      </div>
+      </section>
     </div>
     <div id="func-position" v-if="funcShow" @click.stop="closeFuncBox">
-      <router-view @click.stop=""></router-view>
+      <router-view class="function-editor" @click.stop=""></router-view>
     </div>
   </div>
 </template>
 
 <style lang="scss" scoped>
-#cover {
-  @include global.wh(98%, 98%);
-  @include global.ab_center;
-  @include global.style_common(15px, rgba(51, 51, 51, 0.2));
-  z-index: 998;
-}
-.container {
-  @include global.full_wh;
-  @include global.ab_center;
-  border: 6px solid rgba(15, 16, 23, 1);
-  border-radius: 2.5em;
-  overflow: hidden;
-  box-sizing: border-box;
-  padding: 10px;
-  z-index: 2;
-  color: var(--text-color-1);
-  // padding-bottom: 12px;
-  background-color: #d9c6c6;
-  background-image: linear-gradient(135deg, #d9c6c6 0%, #c9e0e5 87%, #cfdcdd 100%);
-  padding-bottom: 4em;
-  position: relative;
-}
 #key-config-content {
-  @include global.full_wh;
-  max-width: 950px;
-  max-height: 750px;
-  margin: 0 auto;
-  border-radius: 19px;
-  overflow: hidden;
-  @include global.grid_config(repeat(5, 1fr), repeat(6, 1fr), 15px, 16px);
-  > div {
-    @include global.style_common(9px, rgba(114, 106, 109, 0.2));
-  }
-  .div1 {
-    grid-area: 1 / 1 / 4 / 4;
-    padding: 15px;
-  }
-  .div2 {
-    grid-area: 4 / 1 / 7 / 4;
-    padding: 12px;
-    div {
-      @include global.full_wh;
-      // background: rgba(255, 255, 255, 0.7);
-      border-radius: 12px;
-    }
-  }
-  .div3 {
-    grid-area: 1 / 4 / 7 / 6;
-    padding: 12px;
-  }
+  width:100%;
+  flex:1;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(230px,.86fr);
+  gap:14px;
+  padding:16px;
+  background:var(--settings-canvas);
 }
-#func-position {
-  @include global.full_wh;
-  @include global.pos_ab;
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
-  @include global.style_common(10px, rgba(158, 170, 172, 0.3), 1px solid rgba(255, 255, 255, 0.18));
-  z-index: 88;
+.key-config-main { display:flex; flex-direction:column; min-width:0; align-self:start; border-radius:10px; background:var(--settings-surface); }
+.key-config-main > section + section { border-top:1px solid var(--settings-line); border-top-left-radius:0; border-top-right-radius:0; }
+.key-section { min-width:0; padding:14px; border-radius:10px; background:var(--settings-surface); }
+.key-section h2 { margin:0 0 10px; font-size:14px; font-weight:650; color:var(--settings-ink); }
+.mapping { display:flex; flex-direction:column; min-height:110px; }
+.function-section { display:flex; flex-direction:column; min-height:0; }
+#func-position { position:absolute; inset:0; background:#1c2e2873; z-index:88; }
+#func-position :deep(.function-editor) {
+  position:absolute;
+  top:50%;
+  left:50%;
+  transform:translate(-50%,-50%);
+  max-width:calc(100% - 36px);
+  max-height:calc(100% - 36px);
+  overflow:auto;
+  border:1px solid var(--settings-line);
+  border-radius:12px;
+  background:var(--settings-surface);
+  box-shadow:0 12px 34px #15272040;
+  color:var(--settings-ink);
+}
+#func-position :deep(.function-editor #commit-box),
+#func-position :deep(#comp-delay-content .div4) {
+  border:0;
+  border-radius:8px;
+  background:var(--settings-accent);
+  color:white;
+  font-size:14px;
+}
+#func-position :deep(#menu-func-content > div:not(#commit-box)),
+#func-position :deep(#comp-special),
+#func-position :deep(#delay-config-box) {
+  border-radius:8px;
+  background:var(--settings-group);
+  color:var(--settings-ink);
+  box-shadow:none;
+}
+#func-position :deep(#menu-func-content .isSelect) {
+  background:var(--settings-selected) !important;
+  color:var(--settings-accent) !important;
+  border-color:var(--settings-input-line) !important;
+}
+#func-position :deep(#media-key-content li) {
+  min-height:56px;
+  height:auto;
+  background:var(--settings-canvas);
+  border-radius:8px;
+  font-size:14px;
+}
+#func-position :deep(#pre-shortcuts-content #shortcuts-box) {
+  width:min(590px, 94%);
+  height:min(480px, 76vh);
+  border-radius:10px;
+}
+@media(max-width:620px) {
+  #key-config-content { grid-template-columns:1fr; gap:10px; padding:12px; }
 }
 </style>

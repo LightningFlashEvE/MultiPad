@@ -46,6 +46,8 @@ typedef struct {
     uint8_t kind, value, source, detail;
 } PetEvent;
 
+enum { PET_STATUS_OUT_OF_STOCK = 6 };
+
 enum { PET_EVENT_CAPACITY = 64, PET_EVENTS_PER_REPLY = 16, PET_API_CAPABILITY = 0x50 };
 
 bool pet_mode_is_active(void);
@@ -54,6 +56,8 @@ bool pet_mode_encoder_rotated(bool clockwise, bool pressed_detent);
 bool pet_mode_key_down(uint8_t key);
 void pet_mode_cycle_background(int8_t direction);
 void pet_mode_adjust_scene(int8_t direction, bool change_season);
+bool pet_mode_toggle_lamp(void);
+bool pet_mode_lamp_is_lit(void);
 void pet_mode_poll(void);
 
 /* USB diagnostics report the action, position and completed LCD frame count. */

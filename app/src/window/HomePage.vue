@@ -16,19 +16,16 @@ import type { DeviceButtons } from '../utils/deviceButtonState'
 import { createLiveScreens } from '../components/screenPage/liveScreens'
 import { renderScreenContent, type ScreenFrame } from '../components/screenPage/screenContent'
 import PetDisplay from '../components/screenPage/PetDisplay.vue'
-import PetStatSettings from '../components/screenPage/PetStatSettings.vue'
-import PetAiSettings from '../components/screenPage/PetAiSettings.vue'
 import PetAiActivity from '../components/homePage/PetAiActivity.vue'
 import PetHeadKnob from '../components/homePage/PetHeadKnob.vue'
-import PetItemsPanel from '../components/screenPage/PetItemsPanel.vue'
-import PetDecorationPanel from '../components/screenPage/PetDecorationPanel.vue'
-import PetShopPanel from '../components/screenPage/PetShopPanel.vue'
 import { createPetItemPreview, previewCare } from '../components/screenPage/petItemPreview'
 import PerformanceDisplay from '../components/screenPage/PerformanceDisplay.vue'
-import { petParameters, petParameterContent, petValue, petSeasons, petStats, type HutchPosition, type PetParameter, type PetState } from '../components/screenPage/petDisplay'
-import { invertPetEnergy, petActions, petActionLabels, petScenes, petSceneLabels, petRoomItems, petItems, petStateGeneration, petLampCommand, petLampGeneration, petLampInstalledFlag, isHutchPosition, defaultHutchPosition } from '../utils/petCatalog'
-import { furniturePositionValid, newPetWarehouse, petBuySnackCommand, petFruitIds, petFruitLabels, petFurniture, petMaxCoins, petMaxStock,
+import { petParameters, petParameterContent, petStats, type HutchPosition, type PetParameter, type PetState } from '../components/screenPage/petDisplay'
+import { invertPetEnergy, petScenes, petItems, petStateGeneration,
+  petLampCommand, petToggleLampCommand, petLampIsLit, petLampState, isHutchPosition, defaultHutchPosition } from '../utils/petCatalog'
+import { furniturePositionValid, newPetWarehouse, petBuySnackCommand, petFruitIds, petFruitLabels, petFruitStockMessage, petOutOfStockStatus, petFurniture, petMaxCoins, petMaxStock,
   petSnackPack, petSnackPrice, petStarterItems, petWarehouseBytes, readPetWarehouse, type PetFurnitureId, type PetPosition } from '../utils/petCatalog'
+import type { ParameterPair, PetSettingsAction, PetSettingsScreen, PetSettingsSnapshot } from '../utils/petSettings'
 
 const router = useRouter()
 const win = window as any
@@ -37,6 +34,7 @@ const menuStore = useMenuStore()
 const popBoxRef = ref<HTMLElement | null>(null)
 let liveTimer: ReturnType<typeof setInterval> | undefined
 let petTimer: ReturnType<typeof setInterval> | undefined
+let petMotionTimer: ReturnType<typeof setInterval> | undefined
 let petTask: Promise<void> | undefined
 let petSession: string | undefined
 let requestedMode: 'work' | 'pet' | undefined
@@ -59,27 +57,25 @@ const followClock = ref(false)
 const bedtime = ref(false)
 let pendingClock: boolean | undefined
 let nextClockRetry = 0
-const currentToy = computed(() => petRoomItems.find(item => item.wireId === petState.value.activeToy))
 let offlineHutch: HutchPosition = { ...defaultHutchPosition }
 let offlineLamp = false
+let offlineLampLit: boolean | undefined
 const offlineWarehouse = ref(newPetWarehouse())
 const warehouse = computed(() => petLinked.value ? petState.value.warehouse : offlineWarehouse.value)
 const offlineFurniture = { table: { ...petFurniture[1].position }, lamp: { ...petFurniture[2].position } } as Record<'table' | 'lamp', PetPosition>
 function saveWarehouse() {
   win.myApi.storageMenu('petWarehousePreview', JSON.stringify(offlineWarehouse.value))
 }
-type ParamPair = [PetParameter, PetParameter]
-const petParameterIds = ref<[ParamPair, ParamPair]>([['satiety','energy'], ['mood','affection']])
+const petParameterIds = ref<[ParameterPair, ParameterPair]>([['satiety','energy'], ['mood','affection']])
 const petImages = ref(['', ''])
 const performanceValues = ref<number[]>([])
 const performancePreview = ref<{ menu: number; values: number[] }>()
 const performanceUnavailable = ref(false)
-const petDialog = ref<HTMLDialogElement>()
-const petScreen = ref(0)
-const petTab = ref<'scene' | 'items' | 'decor' | 'shop' | 'ai' | 'stats'>('scene')
-const selectedItem = ref(1)
+const petSettingsView = ref<PetSettingsSnapshot['view']>()
 const isSleeping = computed(() => bedtime.value || (petLinked.value && generation.value < 3 && petState.value.action === 2))
-const clockText = computed(() => [petState.value.hour, petState.value.minute ?? 0].map(n => String(n).padStart(2, '0')).join(':'))
+let petSettingsRevision = 0
+let stopPetSettingsCommand: (() => void) | undefined
+let stopPetSettingsClose: (() => void) | undefined
 const pendingScene = new Map<number, number>()
 let offlineBackground: number | undefined
 const previewWorld = createPetItemPreview(() => petState.value, value => { bedtime.value = value }, () => {
@@ -87,6 +83,12 @@ const previewWorld = createPetItemPreview(() => petState.value, value => { bedti
   saveWarehouse()
 })
 const hasPetPayload = (p?: Uint8Array) => p && petStateGeneration(p) !== 0
+watch(() => petState.value.hour, (hour, previous) => {
+  if (!petLinked.value && petLampIsLit(hour) !== petLampIsLit(previous)) {
+    offlineLampLit = offlineLamp && petLampIsLit(hour)
+    petState.value.pendantLampLit = offlineLampLit
+  }
+}, { flush: 'sync' })
 watch(petLinked, linked => {
   if (!linked) {
     generation.value = 0
@@ -94,7 +96,8 @@ watch(petLinked, linked => {
     bedtime.value = false
     Object.assign(petState.value, { active: false, stats: { ...(petState.value.stats ?? previewCare) }, activeToy: 0, toyPhase: 0, action: 1,
       deployedToys: [0, 0], foods: [], toyDrop: 100, queue: 0, fruit: 0, headPatRemaining: 0, hutchPosition: { ...offlineHutch },
-      tablePosition: offlineFurniture.table, lampPosition: offlineFurniture.lamp, pendantLamp: offlineLamp })
+      tablePosition: offlineFurniture.table, lampPosition: offlineFurniture.lamp, pendantLamp: offlineLamp,
+      pendantLampLit: offlineLampLit, pendantLampManual: undefined })
   }
 })
 
@@ -122,6 +125,7 @@ function applyPetReply(reply: { session?: string; payload: Uint8Array }) {
   petNotice.value = ''
   generation.value = petStateGeneration(p)
   const savedInventory = readPetWarehouse(p, generation.value)
+  const lamp = petLampState(p[27], p[9])
   const ageOffset = p.length - 3 - (savedInventory ? petWarehouseBytes : 0)
   const world = generation.value >= 3
   const decorationOffset = 33 + 6 * p[32]
@@ -139,7 +143,7 @@ function applyPetReply(reply: { session?: string; payload: Uint8Array }) {
     stats: p.length >= 19 ? { satiety: p[12], energy: invertPetEnergy(p[13]), mood: p[14], affection: p[15] } : undefined,
     scene: p.length >= 19 ? p[16] : 0,
     activeToy: p[17] ?? 0, toyPhase: p[18] ?? 0,
-    pendantLamp: generation.value >= petLampGeneration && Boolean(p[27] & petLampInstalledFlag),
+    pendantLamp: lamp.installed, pendantLampLit: lamp.lit, pendantLampManual: lamp.manual,
     tablePosition: savedInventory?.table, lampPosition: savedInventory?.lamp, warehouse: savedInventory?.warehouse,
     hutchPosition: generation.value >= 4 ? { x: p[decorationOffset] | p[decorationOffset + 1] << 8, y: p[decorationOffset + 2] } : undefined,
     rabbitY: generation.value >= 4 ? p[decorationOffset + 3] : undefined,
@@ -183,15 +187,14 @@ async function syncClock() {
   else nextClockRetry = Date.now() + 5000
 }
 
-function setFollowClock(event: Event) {
-  const input = event.target as HTMLInputElement
-  pendingClock = input.checked
+function setFollowClock(checked: boolean) {
+  pendingClock = checked
   pendingScene.delete(4)
   nextClockRetry = 0
   if (!petLinked.value) {
     followClock.value = pendingClock
     showOfflineTime()
-  } else input.checked = followClock.value
+  }
   saveSceneSettings()
   refreshPetDevice()
 }
@@ -280,14 +283,11 @@ function saveSceneSettings() {
   win.myApi.storageMenu('petSceneSettings', JSON.stringify({ hour, season, scene, offlineBackground, followClock: followClock.value, pendingClock }))
 }
 
-function setScene(command: 4 | 5 | 6, event: Event) {
+function setScene(command: 4 | 5 | 6, value: number) {
   if (command === 4 && followClock.value) return
-  const select = event.target as HTMLSelectElement
-  const value = Number(select.value)
   interactionNotice.value = ''
   if (command === 6) {
     if (petLinked.value) {
-      select.value = String(petState.value.scene)
       offlineBackground = undefined
     } else {
       previewWorld.changeScene(value)
@@ -310,6 +310,8 @@ async function interactWithPet(command: number, value: number) {
   const session = petSession
   let applied = false
   await petTask
+  const fruitId = command === 2 ? value : command === 12 ? bindings.value?.[value] ?? 0 : 0
+  const snack = petFruitIds[fruitId - 1]
   if (stat && session !== petSession) {
     interacting.value = false
     interactionNotice.value = '键盘连接已变化，请重新确认数值。'
@@ -319,7 +321,7 @@ async function interactWithPet(command: number, value: number) {
     if (conState.value) interactionNotice.value = petNotice.value || '等待读取键盘的宠物状态。'
     else if (command === 8) interactionNotice.value = '连接键盘后即可绑定道具。'
     else if (command === 6) previewWorld.changeScene(value)
-    else if (command === 2 && !offlineWarehouse.value.snacks[value - 1]) interactionNotice.value = '背包里没有这种零食。'
+    else if (snack && offlineWarehouse.value.snacks[fruitId - 1] === 0) interactionNotice.value = petFruitStockMessage(snack)
     else {
       const previewError = previewWorld.use(command, value)
       applied = !previewError
@@ -335,8 +337,10 @@ async function interactWithPet(command: number, value: number) {
       }
       if (!previewError && command === petLampCommand) {
         offlineLamp = value === 1
+        offlineLampLit = petState.value.pendantLampLit
         win.myApi.storageMenu('petPendantLampPreview', JSON.stringify(offlineLamp))
       }
+      if (!previewError && command === petToggleLampCommand) offlineLampLit = petState.value.pendantLampLit
     }
     interacting.value = false
     return applied
@@ -359,6 +363,7 @@ async function interactWithPet(command: number, value: number) {
         applied = petState.value.pendantLamp === (value === 1)
         interactionNotice.value = applied ? (value ? '已安装挂灯。' : '已收起挂灯。') : '键盘尚未确认挂灯设置。'
       }
+      if (command === petToggleLampCommand) interactionNotice.value = petState.value.pendantLampLit ? '已开灯。' : '已关灯。'
       if (command === 14) {
         const position = petState.value.hutchPosition
         interactionNotice.value = position && (position.x | (position.y << 9)) === value
@@ -371,6 +376,17 @@ async function interactWithPet(command: number, value: number) {
           ? 'K' + (key + 1) + (item ? ' 已绑定' + petItems.find(entry => entry.itemId === item)?.label : ' 已解除道具绑定')
           : '键盘尚未确认此绑定。'
       }
+    } else if (snack && result.state === 'ready' && (result.status === petOutOfStockStatus || result.status === 4)) {
+      let outOfStock = result.status === petOutOfStockStatus
+      if (!outOfStock && warehouse.value) {
+        // Older warehouse firmware used the same status for a full floor and an empty stock.
+        const fresh = await win.myApi.petAction(0)
+        if (fresh.state === 'ready' && fresh.status === 0 && fresh.session === session && hasPetPayload(fresh.payload)) {
+          applyPetReply(fresh)
+          outOfStock = warehouse.value?.snacks[fruitId - 1] === 0
+        }
+      }
+      interactionNotice.value = outOfStock ? petFruitStockMessage(snack) : '兔子正在忙，请稍后再试。'
     } else if (stat) interactionNotice.value = '键盘未确认保存，请检查连接后重试。'
     else if (command === 14) interactionNotice.value = '兔窝位置未保存，请检查键盘连接或稍后再试。'
     else interactionNotice.value = result.status === 4 || result.state === 'busy'
@@ -397,25 +413,88 @@ watch(() => JSON.stringify([appMode.value, petLinked.value, petState.value.activ
     if (!stale) petImages.value = images
   })
 
-function configurePetScreen(screen: number, key?: number) {
-  petScreen.value = screen
-  interactionNotice.value = ''
-  petTab.value = key === undefined ? 'scene' : 'items'
-  if (key !== undefined) selectedItem.value = bindings.value?.[key] || 1
-  petDialog.value?.showModal()
+function petSettingsSnapshot(): PetSettingsSnapshot | undefined {
+  if (!petSettingsView.value) return
+  const snapshot: PetSettingsSnapshot = {
+    view: petSettingsView.value, state: petState.value, petMode: appMode.value === 'pet', generation: generation.value,
+    connected: petLinked.value, session: petSession, legacy: legacyPet.value,
+    busy: appMode.value !== 'pet' || interacting.value || progressShow.value || firmwareUpdating.value || conState.value && !petLinked.value,
+    followClock: followClock.value, sleeping: isSleeping.value, status: interactionNotice.value || petNotice.value,
+    bindings: bindings.value, warehouse: warehouse.value, parameters: petParameterIds.value, previews: petImages.value
+  }
+  return JSON.parse(JSON.stringify(snapshot))
 }
 
-function setPetParameter(row: number, event: Event) {
-  const pair = petParameterIds.value[petScreen.value - 1]
-  const selected = (event.target as HTMLSelectElement).value as PetParameter
+watch(petSettingsSnapshot, snapshot => {
+  if (snapshot) win.myApi.updatePetSettings(snapshot)
+})
+
+function configurePetScreen(screen: number, key?: number) {
+  if (screen !== 0 && screen !== 1 && screen !== 2) return
+  interactionNotice.value = ''
+  petSettingsView.value = { screen, tab: key === undefined ? 'scene' : 'items',
+    selectedItem: key === undefined ? 1 : bindings.value?.[key] || 1, revision: ++petSettingsRevision }
+  void win.myApi.openPetSettings(petSettingsSnapshot()).catch(() => {
+    petSettingsView.value = undefined
+    XBox.popMes('无法打开宠物设置。')
+  })
+}
+
+function setPetParameter(screen: Exclude<PetSettingsScreen, 0>, row: number, selected: PetParameter) {
+  const pair = petParameterIds.value[screen - 1]
   if (pair[1 - row] === selected) pair[1 - row] = pair[row]
   pair[row] = selected
   win.myApi.storageMenu('petScreenParameters', JSON.stringify(petParameterIds.value))
 }
 
+async function runPetSettingsCommand(action: PetSettingsAction) {
+  if (action[0] === 'clear-notice') { interactionNotice.value = ''; return true }
+  if (appMode.value !== 'pet' || !petSettingsView.value) return false
+  switch (action[0]) {
+    case 'interact': {
+      const [, command, value] = action
+      if (![3, 6, 8, 11, 15, 23, 24, 25, 26, petLampCommand].includes(command) || !Number.isInteger(value)) return false
+      return await interactWithPet(command, value) === true
+    }
+    case 'scene': {
+      const [, command, value] = action
+      const max = command === 4 ? 23 : command === 5 ? 3 : command === 6 ? 1 : -1
+      if (!Number.isInteger(value) || value < 0 || value > max) return false
+      setScene(command, value)
+      return true
+    }
+    case 'follow-clock':
+      if (typeof action[1] !== 'boolean') return false
+      setFollowClock(action[1])
+      return true
+    case 'parameter': {
+      const [, screen, row, parameter] = action
+      if ((screen !== 1 && screen !== 2) || (row !== 0 && row !== 1) ||
+          !petParameters.some(entry => entry.id === parameter)) return false
+      setPetParameter(screen, row, parameter)
+      return true
+    }
+    case 'move':
+      if (!action[2] || typeof action[2] !== 'object') return false
+      moveFurniture(action[1], action[2])
+      return true
+    case 'buy': await buySnack(action[1]); return true
+    case 'use': useItem(action[1]); return true
+    case 'toggle-lamp': togglePetLamp(); return true
+  }
+  return false
+}
+
 function useItem(id: number) {
   const item = petItems.find(entry => entry.itemId === id)
   if (item) void triggerItem(item)
+}
+
+function togglePetLamp() {
+  const state = petState.value
+  if (!state.pendantLamp) { XBox.popMes('先在装修里安装挂灯。'); return }
+  if (petLinked.value && !state.pendantLampManual) { XBox.popMes('请升级键盘固件以手动开关挂灯。'); return }
+  void interactWithPet(petToggleLampCommand, 0)
 }
 
 function moveFurniture(id: PetFurnitureId, position: PetPosition) {
@@ -501,6 +580,13 @@ const test = async () => {
 }
 
 onMounted(async () => {
+  stopPetSettingsClose = win.myApi.onPetSettingsClosed(() => { petSettingsView.value = undefined })
+  stopPetSettingsCommand = win.myApi.onPetSettingsCommand((id: number, action: PetSettingsAction) => {
+    void runPetSettingsCommand(action).then(
+      applied => win.myApi.finishPetSettingsCommand(id, applied),
+      () => win.myApi.finishPetSettingsCommand(id, false)
+    )
+  })
   // 获取解析菜单
   let jsonStr = await win.myApi.getMenu('configData')
   if(jsonStr != '' && jsonStr != undefined && jsonStr != null)
@@ -537,6 +623,7 @@ onMounted(async () => {
     }
   } catch { /* Use the default layout for a new local preview. */ }
   offlineLamp = await win.myApi.getMenu('petPendantLampPreview').catch(() => undefined) === 'true'
+  offlineLampLit = undefined
   if (!petLinked.value) petState.value.pendantLamp = offlineLamp
   try {
     const saved = JSON.parse(await win.myApi.getMenu('petWarehousePreview') || 'null')
@@ -596,6 +683,9 @@ onMounted(async () => {
   if (hasPerformanceScreens()) void samplePerformance()
   refreshPetDevice()
   petTimer = setInterval(refreshPetDevice, 700)
+  petMotionTimer = setInterval(() => {
+    if (petLinked.value && petState.value.active && petState.value.action === 6) refreshPetDevice()
+  }, 120)
   window.addEventListener('focus', refreshPetDevice)
   // 主页面监听
   win.myApi.storeChangeListen((objData) => {
@@ -662,12 +752,15 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  stopPetSettingsCommand?.()
+  stopPetSettingsClose?.()
   window.removeEventListener('focus', refreshPetDevice)
   clearInterval(liveTimer)
   liveScreens.cancelPetRefresh()
   clearTimeout(workSyncTimer)
   workSyncReady = false
   clearInterval(petTimer)
+  clearInterval(petMotionTimer)
   previewWorld.reset()
   clearInterval(screenPoll)
   clearInterval(buttonPoll)
@@ -1024,8 +1117,11 @@ async function readDeviceButtons() {
 
   const knobMask = 1 << 10
   const knobWasHeld = Boolean(heldButtons.value & knobMask)
+  const smallKnob2 = 1 << 9
+  const smallKnobReleased = ((heldButtons.value | result.pressed) & smallKnob2) && !(result.held & smallKnob2)
   heldButtons.value = result.held
-  if (generation.value >= 6 && appMode.value === 'pet' && (knobWasHeld || (result.held & knobMask))) refreshPetDevice()
+  if (generation.value >= 6 && appMode.value === 'pet' &&
+      (knobWasHeld || (result.held & knobMask) || smallKnobReleased)) refreshPetDevice()
   for (let index = 0; index < 11; index++) {
     const bit = 1 << index
     if (!(result.pressed & bit)) continue
@@ -1096,7 +1192,7 @@ const showAppInfo = () => {
         <button class="rotary" :class="{ 'device-active': isDeviceButtonActive(8) }"
           type="button" :title="appMode === 'pet' ? '宠物时间设置' : '配置旋钮 1'" @click.stop="appMode === 'pet' ? configurePetScreen(0) : openConfigWindow(8)">旋钮 1</button>
         <button class="rotary" :class="{ 'device-active': isDeviceButtonActive(9) }"
-          type="button" :title="appMode === 'pet' ? '宠物季节与场景' : '配置旋钮 2'" @click.stop="appMode === 'pet' ? configurePetScreen(0) : openConfigWindow(9)">旋钮 2</button>
+          type="button" :title="appMode === 'pet' ? '手动开关挂灯' : '配置旋钮 2'" @click.stop="appMode === 'pet' ? togglePetLamp() : openConfigWindow(9)">旋钮 2</button>
       </div>
       <div class="screen-panel">
         <button v-for="(label, index) in screenLabels" :key="label" class="screen-card" type="button"
@@ -1145,93 +1241,7 @@ const showAppInfo = () => {
         :class="{ 'device-active': isDeviceButtonActive(10) }"
         @click.stop="openConfigWindow(10)">旋钮 3</button>
     </div>
-    <dialog ref="petDialog" class="pet-dialog" :class="{ 'param-dialog': petScreen > 0 }">
-      <form method="dialog">
-        <header>
-          <h2>{{ petScreen === 0 ? '宠物设置' : screenLabels[petScreen] + ' · 宠物参数' }}</h2>
-          <button type="submit">完成</button>
-        </header>
-        <template v-if="petScreen === 0">
-          <nav class="pet-tabs" aria-label="宠物设置">
-            <button v-for="tab in ([['scene','场景与作息'],['stats','属性数值'],['items','道具'],['decor','装修'],['shop','商店'],['ai','AI 控制']] as const)" :key="tab[0]"
-              type="button" :aria-pressed="petTab === tab[0]" @click="petTab = tab[0]; interactionNotice = ''">{{ tab[1] }}</button>
-          </nav>
-          <PetAiSettings v-if="petTab === 'ai'" :device-ready="petLinked && petState.active" />
-          <PetStatSettings v-else-if="petTab === 'stats'" :key="petLinked ? petSession : 'preview'"
-            :stats="petState.stats" :connected="petLinked" :supported="!petLinked || generation >= 10"
-            :busy="interacting || progressShow || firmwareUpdating || (conState && !petLinked)"
-            :save="interactWithPet" />
-          <PetDecorationPanel v-else-if="petTab === 'decor'" :state="petState" :connected="petLinked" :generation="generation" :warehouse="warehouse"
-            :busy="interacting || (conState && !petLinked)" @enter="interactWithPet(6, 1)"
-            @lamp="installed => interactWithPet(petLampCommand, Number(installed))"
-            @move="moveFurniture" @rest="interactWithPet(15, 0)" @inspect="interactWithPet(3, 14)" />
-          <PetShopPanel v-else-if="petTab === 'shop'" :warehouse="warehouse" :linked="petLinked"
-            :busy="interacting || (conState && !petLinked)" @buy="buySnack" />
-          <PetItemsPanel v-else-if="petTab === 'items'" :selected="selectedItem" :bindings="bindings" :generation="generation"
-            :connected="petLinked" :busy="interacting" :occupied="!!currentToy" :scene="petState.scene"
-            :deployed-toys="petState.deployedToys" :toy-drop="petState.toyDrop" :food-count="petState.foods?.length ?? 0"
-            :full="petState.stats?.satiety === 100" :warehouse="warehouse" @play="id => interactWithPet(11, id)"
-            @select="id => { selectedItem = id; interactionNotice = '' }"
-            @bind="(key, id) => interactWithPet(8, (key << 4) | id)" @use="useItem" />
-          <div v-else class="scene-settings">
-            <section>
-              <PetDisplay :state="petState" :connected="petLinked && petState.active" />
-              <dl class="pet-stats" aria-label="宠物属性，满值一百">
-                <div v-for="stat in petStats" :key="stat.id">
-                  <dt>{{ stat.label }}</dt><dd>{{ petValue(stat.id, petState) }}</dd>
-                </div>
-              </dl>
-              <div class="pet-fields" role="group" aria-label="宠物互动">
-                <button type="button" :disabled="interacting || !!petState.fruit || (petLinked && generation < 3 && !!currentToy)"
-                  @click="interactWithPet(3, isSleeping ? 0 : 2)">{{ isSleeping ? '叫醒' : '睡觉' }}</button>
-                <button v-for="action in (['trip_angry', 'gaze_owner', 'stand_watch', 'binky', 'groom_fur', 'groom_ear'] as const)" :key="action"
-                  type="button" :disabled="legacyPet || interacting || !!currentToy || (petLinked && ((action === 'stand_watch' && generation < 7) || (action === 'binky' && generation < 8) || ((action === 'groom_fur' || action === 'groom_ear') && generation < 9)))"
-                  @click="interactWithPet(3, petActions.indexOf(action))">{{ petActionLabels[action] }}</button>
-              </div>
-            </section>
-            <section class="scene-controls">
-              <label>宠物场景
-                <select :value="petState.scene" :disabled="legacyPet" @change="setScene(6, $event)">
-                  <option v-for="(scene, index) in petScenes" :key="scene" :value="index">{{ petSceneLabels[scene] }}</option>
-                </select>
-              </label>
-              <label>场景季节
-                <select :value="petState.season" @change="setScene(5, $event)">
-                  <option v-for="(name, index) in petSeasons" :key="name" :value="index">{{ name }}</option>
-                </select>
-              </label>
-              <label class="follow-clock"><input type="checkbox" :checked="followClock"
-                :disabled="interacting || (petLinked && generation < 3)" @change="setFollowClock">跟随现实时间</label>
-              <label v-if="!followClock">场景时间
-                <select :value="petState.hour" @change="setScene(4, $event)">
-                  <option v-for="n in 24" :key="n" :value="n - 1">{{ String(n - 1).padStart(2, '0') }}:00</option>
-                </select>
-              </label>
-              <p v-else class="clock-readout">场景时间 <time>{{ clockText }}</time></p>
-              <p class="knob-hint">小旋钮 1 调时间，小旋钮 2 调季节。<template v-if="!petLinked || generation >= 3">按住小旋钮 2 转动可切换背景。</template></p>
-              <p v-if="petLinked && generation < 3">升级键盘固件即可启用跟随现实时间。</p>
-              <p v-else-if="followClock">连接软件时校准为电脑本地时间。</p>
-            </section>
-          </div>
-          <p v-if="petTab !== 'ai' && currentToy" role="status">{{ petState.toyPhase === 1 ? '正在走向' : '正在使用' }}{{ currentToy.label }}</p>
-          <p v-if="interactionNotice || petNotice" role="status">{{ interactionNotice || petNotice }}</p>
-          <p v-else-if="petTab === 'scene' && legacyPet">升级键盘固件即可启用新动作、场景玩具和宠物属性。</p>
-          <p v-else-if="petTab === 'scene' && !petLinked">本机预览 · 连接后显示键盘上的宠物和属性。</p>
-        </template>
-        <template v-else>
-          <img class="oled-sample" v-if="petImages[petScreen - 1]" :src="petImages[petScreen - 1]" alt="双参数小屏预览">
-          <div class="param-fields">
-            <label v-for="row in 2" :key="row">{{ row === 1 ? '第一行' : '第二行' }}
-              <select :value="petParameterIds[petScreen - 1][row - 1]" @change="setPetParameter(row - 1, $event)">
-                <option v-for="option in petParameters" :key="option.id" :value="option.id"
-                  :disabled="legacyPet && petStats.some(stat => stat.id === option.id)">{{ option.label }}</option>
-              </select>
-            </label>
-          </div>
-          <p v-if="legacyPet">升级键盘固件即可显示宠物属性。</p>
-        </template>
-      </form>
-    </dialog>
+
   </div>
 </template>
 
@@ -1240,33 +1250,6 @@ const showAppInfo = () => {
 .home-toolbar .mode-switch button { padding: 5px 7px; border: 0; border-radius: 6px; font-size: 13px; white-space: nowrap; color: #263d46; background: transparent; cursor: pointer; }
 .home-toolbar .mode-switch button[aria-pressed="true"] { color: white; background: #263d46; }
 .mode-status { grid-column: 1 / -1; align-self: center; font-size: 12px; color: #405058; }
-.pet-dialog { box-sizing: border-box; width: min(640px, 96%); max-height: calc(100vh - 28px); overflow: auto; margin: auto; padding: 18px; color: #24323a; border: 1px solid #aab7bd; border-radius: 14px; background: #f7fafb; }
-.pet-dialog.param-dialog { width: min(330px, 94%); }
-.pet-tabs { display:flex; flex-wrap:wrap; gap:4px; margin:0 0 14px; padding-bottom:8px; border-bottom:1px solid #d3dfdd; }
-.pet-tabs button[aria-pressed=true] { color:#215447; background:#deede7; border-color:#73998e; }
-.scene-settings { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(0,1fr); gap:16px; }
-.scene-controls,.param-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; align-content:start; }
-.scene-controls .follow-clock { display:flex; align-items:center; gap:6px; grid-column:1/-1; margin-top:3px; }
-.scene-controls .clock-readout,.scene-controls p { grid-column:1/-1; }
-.scene-controls .clock-readout { display:flex; justify-content:space-between; padding:6px 8px; background:#e7efed; border-radius:5px; }
-.scene-controls time { font-variant-numeric:tabular-nums; }
-.scene-controls .knob-hint { line-height:1.5; }
-.oled-sample { width:144px; height:80px; display:block; margin:4px auto 14px; image-rendering:pixelated; background:#000; }
-@media(max-width:500px) { .scene-settings { grid-template-columns:1fr; } }
-.pet-dialog::backdrop { background: #15222d80; }
-.pet-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
-.pet-dialog h2 { margin: 0; font-size: 18px; }
-.pet-dialog canvas { width: 100%; height: auto; border-radius: 8px; }
-.pet-fields { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-top: 12px; }
-.pet-stats { display: grid; grid-template-columns: repeat(4, 1fr); margin: 10px 0 0; padding: 8px 10px; border-radius: 7px; background: #e7efed; }
-.pet-stats dt { color: #4d625c; font-size: 12px; }
-.pet-stats dd { margin: 2px 0 0; font-size: 16px; font-variant-numeric: tabular-nums; }
-.pet-stats small { color: #52665f; font-size: 10px; }
-.pet-dialog label { display: grid; gap: 4px; font-size: 13px; }
-.pet-dialog button, .pet-dialog select { font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid #aab7bd; background: white; color: inherit; }
-.pet-dialog button { cursor: pointer; }
-.pet-dialog :disabled { opacity: .55; cursor: default; }
-.pet-dialog p { margin: 8px 0 0; font-size: 12px; }
 #app-info {
   @include global.full_wh;
   @include global.pos_ab;

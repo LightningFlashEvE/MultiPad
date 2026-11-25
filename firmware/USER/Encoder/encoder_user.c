@@ -94,19 +94,26 @@ static void keyboard_menu_change(void) {
  *  4 -> 按下左旋
  *  5 -> 按下右旋
 ********************************************************************************/
-static bool handle_small_pet_encoder(uint8_t event, uint8_t button, bool *pet_pressed) {
+typedef struct { bool claimed, turned; } PetEncoderPress;
+
+static bool handle_small_pet_encoder(uint8_t event, uint8_t button, PetEncoderPress *press) {
     const bool active = pet_mode_is_active();
     const bool right = button == 9;
     if (event == ENCODER_DOWN || event == ENCODER_UP) {
         button_readback_record(button, event == ENCODER_DOWN);
-        if (event == ENCODER_DOWN) *pet_pressed = active;
-        const bool claimed = *pet_pressed;
-        if (event == ENCODER_UP) *pet_pressed = false;
+        if (event == ENCODER_DOWN) {
+            *press = (PetEncoderPress){.claimed = active};
+            return active;
+        }
+        const bool claimed = press->claimed;
+        if (right && active && claimed && !press->turned) pet_mode_toggle_lamp();
+        *press = (PetEncoderPress){0};
         return claimed;
     }
     if (event == DOWN_ANTICLOCKWISE || event == UP_CLOCKWISE) {
-        if (right && active && *pet_pressed) pet_mode_cycle_background(event == UP_CLOCKWISE ? 1 : -1);
-        return active || *pet_pressed;
+        if (press->claimed) press->turned = true;
+        if (right && active && press->claimed) pet_mode_cycle_background(event == UP_CLOCKWISE ? 1 : -1);
+        return active || press->claimed;
     }
     if (active && (event == ANTICLOCKWISE || event == CLOCKWISE)) {
         // The left encoder's physical direction is reversed for the pet clock.
@@ -114,12 +121,12 @@ static bool handle_small_pet_encoder(uint8_t event, uint8_t button, bool *pet_pr
         pet_mode_adjust_scene(forward ? 1 : -1, right);
         return true;
     }
-    return *pet_pressed;
+    return press->claimed;
 }
 
 // 编码器 1
 void encoder1_callback(uint8_t encoder_value) {
-    static bool pet_pressed;
+    static PetEncoderPress pet_pressed;
     if (handle_small_pet_encoder(encoder_value, 8, &pet_pressed)) return;
     if (encoder_value == DOWN_ANTICLOCKWISE) {
         menu_sign_p->menu_index = menu_sign_p->menu_index == 0 ? 9 : menu_sign_p->menu_index - 1;
@@ -136,7 +143,7 @@ void encoder1_callback(uint8_t encoder_value) {
 
 // 编码器 2
 void encoder2_callback(uint8_t encoder_value) {
-    static bool pet_pressed;
+    static PetEncoderPress pet_pressed;
     if (handle_small_pet_encoder(encoder_value, 9, &pet_pressed)) return;
     parse_json_value(ENCODER_EVENT_NUM + encoder_value + 16);
 }

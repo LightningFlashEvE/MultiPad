@@ -1,6 +1,7 @@
 import type { PetState } from './petDisplay'
 import { isStatValue, petStats, binkyChance, binkyDuration, binkyMotion, defaultHutchPosition, isHutchPosition, petFurniture,
-  petCareGraceMs, petUnattendedDecayMs, petLampCommand, petDaydreamMs, petGazeOwnerMs, petAutoSleepIdleMs, petAutoSleepEnergy, petRecoveredEnergy } from '../../utils/petCatalog'
+  petRunBoundary, petRunDurationMs, petRunFacing, petRunPosition,
+  petCareGraceMs, petUnattendedDecayMs, petSleepRecoveryMs, petLampCommand, petToggleLampCommand, petLampIsLit, petDaydreamMs, petGazeOwnerMs, petAutoSleepIdleMs, petAutoSleepEnergy, petRecoveredEnergy } from '../../utils/petCatalog'
 
 export const previewCare = { satiety: 65, energy: 75, mood: 70, affection: 35 }
 type Food = { id: number; x: number; droppedAt: number }
@@ -88,6 +89,15 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     startActivity(1, bedtime, gardenFood, automatic ? petRecoveredEnergy : 95)
   }
 
+  function updateEnergy(sleeping: boolean, dt: number) {
+    if (wasSleeping !== sleeping) energyMs = 0
+    wasSleeping = sleeping
+    energyMs += dt
+    const interval = sleeping ? petSleepRecoveryMs : 60_000
+    const steps = Math.floor(energyMs / interval)
+    if (steps) { reward(0, sleeping ? steps : -steps, 0, 0); energyMs %= interval }
+  }
+
   function updateCare(pet: PetState, stats: typeof previewCare, dt: number) {
     if (bondDeclining(stats)) {
       bondMs += dt
@@ -96,13 +106,7 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
         reward(0, 0, 0, -1)
       }
     }
-    const sleeping = pet.action === 2
-    if (wasSleeping !== sleeping) energyMs = 0
-    wasSleeping = sleeping
-    energyMs += dt
-    const interval = sleeping ? 20_000 : 60_000
-    const steps = Math.floor(energyMs / interval)
-    if (steps) { reward(0, sleeping ? steps : -steps, 0, 0); energyMs %= interval }
+    updateEnergy(pet.action === 2 && !!play?.bedtime, dt)
     if (!pet.headPatRemaining) {
       if (pet.action === 1 || pet.action === 5) exerciseMs += dt
       if ([6, 7, 9, 15].includes(pet.action)) exerciseMs += 2 * dt
@@ -126,11 +130,14 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     pet.headPatRemaining = Math.max(0, patUntil - time)
     const unattended = time - lastOwnerInput >= petCareGraceMs
     if (unattended) {
-      metabolism = energyMs = exerciseMs = bondMs = 0
+      const sleeping = pet.action === 2 && !!play?.bedtime
+      metabolism = exerciseMs = bondMs = 0
+      if (sleeping) updateEnergy(true, dt)
+      else energyMs = 0
       unattendedMs += dt
       if (unattendedMs >= petUnattendedDecayMs) {
         unattendedMs -= petUnattendedDecayMs
-        reward(-1, -1, -1, -1)
+        reward(-1, sleeping ? 0 : -1, -1, -1)
       }
     } else {
       unattendedMs = 0
@@ -168,6 +175,12 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
       pet.facing = danceDirection * motion.facing
       pet.actionAgeMs = age
     } else if (gesture?.action === 13) pet.actionAgeMs = time + 3875 - gesture.until
+    else if (gesture?.action === 6 && !food) {
+      const facing = pet.facing ?? 1
+      pet.x = petRunPosition(pet.x, facing, dt)
+      pet.actionAgeMs = time + petRunDurationMs - gesture.until
+      if (pet.x === petRunBoundary(facing)) gesture = undefined
+    }
     if (gesture && (food || time >= gesture.until)) {
       if (!food && gesture.action === 11) reward(0, -1, -4, 0)
       gesture = undefined
@@ -279,6 +292,13 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     } else if (command === petLampCommand) {
       if (value !== 0 && value !== 1) return '无法识别挂灯设置。'
       pet.pendantLamp = value === 1
+      pet.pendantLampLit = pet.pendantLamp && petLampIsLit(pet.hour)
+      update()
+      return ''
+    } else if (command === petToggleLampCommand) {
+      if (value !== 0 || !pet.pendantLamp) return '先在装修里安装挂灯。'
+      pet.pendantLampLit = !(pet.pendantLampLit ?? petLampIsLit(pet.hour))
+      lastOwnerInput = time
       update()
       return ''
     } else if (command === 22) {
@@ -333,9 +353,13 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
         startActivity(3)
       } else if (value === 2) {
         if (!play?.bedtime) visitHutch(true)
+      } else if (value === 6) {
+        play = undefined
+        pet.facing = petRunFacing(pet.x, pet.facing ?? 1)
+        gesture = { action: 6, until: time + petRunDurationMs }
       } else {
         play = undefined
-        gesture = value === 0 ? undefined : { action: value, until: time + (value === 8 ? petDaydreamMs : value === 12 ? petGazeOwnerMs : value === 17 ? 3000 : value === 16 ? 2500 : value === 13 ? 3875 : value === 7 ? 500 : value === 6 || value === 9 ? 2300 : 2050) }
+        gesture = value === 0 ? undefined : { action: value, until: time + (value === 8 ? petDaydreamMs : value === 12 ? petGazeOwnerMs : value === 17 ? 3000 : value === 16 ? 2500 : value === 13 ? 3875 : value === 7 ? 500 : value === 9 ? 2300 : 2050) }
       }
     }
     lastOwnerInput = lastInput = time

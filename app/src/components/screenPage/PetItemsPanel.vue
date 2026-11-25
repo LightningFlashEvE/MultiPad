@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { petItems, petOwnedCarrot, type PetWarehouse } from '../../utils/petCatalog'
+import { petItems, petFruitIds, petFruitStockMessage, petOwnedCarrot, type PetWarehouse } from '../../utils/petCatalog'
 
 const props = defineProps<{
   selected: number
@@ -36,8 +36,11 @@ const targetScene = computed(() => selectedItem.value.id === 'rabbit_hutch' ? 1 
 const deployed = computed(() => props.deployedToys?.[targetScene.value] ?? 0)
 const visiting = computed(() => independentHutch.value && selectedItem.value.kind === 'decoration')
 const placed = computed(() => !visiting.value && selectedItem.value.kind !== 'fruit' && deployed.value === selectedItem.value.wireId)
+const selectedSnack = computed(() => petFruitIds[selectedItem.value.itemId - 1])
+const stockNotice = computed(() => selectedSnack.value && props.warehouse?.snacks[selectedItem.value.itemId - 1] === 0
+  ? petFruitStockMessage(selectedSnack.value) : '')
 const canUse = computed(() => available.value && !props.busy && (placement.value || !props.occupied) &&
-  (selectedItem.value.kind !== 'fruit' || props.foodCount < 8 && (props.warehouse?.snacks[selectedItem.value.itemId - 1] ?? 1) > 0))
+  (selectedItem.value.kind !== 'fruit' || props.foodCount < 8 && !stockNotice.value))
 const useLabel = computed(() => {
   const item = selectedItem.value
   if (item.kind === 'fruit') return '投喂' + item.label
@@ -70,6 +73,7 @@ const boundLabel = (id: number) => petItems.find(item => item.itemId === id)?.la
         <button type="button" class="use" :disabled="!canUse" @click="emit('use', selectedItem.itemId)">{{ useLabel }}</button>
       </div>
       <p class="description">{{ selectedItem.description }}</p>
+      <p v-if="stockNotice" class="stock-notice" role="status">{{ stockNotice }}</p>
       <button v-if="placement && placed && targetScene === scene" type="button" class="repeat"
         :disabled="busy || occupied || (toyDrop ?? 100) < 100" @click="emit('play', selectedItem.wireId)">再玩一次</button>
       <p v-if="selectedItem.kind === 'fruit' && placement" class="capacity">
@@ -91,7 +95,8 @@ const boundLabel = (id: number) => petItems.find(item => item.itemId === id)?.la
 </template>
 
 <style scoped>
-.inventory { display:grid; grid-template-columns:minmax(154px,.8fr) minmax(0,1.35fr); gap:18px; }
+.inventory { display:grid; grid-template-columns:minmax(205px,.92fr) minmax(0,1.08fr); gap:12px; }
+.catalog,.detail { min-width:0; padding:12px; background:var(--settings-surface); border-radius:10px; }
 h3,h4,p { margin:0; }
 .catalog section+section { margin-top:14px; }
 .catalog h3,h4 { font-size:13px; margin-bottom:6px; color:#405459; }
@@ -101,18 +106,20 @@ h3,h4,p { margin:0; }
 .items { grid-template-columns:repeat(2, minmax(0,1fr)); }
 .items button { display:flex; align-items:center; gap:7px; text-align:left; }
 .item-icon { flex:none; width:16px; height:16px; transform:scale(1.28); background:url('../../assets/pet/items.png') no-repeat; image-rendering:pixelated; }
-.inventory button { box-sizing:border-box; font:inherit; font-size:13px; padding:6px; color:#304647; background:#fff; border:1px solid #bbc9c6; border-radius:6px; cursor:pointer; }
-.inventory button[aria-pressed=true] { color:#224b42; background:#deede7; border-color:#568475; }
+.inventory button { font:inherit; font-size:13px; padding:7px 6px; color:var(--settings-ink); background:var(--settings-canvas); border:1px solid transparent; border-radius:var(--settings-radius); cursor:pointer; }
+.inventory button:hover:enabled { background:var(--settings-group); }
+.inventory button[aria-pressed=true] { color:var(--settings-accent); background:var(--settings-selected); border-color:var(--settings-input-line); }
 .inventory button:disabled { cursor:default; opacity:.58; }
-.detail { border-left:1px solid #d8e2df; padding-left:18px; }
 .item-heading { display:flex; justify-content:space-between; align-items:center; gap:7px; }
 .item-heading h3 { font-size:17px; }
-.item-heading .use { background:#345d51; border-color:#345d51; color:#fff; }
+.item-heading .use { background:var(--settings-accent); color:#fff; }
+.item-heading .use:hover:enabled { background:var(--settings-accent-hover); }
 .detail p { font-size:12px; line-height:1.5; color:#49615f; }
 .detail .description { margin:7px 0 17px; }
+.detail .stock-notice { color:#9a3935; margin-bottom:10px; }
 .detail .repeat,.detail .capacity { margin:0 0 10px; }
 .keys { grid-template-columns:repeat(4,1fr); margin-top:7px; }
 .keys button { display:grid; gap:3px; justify-items:center; min-width:0; }
 .keys span { font-size:11px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; max-width:100%; }
-@media(max-width:500px) { .inventory { grid-template-columns:1fr; } .detail { border:0; padding:0; } .items { grid-template-columns:repeat(4,1fr); } }
+@media(max-width:500px) { .inventory { grid-template-columns:1fr; } }
 </style>

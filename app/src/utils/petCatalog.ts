@@ -1,6 +1,42 @@
 // The array positions are action and scene IDs on the USB wire. Append new IDs.
 export const petCareGraceMs = 300_000
 export const petUnattendedDecayMs = 120_000
+export const petSleepRecoveryMs = 30_000
+export const petRunDurationMs = 2300
+export const petRunMinX = 46
+export const petRunMaxX = 274
+const petRunBrakeDistance = 24
+export const petRunBoundary = (facing: number) => facing < 0 ? petRunMinX : petRunMaxX
+export function petRunFacing(x: number, facing: number) {
+  return Math.abs(petRunBoundary(facing) - x) <= petRunBrakeDistance ? -facing : facing
+}
+export function petRunPosition(x: number, facing: number, elapsedMs: number) {
+  const boundary = petRunBoundary(facing)
+  const distance = Math.abs(boundary - x)
+  const speed = 30 + 80 * Math.min(1, distance / petRunBrakeDistance)
+  return x + facing * Math.min(distance, Math.max(0, elapsedMs) * speed / 1000)
+}
+
+export function createPetActionClock() {
+  let action: number | undefined
+  let wireAge: number | undefined
+  let sampleAt = 0
+  let renderedAge = 0
+  let previousAt = 0
+  return (nextAction: number, nextWireAge: number | undefined, paused: boolean, now: number) => {
+    const restarted = action !== nextAction || (nextWireAge !== undefined && wireAge !== undefined && nextWireAge < wireAge)
+    if (restarted) renderedAge = nextWireAge ?? 0
+    if (restarted || nextWireAge !== wireAge) sampleAt = now
+    if (nextWireAge !== undefined) {
+      if (paused) sampleAt = now
+      renderedAge = Math.max(renderedAge, nextWireAge + (paused ? 0 : now - sampleAt))
+    } else if (!restarted && !paused) renderedAge += now - previousAt
+    previousAt = now
+    action = nextAction
+    wireAge = nextWireAge
+    return renderedAge
+  }
+}
 export const petDaydreamMs = 15_000
 export const petGazeOwnerMs = 8_000
 export const petAutoSleepIdleMs = 45_000
@@ -9,8 +45,11 @@ export const petRecoveredEnergy = 70
 export const timedPetActions = ['sleep', 'daydream', 'gaze_owner', 'groom_fur', 'groom_ear'] as const
 export const petTimedActionCommand = 27
 export const petLampCommand = 28
+export const petToggleLampCommand = 32
 export const petLampGeneration = 12
 export const petLampInstalledFlag = 4
+const petLampManualFlag = 8
+const petLampLitFlag = 16
 export const petWarehouseGeneration = 13
 export const petWarehouseBytes = 17
 export const petBuySnackCommand = 31
@@ -21,6 +60,11 @@ export const petMaxCoins = 9999
 export const petOwnedCarrot = 1
 export const petStarterItems = 15
 export const petLampIsLit = (hour: number) => hour < 6 || hour >= 19
+export function petLampState(flags: number, hour: number) {
+  const installed = Boolean(flags & petLampInstalledFlag)
+  const manual = Boolean(flags & petLampManualFlag)
+  return { installed, manual, lit: installed && (manual ? Boolean(flags & petLampLitFlag) : petLampIsLit(hour)) }
+}
 export const petMaxDurationSeconds = 300
 
 export const petActions = ['idle', 'walk', 'sleep', 'eat', 'fall', 'fetch', 'run', 'jump', 'daydream', 'flee', 'blink', 'trip_angry', 'gaze_owner', 'stand_watch', 'inspect_table', 'binky', 'groom_fur', 'groom_ear'] as const
@@ -52,8 +96,13 @@ export type PetScene = typeof petScenes[number]
 export const petSceneLabels: Record<typeof petScenes[number], string> = { garden: '花园', nursery: '宝宝房' }
 
 export const petFruitIds = ['apple', 'banana', 'orange', 'grape', 'strawberry', 'pear', 'cherry', 'watermelon'] as const
+export const petOutOfStockStatus = 6
 export const petFruitLabels: Record<typeof petFruitIds[number], string> = {
   apple: '苹果', banana: '香蕉', orange: '橙子', grape: '葡萄', strawberry: '草莓', pear: '梨', cherry: '樱桃', watermelon: '西瓜'
+}
+
+export function petFruitStockMessage(fruit: typeof petFruitIds[number]) {
+  return petFruitLabels[fruit] + '库存已用完，可在商店补货。'
 }
 
 export const hutchBounds = { minX: 41, maxX: 280, minY: 69, maxY: 167 } as const

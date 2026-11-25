@@ -10,6 +10,7 @@ import type { ScreenFrame } from './screenContent'
 const win = window as any
 const props = defineProps<{ screen: number; initialImage?: string }>()
 const emit = defineEmits<{ save: [frame: ScreenFrame] }>()
+const fileInput = ref<HTMLInputElement>()
 const instance = shallowRef<{
   loadImageFromURL: (url: string, name: string) => Promise<unknown>
   addText: (text: string, options: object) => Promise<unknown>
@@ -18,15 +19,33 @@ const instance = shallowRef<{
 }>()
 
 onMounted(() => {
-  const editor = new ImageEditor(document.querySelector('#editor'), editorConfig)
+  const initial = props.initialImage
+  const editor = new ImageEditor(document.querySelector('#editor'), {
+    ...editorConfig,
+    includeUI: {
+      ...editorConfig.includeUI,
+      loadImage: initial ? { path: `data:image/png;base64,${initial}`, name: 'screen' } : editorConfig.includeUI.loadImage
+    }
+  })
   instance.value = editor
-  if (props.initialImage) {
-    editor.loadImageFromURL(`data:image/png;base64,${props.initialImage}`, 'screen').catch(() => {
-      XBox.popMes('读取原屏幕图片失败')
-    })
-  }
 })
 onUnmounted(() => instance.value?.destroy())
+
+async function chooseImage(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  const editor = instance.value
+  if (!file || !editor) return
+  const url = URL.createObjectURL(file)
+  try {
+    await editor.loadImageFromURL(url, file.name)
+  } catch {
+    XBox.popMes('读取图片失败，请重新选图。')
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
 
 const imgArr: Array<string> = ['./img/black.png', './img/blank.png', './img/1.jpg', './img/2.png', './img/3.png', './img/4.png', './img/5.png' ]
 const curImg = ref<number>(0)
@@ -86,92 +105,29 @@ const coverShow = ref<boolean>(false)
 </script>
 
 <template>
-  <div id="cover" v-if="coverShow"></div>
-  <div id="editor"></div>
-  <div id="tools-bar">
-    <ul>
-      <li>
-        <div @click="switchBack">切换</div>
-      </li>
-      <li>
-        <div @click="closeWindow">取消</div>
-      </li>
-      <li>
-        <div @click="editorCommit">确认</div>
-      </li>
-    </ul>
+  <div class="editor-workspace">
+    <div id="cover" v-if="coverShow"></div>
+    <div id="editor"></div>
+    <div id="tools-bar">
+      <div class="image-sources">
+        <input ref="fileInput" type="file" accept="image/*" hidden @change="chooseImage">
+        <button class="settings-button" type="button" :disabled="coverShow" @click="fileInput?.click()">选择图片</button>
+        <button class="settings-button" type="button" :disabled="coverShow" @click="switchBack">切换底图</button>
+      </div>
+      <div>
+        <button class="settings-button" type="button" :disabled="coverShow" @click="closeWindow">取消</button>
+        <button class="settings-button is-primary" type="button" :disabled="coverShow" @click="editorCommit">保存图片</button>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped lang="scss">
-#cover {
-  width: 100%;
-  height: 100%;
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  background: rgba(51, 51, 51, 0.2);
-  border-radius: 15px;
-  z-index: 9999998;
-}
-
-.editor-tools {
-  width: 50px;
-  height: 30px;
-  background: white;
-  box-sizing: border-box;
-}
-
-#tools-bar {
-  width: 8%;
-  height: 50%;
-  position: absolute;
-  top: 50%;
-  right: 0px;
-  transform: translateY(-50%);
-  background: rgba(255, 255, 255, 1);
-  border-radius: 12px;
-  box-shadow: 1.1px 0px 10.8px -34px rgba(0, 0, 0, 0.059), 7px 0px 81px -34px rgba(0, 0, 0, 0.12);
-  border: 1px solid rgba(51, 51, 51, 0.2);
-  padding: 0;
-  margin: 0;
-  z-index: 9999;
-
-  ul {
-    width: 100%;
-    height: 100%;
-    display: flex;
-    flex-flow: column nowrap;
-    justify-content: space-around;
-    align-items: center;
-    padding: 0;
-    margin: 0;
-
-    :nth-child(3) > div {
-      background: rgba(243, 226, 224, 1);
-    }
-
-    li {
-      height: 10%;
-      width: 100%;
-      list-style: none;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      cursor: pointer;
-
-      div {
-        width: 60px;
-        height: 50px;
-        border-radius: 9px;
-        border: 0.2px solid rgba(51, 51, 51, 0.1);
-        font-size: 18px;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-      }
-    }
-  }
-}
+.editor-workspace { width:100%; height:100%; position:relative; display:grid; grid-template-rows:minmax(0,1fr) auto; border-radius:10px; background:var(--settings-surface); overflow:hidden; }
+#cover { position:absolute; inset:0; background:#182b2452; z-index:10000; }
+#editor { min-height:0; }
+#editor :deep(.tui-image-editor-header-buttons) { display:none; }
+#tools-bar { display:flex; justify-content:space-between; flex-wrap:wrap; align-items:center; gap:8px; padding:9px 10px; border-top:1px solid var(--settings-line); }
+#tools-bar > div { display:flex; gap:6px; margin-left:auto; }
+#tools-bar > .image-sources { margin-left:0; }
 </style>
