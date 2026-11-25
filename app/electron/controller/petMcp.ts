@@ -201,7 +201,7 @@ function decodeEvent(payload: Buffer, offset: number) {
   }
 }
 
-async function readEvents(cursor?: string) {
+export async function readPetEvents(cursor?: string) {
   const [oldSession, offset] = cursor?.split(':') ?? []
   const after = offset ? Number(offset) : 0
   const { payload, session, reset } = await requestDevice({ after }, oldSession)
@@ -401,7 +401,7 @@ export function createPetMcp(enabled: () => boolean = () => true,
         .refine(value => Number(value.split(':')[1]) <= 0xffffffff).optional()
     },
     annotations: { readOnlyHint: true }
-  }, ({ cursor }) => result(() => readEvents(cursor)))
+  }, ({ cursor }) => result(() => readPetEvents(cursor)))
   return server
 }
 

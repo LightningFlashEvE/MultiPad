@@ -13,7 +13,7 @@ import { fileReadListener } from "../controller/fileRead"
 import { fetchScreenValue } from '../controller/screenApi'
 import { startPetMcp } from '../controller/petMcp'
 import { isStatCommand, isStatValue, isHeadPetInput, isHutchPosition } from '../../src/utils/petCatalog'
-import { getPetAiActivity, observePetAiSession, getPetAi, savePetAi, startPetAi, stopPetAi, testPetAi } from '../controller/petAi'
+import { getPetAiActivity, observePetAiSession, observePetOwnerCommand, getPetAi, savePetAi, startPetAi, stopPetAi, testPetAi } from '../controller/petAi'
 import type { IpcMainInvokeEvent, WebContents } from 'electron'
 
 // A detached Windows launcher can close its logging pipes while MultiPad is open.
@@ -115,6 +115,9 @@ ipcMain.handle('pet-action', async (event, command, value) => {
     observePetAiSession(reply.payload[0] ? reply.session : null)
   } else if (reply.state === 'disconnected') {
     observePetAiSession(null)
+  }
+  if (reply.state === 'ready' && reply.status === 0 && reply.session && event.sender === mainContents) {
+    observePetOwnerCommand(reply.session, command, value, reply.payload)
   }
   return reply.state === 'ready' ? { ...reply, payload: Uint8Array.from(reply.payload) } : reply
 })

@@ -2,12 +2,13 @@ import { safeStorage } from 'electron'
 import Store from 'electron-store'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { setInterval as pollInterval, clearInterval as stopPolling } from 'node:timers'
 import { setTimeout as delay } from 'node:timers/promises'
 import { z } from 'zod'
-import { createPetMcp, planSteps } from './petMcp'
+import { createPetMcp, planSteps, readPetEvents } from './petMcp'
 import { petCareGuide } from './petCareGuide'
 import { defaultRabbitPersonality, personalityLimit } from '../../src/utils/petPersonality'
-import { petActionLabels, petSceneLabels, petActions, playableActions, petScenes, petToyIds, petToyPhases, petRoomItems, petFoodStages, petHeadGestures,
+import { petActionLabels, petSceneLabels, petActions, playableActions, petScenes, petToyIds, petToys, petToyPhases, petRoomItems, petFoodStages, petHeadGestures,
   petFruitIds as fruits, petFruitLabels as fruitLabel } from '../../src/utils/petCatalog'
 
 const allowedTools = ['pet_perform_sequence', 'pet_feed'] as const
@@ -89,6 +90,13 @@ let timer: ReturnType<typeof setTimeout> | undefined
 let status: Status = { phase: 'idle', message: '等待下一次决策' }
 
 let observedSession: string | null | undefined
+type OwnerInteraction =
+  | { type: 'head_petted' }
+  | { type: 'fruit_queued'; fruit: typeof fruits[number] }
+  | { type: 'toy_placed'; toy: 'carrot_toy' }
+interface Reaction { events: OwnerInteraction[]; due: number; since: number; session: string }
+let reaction: Reaction | undefined
+let stopEventWatch: (() => void) | undefined
 let nextDecisionAt: number | undefined
 let requestAbort: AbortController | undefined
 let autoRunning = false
@@ -149,6 +157,8 @@ export function savePetAi(input: unknown) {
   revision++
   requestAbort?.abort()
   activitySession = undefined
+  reaction = undefined
+  watchOwnerEvents(enabled ? observedSession : null)
   setStatus({ phase: 'idle', message: enabled ? '等待下一次 AI 决策' : 'AI 控制已暂停' })
   schedule(observedSession ? 200 : 1500)
   return getPetAi()
@@ -202,6 +212,7 @@ const rabbitRole = [
   'sleep 会回兔窝持续睡觉，兔窝小憩是短休。熟睡且仍困时可以继续睡，休息充分时可用 idle 醒来。胡萝卜玩具和兔窝装饰相互独立，完成玩耍才有属性收益。',
   '观测取自键盘。physical 表示实体操作，automatic 表示固件行为，mcp 可来自软件、外部客户端或你之前的动作。尊重主人刚投放的食物和玩具。字段为 null 或事件不完整时按已知事实行动。',
   'head_petted 是主人对你的摸头，physical 来自实体大旋钮，mcp 来自软件模拟。你可以继续享受抚摸，也能在合适时看向主人。',
+  'observation.ownerInteractions 是本轮触发原因。结合主人刚做的事及最新状态决定兔子接下来的反应。连续抚摸是一轮互动，已经在吃或玩时可以让它继续。',
   '角色性格决定动作偏好，实际工具、参数和当前设备状态决定能执行的行为。'
 ].join('\n')
 
@@ -353,13 +364,15 @@ async function run(kind: 'auto' | 'connection' | 'feed') {
   const saved = store().get('settings')
   if (!saved?.encryptedKey) throw Error('请先保存模型配置')
   if (kind === 'auto' && !saved.enabled) return getPetAi()
+  const trigger = kind === 'auto' ? reaction : undefined
+  let deferred = false
   const startingRevision = revision
   running = true
   autoRunning = kind === 'auto'
   nextDecisionAt = undefined
   clearTimeout(timer)
   requestAbort = new AbortController()
-  setStatus({ phase: 'thinking', message: kind === 'connection' ? '正在测试模型连接' : '正在读取键盘实况' })
+  if (!trigger) setStatus({ phase: 'thinking', message: kind === 'connection' ? '正在测试模型连接' : '正在读取键盘实况' })
   try {
     await withPetMcp(async client => {
       const stillEnabled = () => startingRevision === revision
@@ -371,11 +384,23 @@ async function run(kind: 'auto' | 'connection' | 'feed') {
         setStatus({ phase: 'idle', message: '等待键盘进入养宠模式' })
         return
       }
+      if (trigger && pet && trigger.session !== pet.session) return
+      if (trigger && pet) {
+        const touchRemaining = trigger.events.some(e => e.type === 'head_petted') ? pet.headPet?.remainingMs ?? 0 : 0
+        const busy = !pet.automaticBehaviors?.length && (hasFood(pet) || busyWithToy(pet))
+        const dropping = trigger.events.some(e => e.type === 'toy_placed') && pet.toyDropProgress !== null && pet.toyDropProgress < 100
+        if (touchRemaining || ((busy || dropping) && Date.now() - trigger.since < 12_000)) {
+          trigger.due = Date.now() + (touchRemaining ? Math.min(touchRemaining + 50, 700) : 450)
+          deferred = true
+          setStatus({ phase: 'idle', message: touchRemaining ? '等主人摸完头' : '等兔子完成眼前的互动' })
+          return
+        }
+      }
       if (kind === 'feed' && pet && (hasFood(pet) || busyWithToy(pet))) throw Error('请等待当前互动结束后再测试投喂')
-      setStatus({ phase: 'thinking', message: kind === 'connection' ? '正在测试模型工具调用' : 'AI 正在选择兔子的动作' })
+      setStatus({ phase: 'thinking', message: kind === 'connection' ? '正在测试模型工具调用' : trigger ? 'AI 正在回应' + interactionLabel(trigger.events.at(-1)!) : 'AI 正在选择兔子的动作' })
       const { session: _session, ...observedState } = pet ?? {}
       const request = kind === 'auto' && pet
-        ? { state: observedState, recentActivity: await observeRecentEvents(client, pet.session), guide: petCareGuide,
+        ? { state: observedState, ownerInteractions: trigger?.events ?? [], recentActivity: await observeRecentEvents(client, pet.session), guide: petCareGuide,
             catalog: { actions: playableActions, fruits, roomItems: petRoomItems, scenes: petScenes },
             previousPlan: previousPlan?.session === pet.session ? { accepted: previousPlan.accepted, stoppedBefore: previousPlan.stoppedBefore } : null }
         : '这是 MultiPad 的投喂测试，请调用 pet_feed，参数 fruit 为 apple。'
@@ -413,6 +438,7 @@ async function run(kind: 'auto' | 'connection' | 'feed') {
     autoRunning = false
     requestAbort = undefined
     stepLabels = []
+    if (trigger === reaction && !deferred) reaction = undefined
     schedule(startingRevision === revision ? intervalMs : 200)
   }
   return getPetAi()
@@ -426,10 +452,84 @@ function schedule(wait = 1500) {
   clearTimeout(timer)
   nextDecisionAt = undefined
   if (!running && observedSession !== null && store().get('settings')?.enabled) {
+    if (reaction) wait = Math.max(0, reaction.due - Date.now())
     nextDecisionAt = Date.now() + wait
     timer = setTimeout(() => { void run('auto').catch(() => schedule(intervalMs)) }, wait)
   }
   publishActivity()
+}
+
+function interactionLabel(event: OwnerInteraction) {
+  if (event.type === 'head_petted') return '摸头'
+  if (event.type === 'fruit_queued') return '投喂' + fruitLabel[event.fruit]
+  return '放下胡萝卜玩具'
+}
+
+function queueInteractions(session: string, incoming: OwnerInteraction[]) {
+  if (!incoming.length || session !== observedSession || !store().get('settings')?.enabled) return
+  const now = Date.now()
+  const events = [...(reaction?.events ?? [])]
+  // A stream of encoder detents is one touch. Keep recent distinct inputs bounded by the device event window.
+  for (const event of incoming) {
+    if (event.type === 'head_petted' && events.at(-1)?.type === event.type) events.pop()
+    events.push(event)
+  }
+  const last = incoming[incoming.length - 1]
+  reaction = { session, since: now, events: events.slice(-64), due: now + (last.type === 'head_petted' ? 900 : 180) }
+  if (autoRunning) {
+    revision++
+    requestAbort?.abort()
+  }
+  if (!running || autoRunning) setStatus({ phase: 'idle', message: '收到互动 · ' + interactionLabel(last) })
+  schedule()
+}
+
+// Replies to home-window writes are distinguishable from autonomous MCP writes even on older keyboards.
+export function observePetOwnerCommand(session: string, command: number, value: number, payload: Uint8Array) {
+  const item = command === 12 ? payload[19 + value] : undefined
+  const fruit = fruits[(command === 2 ? value : item ?? 0) - 1]
+  if (fruit) queueInteractions(session, [{ type: 'fruit_queued', fruit }])
+  const toy = petToys.find(t => command === 7 && value === t.wireId || command === 12 && item === t.itemId)
+  if (toy && payload[29 + payload[16]] === toy.wireId) {
+    queueInteractions(session, [{ type: 'toy_placed', toy: toy.id }])
+  }
+}
+
+function watchOwnerEvents(session: string | null | undefined) {
+  stopEventWatch?.()
+  stopEventWatch = undefined
+  if (!session) return
+
+  let cursor: string | undefined
+  let active = true, primed = false, busy = false
+  async function poll() {
+    if (!active || busy) return
+    busy = true
+    try {
+      for (let i = 0; i < 4; i++) {
+        const page = await readPetEvents(cursor)
+        if (!active || page.reset || !page.cursor.startsWith(session + ':')) return
+        cursor = page.cursor
+        if (primed) {
+          const inputs: OwnerInteraction[] = []
+          for (const e of page.events) {
+            // The firmware records virtual pats as MCP. The built-in model cannot issue pats.
+            if (e.type === 'head_petted' && (e.source === 'physical' || e.source === 'mcp')) inputs.push({ type: 'head_petted' })
+            if (e.source !== 'physical') continue
+            if (e.type === 'fruit_queued' && 'fruit' in e && e.fruit) inputs.push({ type: 'fruit_queued', fruit: e.fruit })
+            if (e.type === 'toy_placed' && 'toy' in e && e.toy === 'carrot_toy') inputs.push({ type: 'toy_placed', toy: e.toy })
+          }
+          if (session) queueInteractions(session, inputs)
+        }
+        if (!page.hasMore) { primed = true; break }
+      }
+    } catch {
+      // USB can be busy. Resume at the last acknowledged page on the next tick.
+    } finally { busy = false }
+  }
+  const ticker = pollInterval(poll, 350)
+  stopEventWatch = () => { active = false; stopPolling(ticker) }
+  void poll()
 }
 
 // Home already reads the keyboard. Wake the scheduler once per confirmed entry or reconnect.
@@ -437,7 +537,10 @@ export function observePetAiSession(session: string | null) {
   if (session === observedSession) return
   const firstObservation = observedSession === undefined
   observedSession = session
-  if (!store().get('settings')?.enabled) return
+  reaction = undefined
+  const enabled = store().get('settings')?.enabled
+  watchOwnerEvents(enabled ? session : null)
+  if (!enabled) return
   if (running && !autoRunning) return
   if (firstObservation && session && autoRunning) return
   revision++
@@ -454,6 +557,8 @@ export function startPetAi(listener?: typeof activityListener) {
 export function stopPetAi() {
   activityListener = undefined
   observedSession = null
+  reaction = undefined
+  watchOwnerEvents(null)
   requestAbort?.abort()
   revision++
   clearTimeout(timer)

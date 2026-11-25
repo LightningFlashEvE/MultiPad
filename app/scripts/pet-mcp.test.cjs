@@ -36,11 +36,11 @@ function payload(generation = 4, fields = {}, foodIds = [], headPet = [0, 0]) {
   for (const [i,v] of Object.entries(fields)) p[Number(i)] = v
   return p.subarray(0, [0, 12, 19, endOfFoods, endOfFoods + 4, endOfFoods + 6, endOfFoods + 10, endOfFoods + 11, p.length, p.length, p.length][generation])
 }
-function eventPage(events) {
+function eventPage(events, after = 0) {
   const p = Buffer.alloc(1 + events.length * 12)
   for (const [i, [kind,value,source,detail]] of events.entries()) {
     const offset = 1 + 12*i
-    p.writeUInt32LE(i+1, offset)
+    p.writeUInt32LE(after+i+1, offset)
     p.writeUInt32LE((i+1)*40, offset+4)
     p.set([kind,value,source,detail],offset+8)
   }
@@ -100,7 +100,8 @@ function fixture(t) {
   const serial = { pet: async request => {
     board.requests.push(request)
     if (request.command) board.onWrite?.(request)
-    const bytes = 'after' in request ? (request.after ? Buffer.from([0]) : eventPage(board.events)) : board.payload
+    const bytes = 'after' in request ? eventPage(board.events.slice(request.after,request.after+16),request.after) : board.payload
+    if ('after' in request && board.events.length > request.after + 16) bytes[0] |= 2
     return { state: 'ready', session, status: board.status, payload: bytes }
   } }
   const mcp = loadModule('../electron/controller/petMcp.ts', {
@@ -278,4 +279,88 @@ test('model sees its personality, the complete available event window and care s
   while(ai.getPetAi().running) await new Promise(r=>setImmediate(r))
   assert.equal(timer,undefined)
   assert.equal(ai.getPetAiActivity().message,'等待键盘进入养宠模式')
+})
+
+test('owner inputs coalesce, interrupt stale plans and rearm a single idle round', async t => {
+  const f = fixture(t)
+  const config = new Map()
+  class Store { get(k){ return config.get(k) } set(k,v){ config.set(k,v) } }
+  const observations = []
+  let timer, pollDevice, stall, aborted = false
+  const ai = loadModule('../electron/controller/petAi.ts', {
+    electron:{safeStorage:{isEncryptionAvailable:()=>true,encryptString:s=>Buffer.from(s),decryptString:b=>b.toString()}},
+    'node:timers':{setInterval(fn){pollDevice=fn;return 1},clearInterval(){pollDevice=undefined}},
+    'electron-store':Store,'./petMcp':f.mcp,'./petCareGuide':guide,[pathToCatalog]:catalog,
+    '../../src/utils/petPersonality':loadModule('../src/utils/petPersonality.ts')
+  }, {
+    setTimeout(fn,ms){ timer={fn,ms};return timer }, clearTimeout(){ timer=undefined },
+    async fetch(_url,options) {
+      observations.push(JSON.parse(JSON.parse(options.body).messages[1].content).observation)
+      if (stall) await new Promise((_,reject) => options.signal.addEventListener('abort',()=>{
+        aborted=true;reject(Error('aborted'))
+      },{once:true}))
+      return new Response(JSON.stringify({choices:[{message:{}}]}))
+    }
+  })
+  const flush = () => new Promise(r=>setImmediate(r))
+  const done = async () => {
+    for(let i=0;i<200 && ai.getPetAi().running;i++) await flush()
+    assert(!ai.getPetAi().running)
+  }
+  const poll = () => pollDevice()
+  const runTimer = async () => { timer.fn();await done() }
+  const latest = () => observations.at(-1).ownerInteractions
+  t.after(()=>ai.stopPetAi())
+  // The retained ring already contains a previous owner's feed when AI is enabled.
+  f.board.events.push([3,1,1,1])
+  ai.observePetAiSession(session)
+  ai.savePetAi({apiUrl:'http://localhost/v1',model:'fixture',apiKey:'fixture',enabled:true})
+  await flush()
+  await runTimer()
+  assert.deepEqual(latest(),[])
+  assert.equal(timer.ms,60_000)
+
+  f.board.payload=payload(6,{},[],[100,1])
+  f.board.events.push([18,1,1,3],[18,2,1,3],[18,2,2,3])
+  await poll()
+  assert(timer.ms>0 && timer.ms<=900)
+  await runTimer()
+  assert.equal(observations.length,1) // the hand is still on the knob
+  f.board.events.push([18,1,1,3])
+  await poll()
+  f.board.payload=payload(6)
+  await runTimer()
+  assert.deepEqual(latest(),[{type:'head_petted'}])
+  assert.equal(observations.length,2)
+
+  // Automatic actions, our MCP feed, toy placement, fruit landing and toy recall do not wake AI.
+  const quiet = timer
+  f.board.events.push([2,1,0,0],[3,1,2,1],[13,2,2,0],[4,1,1,0],[14,2,1,0])
+  await poll()
+  ai.observePetOwnerCommand(session,7,2,payload(6))
+  assert.equal(timer,quiet)
+  f.board.events.push([3,2,1,1],[13,2,1,0])
+  await poll()
+  await runTimer()
+  assert.deepEqual(latest(),[{type:'fruit_queued',fruit:'banana'},{type:'toy_placed',toy:'carrot_toy'}])
+  assert.equal(timer.ms,60_000)
+
+  // A virtual bound key interrupts an in-flight idle inference. Polling its MCP echo cannot duplicate it.
+  stall=true;timer.fn()
+  for(let i=0;i<200 && observations.length<4;i++) await flush()
+  assert.equal(observations.length,4)
+  ai.observePetOwnerCommand(session,12,0,payload(6,{19:1}))
+  await done()
+  assert(aborted)
+  stall=false
+  f.board.events.push([3,1,2,1])
+  await poll()
+  await runTimer()
+  assert.deepEqual(latest(),[{type:'fruit_queued',fruit:'apple'}])
+  ai.observePetOwnerCommand(session,12,0,payload(6,{16:0,19:10,29:2}))
+  await runTimer()
+  assert.deepEqual(latest(),[{type:'toy_placed',toy:'carrot_toy'}])
+  ai.observePetOwnerCommand(session,2,3,payload(6))
+  ai.observePetAiSession(null)
+  assert.equal(timer,undefined)
 })
