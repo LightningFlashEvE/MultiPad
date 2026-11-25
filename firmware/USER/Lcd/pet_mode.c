@@ -31,7 +31,12 @@ enum {
     FRUIT_RADIUS = 9,
     FRUIT_GROUND = 129,
     FALL_MS = 650,
-    FRUIT_EAT_MS = 850
+    FRUIT_EAT_MS = 850,
+    STOCK_NOTICE_MS = 2200,
+    STOCK_NOTICE_X = 132,
+    STOCK_NOTICE_Y = 7,
+    STOCK_NOTICE_WIDTH = 56,
+    STOCK_NOTICE_HEIGHT = 24
 };
 
 #define RGB565(r, g, b) (((r) >> 3) << 11 | ((g) >> 2) << 5 | ((b) >> 3))
@@ -50,7 +55,7 @@ typedef struct {
     uint32_t elapsed;
     PetFloorFood foods[PET_FLOOR_CAPACITY];
     uint8_t food_count, hour, minute, season, scene, visible_toy, using_toy, drop;
-    uint8_t pat_kind, pat_phase;
+    uint8_t pat_kind, pat_phase, stock_notice;
     bool bowl, patting, lamp_installed, lamp_lit;
 } PetFrame;
 
@@ -85,7 +90,8 @@ typedef struct {
     bool toy_falling, awaiting_play;
 } PetFloor;
 static PetFloor floors[PET_SCENE_COUNT];
-static uint8_t fruit, keys_seen;
+static uint8_t fruit, keys_seen, stock_notice;
+static uint32_t stock_notice_at;
 static uint32_t key_at[PET_KEY_COUNT];
 
 static PetFloor *current_floor(void) { return &floors[pet_care_get()->scene]; }
@@ -313,6 +319,7 @@ static void set_mode(bool enabled, uint8_t source, uint32_t now) {
     if (active == enabled) return;
     if (encoder_down && source != SOURCE_PHYSICAL) encoder_cancelled = true;
     hand_on_encoder = head_pat_active = false;
+    stock_notice = 0;
     record_event(PET_EVENT_MODE, enabled, source, 0);
     live_oled_mode_changed();
     if (enabled) {
@@ -459,9 +466,16 @@ bool pet_mode_encoder_rotated(bool clockwise, bool pressed_detent) {
     return encoder_claimed || encoder_cancelled || encoder_toggled;
 }
 
-static bool queue_fruit(uint8_t requested, uint8_t source, uint32_t now) {
+static uint8_t queue_fruit(uint8_t requested, uint8_t source, uint32_t now) {
+    if (!pet_care_get()->stock[requested - 1]) {
+        stock_notice = requested;
+        stock_notice_at = now;
+        return PET_STATUS_OUT_OF_STOCK;
+    }
     PetFloor *floor = current_floor();
-    if (floor->count == PET_FLOOR_CAPACITY || !pet_care_take_snack(requested)) return false;
+    if (floor->count == PET_FLOOR_CAPACITY) return BUSY;
+    if (!pet_care_take_snack(requested)) return BUSY;
+    stock_notice = 0;
     if (bedtime && wants_food()) end_toy(true, source, now);
     /* Choose the closest free landing site to the original toss, keeping fruit distinct. */
     const int preferred = x + (requested % 2 ? 77 : -77);
@@ -476,14 +490,14 @@ static bool queue_fruit(uint8_t requested, uint8_t source, uint32_t now) {
     floor->foods[floor->count++] = (FloorFood){now, best, requested, FOOD_FALLING, source};
     last_owner_input = last_input = now;
     record_event(PET_EVENT_FRUIT_QUEUED, requested, source, pet_mode_queue_depth());
-    return true;
+    return OK;
 }
 
 static uint8_t trigger_key(uint8_t key, uint8_t source, uint32_t now) {
     const uint8_t item = pet_care_get()->bindings[key];
     record_event(PET_EVENT_KEY, key + 1, source, item);
     if (!item) return OK;
-    if (item <= FRUIT_COUNT) return queue_fruit(item, source, now) ? OK : BUSY;
+    if (item <= FRUIT_COUNT) return queue_fruit(item, source, now);
     if (item == ITEM_HUTCH) {
         if (fruit) return BUSY;
         visit_hutch(false, source, now);
@@ -607,7 +621,7 @@ uint8_t pet_mode_control(uint8_t opcode, uint8_t value) {
             return OK;
         case FEED:
             if (!value || value > FRUIT_COUNT) return INVALID;
-            return queue_fruit(value, SOURCE_MCP, now) ? OK : BUSY;
+            return queue_fruit(value, SOURCE_MCP, now);
         case PLAY:
             if (value > PET_GROOM_EAR || value == PET_FALL || value == PET_FETCH) return INVALID;
             if (fruit || (value == PET_EAT && !hungry())) return BUSY;
@@ -1039,7 +1053,7 @@ static void begin_frame(uint32_t now) {
         .direction = direction, .sprite = sprite_frame(action_clip(elapsed), elapsed),
         .action = action, .elapsed = elapsed, .hour = hour, .minute = minute, .season = season,
         .scene = scene, .visible_toy = pet_care_get()->placed[scene], .using_toy = using,
-        .drop = pet_mode_toy_drop(), .bowl = action == PET_EAT && !fruit && !active_toy,
+        .stock_notice = stock_notice, .drop = pet_mode_toy_drop(), .bowl = action == PET_EAT && !fruit && !active_toy,
         .lamp_installed = lamp, .lamp_lit = lamp && pet_mode_lamp_is_lit()
     };
     uint16_t remaining = head_pat_remaining(now);
@@ -1070,6 +1084,8 @@ static void begin_frame(uint32_t now) {
         if (i < next.food_count) include_rect(&area, fresh->x - FRUIT_RADIUS, fresh->y - FRUIT_RADIUS, 2 * FRUIT_RADIUS);
         if (i < frame.food_count) include_rect(&area, old->x - FRUIT_RADIUS, old->y - FRUIT_RADIUS, 2 * FRUIT_RADIUS);
     }
+    if (frame.stock_notice != next.stock_notice)
+        include_rect(&area, STOCK_NOTICE_X, STOCK_NOTICE_Y, STOCK_NOTICE_WIDTH);
     next.left = area.left > 0 ? area.left : 0;
     next.right = area.right < LCD_WIDTH ? area.right : LCD_WIDTH;
     next.row = area.top > 0 ? area.top : 0;
@@ -1225,6 +1241,24 @@ static void paint_sky(uint8_t *line, uint16_t row) {
             paint_rect(line, row, stars[i][0], stars[i][1], 2, 2, HEX565(0xedddc8));
         }
     }
+}
+
+static void paint_stock_notice(uint8_t *line, uint16_t row) {
+    if (!frame.stock_notice || row < STOCK_NOTICE_Y || row >= STOCK_NOTICE_Y + STOCK_NOTICE_HEIGHT) return;
+
+    const uint16_t background = HEX565(0x512d39);
+    const uint16_t foreground = HEX565(0xffdfa7);
+    const uint8_t offset = row - STOCK_NOTICE_Y;
+    const PetFloorFood icon = {.x = STOCK_NOTICE_X + 15, .y = STOCK_NOTICE_Y + 12, .id = frame.stock_notice};
+    paint_rect(line, row, STOCK_NOTICE_X, STOCK_NOTICE_Y, STOCK_NOTICE_WIDTH, STOCK_NOTICE_HEIGHT, background);
+    paint_fruit(line, row, &icon);
+    if (offset >= 8 && offset < 16) {
+        const uint8_t diagonal = offset - 8;
+        paint_span(line, STOCK_NOTICE_X + 28 + diagonal, STOCK_NOTICE_X + 30 + diagonal, foreground);
+        paint_span(line, STOCK_NOTICE_X + 35 - diagonal, STOCK_NOTICE_X + 37 - diagonal, foreground);
+    }
+    paint_rect(line, row, STOCK_NOTICE_X + 41, STOCK_NOTICE_Y + 6, 8, 12, foreground);
+    paint_rect(line, row, STOCK_NOTICE_X + 43, STOCK_NOTICE_Y + 8, 4, 8, background);
 }
 
 static void paint_controls(uint8_t *line, uint16_t row) {
@@ -1384,6 +1418,7 @@ static void paint_row(uint8_t *line, uint16_t row) {
     }
     paint_head_pat(line, row);
     paint_controls(line, row);
+    paint_stock_notice(line, row);
 }
 
 static void draw_slice(void) {
@@ -1406,6 +1441,7 @@ void pet_mode_poll(void) {
         set_time((current_minute + elapsed_minutes) % 1440u, SOURCE_AUTOMATIC);
         if (elapsed_minutes >= (uint32_t)(next_boundary - current_minute)) set_lamp_light(nursery_night());
     }
+    if (stock_notice && now - stock_notice_at >= STOCK_NOTICE_MS) stock_notice = 0;
     if (head_pat_active && !head_pat_remaining(now)) head_pat_active = false;
     /* A pet-origin hold stays undecided until release so a late turn still strokes the rabbit. */
     if (encoder_down && !encoder_claimed && !encoder_cancelled && !encoder_toggled && !encoder_rotated &&

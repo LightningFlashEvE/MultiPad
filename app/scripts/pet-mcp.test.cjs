@@ -206,6 +206,12 @@ test('live availability follows floor capacity, satiety, rest, toy drop and work
   f.board.status=5
   const failed=await f.client.callTool({name:'pet_feed',arguments:{fruit:'apple'}})
   assert(failed.isError);assert.equal(failed.structuredContent.error.code,'inactive')
+  f.board.status = catalog.petOutOfStockStatus
+  const empty = await f.client.callTool({name:'pet_feed', arguments:{fruit:'apple'}})
+  assert(empty.isError)
+  assert.deepEqual(empty.structuredContent.error, {
+    code:'out_of_stock', message:'苹果库存已用完，可在商店补货。'
+  })
 })
 
 test('sixth-generation state reports both rooms without switching rooms', async t => {

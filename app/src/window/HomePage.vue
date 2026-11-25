@@ -23,7 +23,7 @@ import PerformanceDisplay from '../components/screenPage/PerformanceDisplay.vue'
 import { petParameters, petParameterContent, petStats, type HutchPosition, type PetParameter, type PetState } from '../components/screenPage/petDisplay'
 import { invertPetEnergy, petScenes, petItems, petStateGeneration,
   petLampCommand, petToggleLampCommand, petLampIsLit, petLampState, isHutchPosition, defaultHutchPosition } from '../utils/petCatalog'
-import { furniturePositionValid, newPetWarehouse, petBuySnackCommand, petFruitIds, petFruitLabels, petFurniture, petMaxCoins, petMaxStock,
+import { furniturePositionValid, newPetWarehouse, petBuySnackCommand, petFruitIds, petFruitLabels, petFruitStockMessage, petOutOfStockStatus, petFurniture, petMaxCoins, petMaxStock,
   petSnackPack, petSnackPrice, petStarterItems, petWarehouseBytes, readPetWarehouse, type PetFurnitureId, type PetPosition } from '../utils/petCatalog'
 import type { ParameterPair, PetSettingsAction, PetSettingsScreen, PetSettingsSnapshot } from '../utils/petSettings'
 
@@ -310,6 +310,8 @@ async function interactWithPet(command: number, value: number) {
   const session = petSession
   let applied = false
   await petTask
+  const fruitId = command === 2 ? value : command === 12 ? bindings.value?.[value] ?? 0 : 0
+  const snack = petFruitIds[fruitId - 1]
   if (stat && session !== petSession) {
     interacting.value = false
     interactionNotice.value = '键盘连接已变化，请重新确认数值。'
@@ -319,7 +321,7 @@ async function interactWithPet(command: number, value: number) {
     if (conState.value) interactionNotice.value = petNotice.value || '等待读取键盘的宠物状态。'
     else if (command === 8) interactionNotice.value = '连接键盘后即可绑定道具。'
     else if (command === 6) previewWorld.changeScene(value)
-    else if (command === 2 && !offlineWarehouse.value.snacks[value - 1]) interactionNotice.value = '背包里没有这种零食。'
+    else if (snack && offlineWarehouse.value.snacks[fruitId - 1] === 0) interactionNotice.value = petFruitStockMessage(snack)
     else {
       const previewError = previewWorld.use(command, value)
       applied = !previewError
@@ -374,6 +376,17 @@ async function interactWithPet(command: number, value: number) {
           ? 'K' + (key + 1) + (item ? ' 已绑定' + petItems.find(entry => entry.itemId === item)?.label : ' 已解除道具绑定')
           : '键盘尚未确认此绑定。'
       }
+    } else if (snack && result.state === 'ready' && (result.status === petOutOfStockStatus || result.status === 4)) {
+      let outOfStock = result.status === petOutOfStockStatus
+      if (!outOfStock && warehouse.value) {
+        // Older warehouse firmware used the same status for a full floor and an empty stock.
+        const fresh = await win.myApi.petAction(0)
+        if (fresh.state === 'ready' && fresh.status === 0 && fresh.session === session && hasPetPayload(fresh.payload)) {
+          applyPetReply(fresh)
+          outOfStock = warehouse.value?.snacks[fruitId - 1] === 0
+        }
+      }
+      interactionNotice.value = outOfStock ? petFruitStockMessage(snack) : '兔子正在忙，请稍后再试。'
     } else if (stat) interactionNotice.value = '键盘未确认保存，请检查连接后重试。'
     else if (command === 14) interactionNotice.value = '兔窝位置未保存，请检查键盘连接或稍后再试。'
     else interactionNotice.value = result.status === 4 || result.state === 'busy'

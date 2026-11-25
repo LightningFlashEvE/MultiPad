@@ -9,7 +9,7 @@ import { petCareGuide, petServerInstructions } from './petCareGuide'
 import type { PetRequest } from './screenReadback'
 import { invertPetEnergy, petActions, playableActions, petScenes, petRoomItems, petToyIds, petToyPhases, petFruitIds as fruits,
   petItems, toysForScene, petStateGeneration, petFoodStages, petHeadGestures, petDecorations, hutchBounds, timedPetActions, petMaxDurationSeconds, petTimedActionCommand, petLampCommand, petLampGeneration, petLampState, petAutoSleepEnergy, petRecoveredEnergy,
-  readPetWarehouse, petWarehouseBytes } from '../../src/utils/petCatalog'
+  readPetWarehouse, petWarehouseBytes, petFruitStockMessage, petOutOfStockStatus } from '../../src/utils/petCatalog'
 
 const seasons = ['spring', 'summer', 'autumn', 'winter'] as const
 const sources = ['automatic', 'physical', 'mcp'] as const
@@ -36,6 +36,10 @@ async function requestDevice(request: PetRequest, session?: string) {
     throw deviceError(reply.state, errors[reply.state])
   }
   if (reply.status !== 0) {
+    if (reply.status === petOutOfStockStatus && 'command' in request && request.command === commands.feed) {
+      const fruit = fruits[request.value - 1]
+      if (fruit) throw deviceError('out_of_stock', petFruitStockMessage(fruit))
+    }
     if (reply.status === 4) {
       const blocked = '先读 pet_get_state.availableNow，等可执行后再决定。'
       if ('command' in request && request.command === commands.feed) throw deviceError('pet_busy', '键盘当前无法接收更多水果。' + blocked)

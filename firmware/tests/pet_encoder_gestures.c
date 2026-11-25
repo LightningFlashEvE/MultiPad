@@ -412,6 +412,28 @@ static void run_reaches_edge_without_mid_stride_reversal(void) {
     assert(pet_mode_control(1, 0) == 0);
 }
 
+static void empty_snacks_report_stock_and_show_a_temporary_lcd_notice(void) {
+    assert(pet_mode_control(1, 1) == 0);
+    pet_care_bind(0, 1);
+    while (pet_care_take_snack(1)) {}
+    assert(pet_mode_control(5, 0) == 0);
+    advance(150);
+    const uint16_t scene_pixel = lcd[8][133];
+    const uint16_t notice_background = (10u << 11) | (11u << 5) | 7u;
+    const uint8_t queued = pet_mode_queue_depth();
+
+    assert(pet_mode_key_down(0));
+    advance(120);
+    assert(lcd[8][133] == notice_background);
+    assert(pet_mode_queue_depth() == queued && pet_care_get()->stock[0] == 0);
+
+    assert(pet_mode_control(2, 1) == PET_STATUS_OUT_OF_STOCK);
+    assert(pet_mode_control(12, 0) == PET_STATUS_OUT_OF_STOCK);
+    advance(2300);
+    assert(lcd[8][133] == scene_pixel);
+    assert(pet_mode_queue_depth() == queued);
+}
+
 int main(void) {
     pet_care_init(0); /* In-memory care. Separate NOR tests exercise durable storage. */
     gestures_and_framebuffer();
@@ -494,6 +516,7 @@ int main(void) {
     assert(pet_mode_control(1, 1) == 0);
     restore_performance_without_image();
     run_reaches_edge_without_mid_stride_reversal();
+    empty_snacks_report_stock_and_show_a_temporary_lcd_notice();
     puts("Pet encoder gesture and performance transition tests passed");
     return 0;
 }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { petItems, petOwnedCarrot, type PetWarehouse } from '../../utils/petCatalog'
+import { petItems, petFruitIds, petFruitStockMessage, petOwnedCarrot, type PetWarehouse } from '../../utils/petCatalog'
 
 const props = defineProps<{
   selected: number
@@ -36,8 +36,11 @@ const targetScene = computed(() => selectedItem.value.id === 'rabbit_hutch' ? 1 
 const deployed = computed(() => props.deployedToys?.[targetScene.value] ?? 0)
 const visiting = computed(() => independentHutch.value && selectedItem.value.kind === 'decoration')
 const placed = computed(() => !visiting.value && selectedItem.value.kind !== 'fruit' && deployed.value === selectedItem.value.wireId)
+const selectedSnack = computed(() => petFruitIds[selectedItem.value.itemId - 1])
+const stockNotice = computed(() => selectedSnack.value && props.warehouse?.snacks[selectedItem.value.itemId - 1] === 0
+  ? petFruitStockMessage(selectedSnack.value) : '')
 const canUse = computed(() => available.value && !props.busy && (placement.value || !props.occupied) &&
-  (selectedItem.value.kind !== 'fruit' || props.foodCount < 8 && (props.warehouse?.snacks[selectedItem.value.itemId - 1] ?? 1) > 0))
+  (selectedItem.value.kind !== 'fruit' || props.foodCount < 8 && !stockNotice.value))
 const useLabel = computed(() => {
   const item = selectedItem.value
   if (item.kind === 'fruit') return '投喂' + item.label
@@ -70,6 +73,7 @@ const boundLabel = (id: number) => petItems.find(item => item.itemId === id)?.la
         <button type="button" class="use" :disabled="!canUse" @click="emit('use', selectedItem.itemId)">{{ useLabel }}</button>
       </div>
       <p class="description">{{ selectedItem.description }}</p>
+      <p v-if="stockNotice" class="stock-notice" role="status">{{ stockNotice }}</p>
       <button v-if="placement && placed && targetScene === scene" type="button" class="repeat"
         :disabled="busy || occupied || (toyDrop ?? 100) < 100" @click="emit('play', selectedItem.wireId)">再玩一次</button>
       <p v-if="selectedItem.kind === 'fruit' && placement" class="capacity">
@@ -112,6 +116,7 @@ h3,h4,p { margin:0; }
 .item-heading .use:hover:enabled { background:var(--settings-accent-hover); }
 .detail p { font-size:12px; line-height:1.5; color:#49615f; }
 .detail .description { margin:7px 0 17px; }
+.detail .stock-notice { color:#9a3935; margin-bottom:10px; }
 .detail .repeat,.detail .capacity { margin:0 0 10px; }
 .keys { grid-template-columns:repeat(4,1fr); margin-top:7px; }
 .keys button { display:grid; gap:3px; justify-items:center; min-width:0; }

@@ -96,8 +96,13 @@ export type PetScene = typeof petScenes[number]
 export const petSceneLabels: Record<typeof petScenes[number], string> = { garden: '花园', nursery: '宝宝房' }
 
 export const petFruitIds = ['apple', 'banana', 'orange', 'grape', 'strawberry', 'pear', 'cherry', 'watermelon'] as const
+export const petOutOfStockStatus = 6
 export const petFruitLabels: Record<typeof petFruitIds[number], string> = {
   apple: '苹果', banana: '香蕉', orange: '橙子', grape: '葡萄', strawberry: '草莓', pear: '梨', cherry: '樱桃', watermelon: '西瓜'
+}
+
+export function petFruitStockMessage(fruit: typeof petFruitIds[number]) {
+  return petFruitLabels[fruit] + '库存已用完，可在商店补货。'
 }
 
 export const hutchBounds = { minX: 41, maxX: 280, minY: 69, maxY: 167 } as const

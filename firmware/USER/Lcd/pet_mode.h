@@ -46,6 +46,8 @@ typedef struct {
     uint8_t kind, value, source, detail;
 } PetEvent;
 
+enum { PET_STATUS_OUT_OF_STOCK = 6 };
+
 enum { PET_EVENT_CAPACITY = 64, PET_EVENTS_PER_REPLY = 16, PET_API_CAPABILITY = 0x50 };
 
 bool pet_mode_is_active(void);
