@@ -25,7 +25,7 @@ import PetDecorationPanel from '../components/screenPage/PetDecorationPanel.vue'
 import { createPetItemPreview, previewCare } from '../components/screenPage/petItemPreview'
 import PerformanceDisplay from '../components/screenPage/PerformanceDisplay.vue'
 import { petParameters, petParameterContent, petValue, petSeasons, petStats, type HutchPosition, type PetParameter, type PetState } from '../components/screenPage/petDisplay'
-import { petActions, petActionLabels, petScenes, petSceneLabels, petRoomItems, petItems, petStateGeneration, isHutchPosition, defaultHutchPosition } from '../utils/petCatalog'
+import { invertPetEnergy, petActions, petActionLabels, petScenes, petSceneLabels, petRoomItems, petItems, petStateGeneration, isHutchPosition, defaultHutchPosition } from '../utils/petCatalog'
 
 const router = useRouter()
 const win = window as any
@@ -59,7 +59,7 @@ let nextClockRetry = 0
 const currentToy = computed(() => petRoomItems.find(item => item.wireId === petState.value.activeToy))
 let offlineHutch: HutchPosition = { ...defaultHutchPosition }
 type ParamPair = [PetParameter, PetParameter]
-const petParameterIds = ref<[ParamPair, ParamPair]>([['satiety','sleepiness'], ['mood','affection']])
+const petParameterIds = ref<[ParamPair, ParamPair]>([['satiety','energy'], ['mood','affection']])
 const petImages = ref(['', ''])
 const performanceValues = ref<number[]>([])
 const performanceUnavailable = ref(false)
@@ -119,7 +119,7 @@ function applyPetReply(reply: { session?: string; payload: Uint8Array }) {
   petState.value = { active: p[0] === 1, action: p[1], x: p[2] | (p[3] << 8), fruit: p[8],
     hour: pendingScene.get(4) ?? p[9], season: pendingScene.get(5) ?? p[10], queue: p[11],
     minute: world ? p[28] : undefined,
-    stats: p.length >= 19 ? { satiety: p[12], sleepiness: p[13], mood: p[14], affection: p[15] } : undefined,
+    stats: p.length >= 19 ? { satiety: p[12], energy: invertPetEnergy(p[13]), mood: p[14], affection: p[15] } : undefined,
     scene: p.length >= 19 ? p[16] : 0,
     activeToy: p[17] ?? 0, toyPhase: p[18] ?? 0,
     hutchPosition: generation.value >= 4 ? { x: p[decorationOffset] | p[decorationOffset + 1] << 8, y: p[decorationOffset + 2] } : undefined,
@@ -313,7 +313,7 @@ async function interactWithPet(command: number, value: number) {
       }
       applyPetReply(room)
     }
-    const result = await win.myApi.petAction(command, value)
+    const result = await win.myApi.petAction(command, command === 24 ? invertPetEnergy(value) : value)
     if (result.state === 'ready' && result.status === 0 && hasPetPayload(result.payload)) {
       applyPetReply(result)
       applied = !stat || petState.value.stats?.[stat.id] === value
@@ -444,9 +444,10 @@ onMounted(async () => {
     if (Array.isArray(savedParameters) && savedParameters.length === 2) {
       savedParameters.forEach((stored, screen) => {
         const fallback = petParameterIds.value[screen]
-        const first = Array.isArray(stored) ? stored[0] : stored
+        const migrate = (id: unknown) => id === 'sleepiness' ? 'energy' : id
+        const first = migrate(Array.isArray(stored) ? stored[0] : stored)
         if (!valid(first)) return
-        const second = Array.isArray(stored) ? stored[1] : undefined
+        const second = migrate(Array.isArray(stored) ? stored[1] : undefined)
         petParameterIds.value[screen] = [first, valid(second) && second !== first ? second : fallback.find(id => id !== first)!]
       })
     }

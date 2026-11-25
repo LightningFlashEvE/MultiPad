@@ -188,7 +188,7 @@ test('model sees its personality, the complete available event window and care s
   const f=fixture(t)
   const saved=new Map()
   class Store { get(key){return saved.get(key)} set(key,value){saved.set(key,value)} }
-  let timer, scheduledDelay, modelRequest, nextTool
+  let timer, scheduledDelay, modelRequest, nextTool, nextSteps
   const ai=loadModule('../electron/controller/petAi.ts',{
     electron:{safeStorage:{isEncryptionAvailable:()=>true,encryptString:s=>Buffer.from(s),decryptString:b=>b.toString()}},
     'electron-store':Store,'./petMcp':f.mcp,'./petCareGuide':guide,[pathToCatalog]:catalog,
@@ -197,7 +197,7 @@ test('model sees its personality, the complete available event window and care s
     setTimeout(fn,ms){scheduledDelay=ms;timer=fn;return 1},clearTimeout(){timer=undefined},
     async fetch(_url,options){
       modelRequest=JSON.parse(options.body)
-      const message=nextTool?{tool_calls:[{type:'function',function:{name:nextTool,arguments: nextTool === 'pet_perform_sequence' ? JSON.stringify({steps:[{behavior:'blink'},{behavior:'jump',waitMs:10}]}) : '{"fruit":"apple"}'}}]}:{}
+      const message=nextTool?{tool_calls:[{type:'function',function:{name:nextTool,arguments: nextTool === 'pet_perform_sequence' ? JSON.stringify({steps:nextSteps ?? [{behavior:'blink'},{behavior:'jump',waitMs:10}]}) : '{"fruit":"apple"}'}}]}:{}
       return new Response(JSON.stringify({choices:[{message}]}))
     }
   })
@@ -207,7 +207,11 @@ test('model sees its personality, the complete available event window and care s
   ai.startPetAi(value => activity.push(value))
   ai.savePetAi(cfg)
   nextTool='pet_feed'
+  assert.equal((await ai.testPetAi('connection')).status.phase,'error')
+  nextTool='pet_perform_sequence'
+  nextSteps=[{behavior:'blink'}]
   assert.equal((await ai.testPetAi('connection')).status.phase,'idle')
+  nextSteps=undefined
   assert.deepEqual(f.board.requests,[])
   nextTool=undefined
   const auto=async()=>{
@@ -250,7 +254,9 @@ test('model sees its personality, the complete available event window and care s
   const snapshot=(await auto()).observation.state
   for (const behavior of ['sleep','visit_hutch','apple','eat','gaze_owner','place_carrot'])
     assert(!snapshot.automaticBehaviors.includes(behavior))
-  assert(snapshot.keyBindings && snapshot.availableNow.moveDecorations)
+  assert.equal(snapshot.stats.energy,100)
+  assert.equal('sleepiness' in snapshot.stats,false)
+  assert(snapshot.keyBindings && snapshot.deployedToys);assert.deepEqual(Object.keys(snapshot.availableNow).sort(),['actions','careNote'])
   assert.deepEqual(f.board.requests.filter(r=>r.command>0).map(r=>r.value),[10,7])
   assert(activity.some(a=>a.message.includes('1/2') && a.message.includes('眨眼') && a.session===session))
   assert(activity.some(a=>a.message.includes('2/2') && a.message.includes('跳跃')))
@@ -266,6 +272,22 @@ test('model sees its personality, the complete available event window and care s
   await auto()
   assert.deepEqual(f.board.requests.filter(r=>r.command>0).map(r=>r.value),[10,7,10])
   assert.match(ai.getPetAiActivity().message,/已接收眨眼.*已跳过跳跃/)
+  f.board.onWrite=undefined
+  f.board.payload=payload(6)
+  const countWrites=()=>f.board.requests.filter(r=>r.command>0).length
+  const before=countWrites()
+  for(const behavior of ['apple','place_carrot','play_carrot','visit_hutch','nursery']) {
+    nextSteps=[{behavior:'blink'},{behavior}]
+    ai.savePetAi({...cfg,enabled:true});timer()
+    while(ai.getPetAi().running) await new Promise(r=>setImmediate(r))
+    assert.equal(ai.getPetAi().status.phase,'error')
+    assert.equal(countWrites(),before)
+  }
+  nextSteps=[{behavior:'blink'}]
+  assert.equal((await ai.testPetAi('blink')).status.phase,'action')
+  assert.equal(countWrites(),before+1)
+  const schema=modelRequest.tools[0].function.parameters.properties.steps.items.properties.behavior
+  assert.deepEqual(schema.enum,catalog.playableActions)
   ai.observePetAiSession(null)
   assert.equal(timer,undefined)
   assert.equal(ai.getPetAiActivity().nextDecisionAt,undefined)
@@ -279,6 +301,21 @@ test('model sees its personality, the complete available event window and care s
   while(ai.getPetAi().running) await new Promise(r=>setImmediate(r))
   assert.equal(timer,undefined)
   assert.equal(ai.getPetAiActivity().message,'等待键盘进入养宠模式')
+})
+
+test('rabbit MCP exposes only reads and body sequences, and rejects a mixed plan before any write', async t => {
+  const f=fixture(t)
+  const server=f.mcp.createPetMcp(undefined,undefined,'rabbit')
+  const client=new Client({name:'rabbit-permissions',version:'1'})
+  const [c,s]=InMemoryTransport.createLinkedPair()
+  t.after(()=>Promise.all([client.close(),server.close()]))
+  await server.connect(s);await client.connect(c)
+  assert.deepEqual((await client.listTools()).tools.map(tool=>tool.name).sort(),['pet_get_events','pet_get_state','pet_perform_sequence'])
+  for (const behavior of ['apple','play_carrot','garden']) {
+    const r=await client.callTool({name:'pet_perform_sequence',arguments:{steps:[{behavior:'blink'},{behavior}]}})
+    assert(r.isError)
+  }
+  assert.deepEqual(f.board.requests,[])
 })
 
 test('owner inputs coalesce, interrupt stale plans and rearm a single idle round', async t => {

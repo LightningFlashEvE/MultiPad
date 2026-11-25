@@ -247,6 +247,7 @@ void screen_readback_poll(void) {
                 else if ((requested_generation < 9 || requested_generation > 10) && command == 3 && value >= PET_GROOM_FUR) status = STATUS_INVALID;
                 else if (requested_generation <= 3 && value == 1 && (command == 7 || command == 11 || command == 13))
                     status = pet_mode_control(15, 0); /* Former rabbit_hutch toy now visits the decoration. */
+                else if (command == 24 && value <= 100) status = pet_mode_control(command, 100 - value);
                 else status = pet_mode_control(command, value);
             }
             pixels[0] = pet_mode_is_active();
@@ -264,7 +265,7 @@ void screen_readback_poll(void) {
             if (screen == PET_CONTROL && requested_generation >= 2 && requested_generation <= 10) {
                 const PetCare *care = pet_care_get();
                 pixels[12] = care->satiety;
-                pixels[13] = care->sleepiness;
+                pixels[13] = 100 - care->energy; /* USB generations 2–10 encode fatigue. */
                 pixels[14] = care->mood;
                 pixels[15] = care->affection;
                 pixels[16] = care->scene;

@@ -3,15 +3,13 @@ import Store from 'electron-store'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { setInterval as pollInterval, clearInterval as stopPolling } from 'node:timers'
-import { setTimeout as delay } from 'node:timers/promises'
 import { z } from 'zod'
-import { createPetMcp, planSteps, readPetEvents } from './petMcp'
+import { createPetMcp, rabbitSteps, readPetEvents } from './petMcp'
 import { petCareGuide } from './petCareGuide'
 import { defaultRabbitPersonality, personalityLimit } from '../../src/utils/petPersonality'
-import { petActionLabels, petSceneLabels, petActions, playableActions, petScenes, petToyIds, petToys, petToyPhases, petRoomItems, petFoodStages, petHeadGestures,
+import { petActionLabels, petActions, playableActions, petScenes, petToyIds, petToys, petToyPhases, petRoomItems, petFoodStages, petHeadGestures,
   petFruitIds as fruits, petFruitLabels as fruitLabel } from '../../src/utils/petCatalog'
 
-const allowedTools = ['pet_perform_sequence', 'pet_feed'] as const
 const settingsSchema = z.object({
   apiUrl: z.string().trim().min(1).max(2048),
   model: z.string().trim().min(1).max(200),
@@ -26,7 +24,7 @@ const stateSchema = z.object({
   followRealTime: z.boolean().nullable(),
   queuedFruit: z.number().int().nonnegative(), hour: z.number(), minute: z.number().nullable(),
   season: z.string(), bedtime: z.boolean().nullable(),
-  stats: z.object({ satiety: stat, sleepiness: stat, mood: stat, affection: stat }).nullable(),
+  stats: z.object({ satiety: stat, energy: stat, mood: stat, affection: stat }).nullable(),
   scene: z.enum(petScenes).nullable(), activeToy: z.enum(petToyIds).nullable(),
   activeDecoration: z.enum(['rabbit_hutch','nursery_table']).nullable(), decorationPhase: z.enum(petToyPhases).nullable(),
   headPet: z.object({ remainingMs: z.number().int().min(0).max(1200), gesture: z.enum(petHeadGestures).nullable() }).passthrough().nullable(),
@@ -36,11 +34,7 @@ const stateSchema = z.object({
   toyDropProgress: z.number().nullable(),
   foods: z.array(z.object({ fruit: z.enum(fruits), x: z.number(), y: z.number(), stage: z.enum(petFoodStages) })).nullable(),
   automaticBehaviors: z.array(z.string()).optional(),
-  availableNow: z.object({
-    actions: z.array(z.enum(playableActions)), feed: z.boolean(), placeToys: z.array(z.enum(petToyIds)),
-    interactToys: z.array(z.enum(petToyIds)), useToys: z.array(z.enum(petToyIds)),
-    visitDecorations: z.array(z.enum(['rabbit_hutch','nursery_table'])), careNote: z.string()
-  }).passthrough().optional()
+  availableNow: z.object({ actions: z.array(z.enum(playableActions)), careNote: z.string() }).optional()
 }).passthrough()
 type PetState = z.infer<typeof stateSchema>
 const usingToy = (pet: PetState) => !!pet.activeToy || pet.toyPhase === 'using' || pet.toyPhase === 'approaching'
@@ -49,7 +43,6 @@ const hutchPhase = (pet: PetState) => pet.activeDecoration === 'rabbit_hutch' ? 
 const asleepInHutch = (pet: PetState) => pet.bedtime && hutchPhase(pet) === 'using' && pet.action === 'sleep'
 const busyWithToy = (pet: PetState) => (usingToy(pet) || !!pet.activeDecoration) && !asleepInHutch(pet)
 const hasFood = (pet: PetState) => pet.foods ? pet.foods.length > 0 : !!(pet.fruit || pet.queuedFruit)
-const canAutoFeed = (pet: PetState) => !hasFood(pet) && (pet.stats?.satiety ?? 100) < 90
 const eventsSchema = z.object({
   cursor: z.string(), reset: z.boolean(), overrun: z.boolean(), hasMore: z.boolean(),
   events: z.array(z.object({
@@ -67,7 +60,7 @@ const completionSchema = z.object({
       tool_calls: z.array(z.object({
         type: z.literal('function'),
         function: z.object({
-          name: z.enum(allowedTools), arguments: z.string().max(2048)
+          name: z.literal('pet_perform_sequence'), arguments: z.string().max(2048)
         })
       })).optional().nullable()
     })
@@ -76,7 +69,7 @@ const completionSchema = z.object({
 
 interface Settings { apiUrl: string; model: string; encryptedKey: string; enabled: boolean; personality?: string }
 interface DecisionStep { label: string; index: number; total: number; next?: string }
-interface Status { step?: DecisionStep; lastDecision?: string; phase: 'idle' | 'thinking' | 'queued' | 'landed' | 'eaten' | 'action' | 'error' | 'unconfirmed'; message: string; fruit?: string; sequence?: number; uptimeMs?: number }
+interface Status { step?: DecisionStep; lastDecision?: string; phase: 'idle' | 'thinking' | 'action' | 'error'; message: string }
 interface Provider { endpoint: string; model: string; key: string }
 
 let settingsStore: Store<{ settings: Settings }> | undefined
@@ -120,9 +113,7 @@ function publishActivity() {
 }
 
 function behaviorLabel(name: string): string {
-  const labels: Record<string, string> = { ...petActionLabels, ...petSceneLabels,
-    place_carrot: '放下胡萝卜玩具', play_carrot: '玩胡萝卜', visit_hutch: '回兔窝' }
-  return fruits.includes(name as typeof fruits[number]) ? '投喂' + fruitLabel[name as typeof fruits[number]] : labels[name] ?? name
+  return petActionLabels[name as keyof typeof petActionLabels] ?? name
 }
 
 function endpointFor(input: string) {
@@ -183,7 +174,7 @@ async function withPetMcp<T>(task: (client: Client) => Promise<T>) {
     const label = behaviorLabel(behavior)
     setStatus({ phase: 'action', message: '第 ' + index + '/' + total + ' 步已接收 · ' + label,
       step: { label, index, total, next: stepLabels[index] } })
-  })
+  }, 'rabbit')
   const client = new Client({ name: 'multipad-pet-ai', version: '1.0.0' })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
   try {
@@ -207,8 +198,8 @@ async function callPet(client: Client, name: string, args: Record<string, unknow
 const rabbitRole = [
   '你通过动作扮演 MultiPad 键盘上的垂耳兔。主人从屏幕观察你的行为。用 pet_perform_sequence 安排一到六步动作，每步可设置 waitMs，例如先眨眼，过 500 毫秒再跳。适合继续当前行为时返回空工具调用，省略文字。',
   '第一步只从 observation.state.automaticBehaviors 选择；若为空或想维持现状，返回空工具调用。后续步骤可预期前序动作的结果。等待时间计在对应动作之前。',
-  '四项属性均为 0–100。satiety 越低越饿，sleepiness 越高越困，mood 是当下心情，affection 是对主人的好感。饱食度达到90停止自动进食，困意至少25才睡，降至5时可以醒来。心情达到90或困意达到85不主动玩玩具，好感达到90不靠凝视刷好感。根据四项数值、当前活动和最近发生的事一起判断，避免每轮重复同一动作。',
-  '饥饿且场内没有水果时可投一份。已有水果时等兔子逐份吃，fruit_eaten 才表示吃完。eat 是空口进食动画。清醒且有兴致时可以走动、跳跃、玩胡萝卜或用 gaze_owner 面向主人。',
+  '四项属性均为 0–100。satiety 越低越饿，energy 越高越有精神，mood 是当下心情，affection 是对主人的好感。饱食度达到90停止自动进食，精神值不高于75才睡，恢复到95时可以醒来。心情达到90或精神值不高于15不主动玩玩具，好感达到90不靠凝视刷好感。根据四项数值、当前活动和最近发生的事一起判断，避免每轮重复同一动作。',
+  '你只控制兔子的身体。主人负责投喂、摆放道具和切换场景。主人投下水果或玩具后，可用眨眼、跳跃等动作回应，也可以等待键盘处理取食或玩耍。eat 仅播放咀嚼动画。',
   'sleep 会回兔窝持续睡觉，兔窝小憩是短休。熟睡且仍困时可以继续睡，休息充分时可用 idle 醒来。胡萝卜玩具和兔窝装饰相互独立，完成玩耍才有属性收益。',
   '观测取自键盘。physical 表示实体操作，automatic 表示固件行为，mcp 可来自软件、外部客户端或你之前的动作。尊重主人刚投放的食物和玩具。字段为 null 或事件不完整时按已知事实行动。',
   'head_petted 是主人对你的摸头，physical 来自实体大旋钮，mcp 来自软件模拟。你可以继续享受抚摸，也能在合适时看向主人。',
@@ -218,7 +209,7 @@ const rabbitRole = [
 
 async function decide(provider: Provider, client: Client, observation: string | object, pet?: PetState, personality?: string, controller = new AbortController()) {
   const { tools } = await client.listTools()
-  const selected = tools.find(t => t.name === (pet ? 'pet_perform_sequence' : 'pet_feed'))
+  const selected = tools.find(t => t.name === 'pet_perform_sequence')
   if (!selected) throw Error('缺少宠物动作工具')
   const { $schema: _schema, ...parameters } = selected.inputSchema
   const description = pet?.automaticBehaviors
@@ -262,10 +253,7 @@ async function decide(provider: Provider, client: Client, observation: string | 
   if (!call) return undefined
   if (!offered.some(tool => tool.function.name === call.name)) throw Error('模型选择的工具当前不可用')
   const args: unknown = JSON.parse(call.arguments)
-  if (call.name === 'pet_feed') {
-    return { name: call.name, fruit: z.object({ fruit: z.enum(fruits) }).strict().parse(args).fruit } as const
-  }
-  const plan = z.object({ steps: planSteps, session: z.string().optional() }).strict().parse(args)
+  const plan = z.object({ steps: rabbitSteps, session: z.string().optional() }).strict().parse(args)
   return { name: 'pet_perform_sequence', steps: plan.steps } as const
 }
 
@@ -296,70 +284,7 @@ async function observeRecentEvents(client: Client, session: string) {
   }
 }
 
-async function feedAndObserve(client: Client, fruit: typeof fruits[number], expectedSession: string,
-  stillEnabled: () => boolean, automatic: boolean) {
-  let page = await readEvents(client)
-  for (let i = 0; page.hasMore && i < 5; i++) page = await readEvents(client, page.cursor)
-  if (page.hasMore) throw Error('桌宠事件正在快速变化，请稍后重试')
-  let cursor = page.cursor
-  const before = await readState(client)
-  if (before.session !== expectedSession) throw Error('键盘连接已改变')
-  if (!before.active) throw Error('请先让键盘进入养宠模式')
-  if (hasFood(before)) throw Error('已有水果在场景中，等待兔子取食')
-  if (automatic && !canAutoFeed(before)) {
-    setStatus({ phase: 'idle', message: '兔子已经吃饱了' })
-    return
-  }
-  if (busyWithToy(before)) throw Error('兔子正在使用玩具')
-  if (!cursor.startsWith(before.session + ':')) throw Error('键盘连接已改变')
-  if (!stillEnabled()) return
-  const label = fruitLabel[fruit]
-  const receipt = stateSchema.parse(await callPet(client, 'pet_feed', { fruit }))
-  if (!stillEnabled()) return
-  setStatus({ phase: 'queued', message: label + '已排队', fruit })
-  let queued = false
-  const deadline = Date.now() + 20_000
-  try {
-    if (receipt.session !== before.session || (receipt.foods
-      ? receipt.foods.length !== 1 || receipt.foods[0].fruit !== fruit
-      : receipt.queuedFruit !== 1)) throw Error()
-    while (stillEnabled() && Date.now() < deadline) {
-      try {
-        page = await readEvents(client, cursor)
-      } catch {
-        await delay(300)
-        continue
-      }
-      if (!stillEnabled()) return
-      if (page.reset || page.overrun) break
-      cursor = page.cursor
-      for (const event of page.events) {
-        if ((event.type === 'mode_changed' && !event.active) || event.type === 'scene_changed') throw Error()
-        if (!queued && event.type === 'fruit_queued') {
-          if (event.source !== 'mcp' || event.fruit !== fruit || event.queueDepth !== 1) throw Error()
-          queued = true
-        } else if (queued && event.fruit === fruit && event.source === 'mcp') {
-          // Events have no per-fruit serial number. Two identical MCP feeds cannot be attributed safely.
-          if (event.type === 'fruit_queued') throw Error()
-          if (event.type === 'fruit_landed') {
-            setStatus({ phase: 'landed', message: label + '已落地，等待兔子取食', fruit })
-            if (receipt.foods && (receipt.stats?.satiety ?? 0) >= (receipt.generation >= 6 ? 90 : 100)) return
-          }
-          if (event.type === 'fruit_eaten') {
-            setStatus({ phase: 'eaten', message: '兔子已吃完' + label, fruit, sequence: event.sequence, uptimeMs: event.uptimeMs })
-            return
-          }
-        }
-      }
-      if (!page.hasMore) await delay(300)
-    }
-  } catch {
-    // An accepted write is never repeated while waiting for confirmation.
-  }
-  if (stillEnabled()) setStatus({ phase: 'unconfirmed', message: label + '已排队，未收到可确认的吃完事件', fruit })
-}
-
-async function run(kind: 'auto' | 'connection' | 'feed') {
+async function run(kind: 'auto' | 'connection' | 'blink') {
   if (running) throw Error('AI 正在处理上一轮')
   const saved = store().get('settings')
   if (!saved?.encryptedKey) throw Error('请先保存模型配置')
@@ -380,7 +305,7 @@ async function run(kind: 'auto' | 'connection' | 'feed') {
       if (!stillEnabled()) return
       activitySession = pet?.session
       if (pet && !pet.active) {
-        if (kind === 'feed') throw Error('请先让键盘进入养宠模式')
+        if (kind === 'blink') throw Error('请先让键盘进入养宠模式')
         setStatus({ phase: 'idle', message: '等待键盘进入养宠模式' })
         return
       }
@@ -396,24 +321,25 @@ async function run(kind: 'auto' | 'connection' | 'feed') {
           return
         }
       }
-      if (kind === 'feed' && pet && (hasFood(pet) || busyWithToy(pet))) throw Error('请等待当前互动结束后再测试投喂')
+      if (kind === 'blink' && !pet?.automaticBehaviors?.includes('blink')) throw Error('请等兔子空闲时再测试眨眼')
       setStatus({ phase: 'thinking', message: kind === 'connection' ? '正在测试模型工具调用' : trigger ? 'AI 正在回应' + interactionLabel(trigger.events.at(-1)!) : 'AI 正在选择兔子的动作' })
       const { session: _session, ...observedState } = pet ?? {}
       const request = kind === 'auto' && pet
-        ? { state: observedState, ownerInteractions: trigger?.events ?? [], recentActivity: await observeRecentEvents(client, pet.session), guide: petCareGuide,
+        ? { state: observedState, ownerInteractions: trigger?.events ?? [], recentActivity: await observeRecentEvents(client, pet.session), guide: { stats: petCareGuide.stats, actions: petCareGuide.actions,
+            food: { timing: petCareGuide.food.timing, result: petCareGuide.food.result, confirmation: petCareGuide.food.confirmation },
+            headPet: petCareGuide.interactions.headPet, scenes: petCareGuide.scenes },
             catalog: { actions: playableActions, fruits, roomItems: petRoomItems, scenes: petScenes },
             previousPlan: previousPlan?.session === pet.session ? { accepted: previousPlan.accepted, stoppedBefore: previousPlan.stoppedBefore } : null }
-        : '这是 MultiPad 的投喂测试，请调用 pet_feed，参数 fruit 为 apple。'
+        : '调用 pet_perform_sequence，只安排一步 blink，waitMs 为 0。'
       if (!stillEnabled()) return
       const decision = await decide(providerFor(saved), client, request, kind === 'auto' ? pet : undefined, saved.personality, requestAbort)
       if (!stillEnabled()) return
-      if (kind !== 'auto' && (decision?.name !== 'pet_feed' || decision.fruit !== 'apple')) {
-        throw Error('模型没有发出预期的苹果投喂调用')
+      if (kind !== 'auto' && (decision?.steps.length !== 1 || decision.steps[0].behavior !== 'blink' || decision.steps[0].waitMs !== 0)) {
+        throw Error('模型没有返回预期的单步眨眼动作')
       }
       if (kind === 'connection') {
         setStatus({ phase: 'idle', message: '模型连接正常，已验证工具调用' })
-      } else if (pet && decision?.name === 'pet_feed') {
-        await feedAndObserve(client, decision.fruit, pet.session, stillEnabled, kind === 'auto')
+
       } else if (pet && decision?.name === 'pet_perform_sequence') {
         stepLabels = decision.steps.map(step => behaviorLabel(step.behavior))
         setStatus({ phase: 'thinking', message: '准备' + stepLabels[0],
@@ -444,7 +370,7 @@ async function run(kind: 'auto' | 'connection' | 'feed') {
   return getPetAi()
 }
 
-export function testPetAi(kind: 'connection' | 'feed') {
+export function testPetAi(kind: 'connection' | 'blink') {
   return run(kind)
 }
 

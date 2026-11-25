@@ -8,14 +8,14 @@ enum { FIRST_SECTOR = 319, SECTOR_BYTES = 4096, V1_BYTES = 16, RECORD_BYTES = 32
        PER_SECTOR = SECTOR_BYTES / RECORD_BYTES, SLOTS = 2 * PER_SECTOR };
 static const uint8_t signature[] = {'P', 'E', 'T'};
 static const PetCare initial_care = {
-    .satiety = 65, .sleepiness = 25, .mood = 70, .affection = 35,
+    .satiety = 65, .energy = 75, .mood = 70, .affection = 35,
     .bindings = {1,2,3,4,5,6,7,8}, .hutch_x = 246, .hutch_y = 142
 };
 static PetCare care;
 /* Screen and USB readers see the last verified stats. Pending changes can
  * continue to accumulate while a failed page program is retried. */
-static struct { uint8_t satiety, sleepiness, mood, affection; } pending_stats;
-static uint32_t sequence, metabolism_ms, fatigue_ms, retry_at;
+static struct { uint8_t satiety, energy, mood, affection; } pending_stats;
+static uint32_t sequence, metabolism_ms, energy_ms, exercise_ms, retry_at;
 static uint16_t next_slot;
 static uint32_t bond_ms;
 static bool dirty, journal_available, retry_pending, was_sleeping;
@@ -53,7 +53,7 @@ static bool valid(const uint8_t *record, unsigned bytes) {
 
 void pet_care_init(uint16_t flash_id) {
     care = initial_care;
-    sequence = metabolism_ms = fatigue_ms = bond_ms = next_slot = 0;
+    sequence = metabolism_ms = energy_ms = exercise_ms = bond_ms = next_slot = 0;
     dirty = retry_pending = was_sleeping = false;
     switch (flash_id) {
         case W25Q16: case W25Q32: case W25Q64: case W25Q128: case W25Q256:
@@ -82,7 +82,7 @@ void pet_care_init(uint16_t flash_id) {
             /* V3 reserved byte 27 was zero on older firmware. */
             bond_ms = record[3] == 3 && record[27] < 10 ? record[27] * 60000u : 0;
             care.satiety = record[8];
-            care.sleepiness = record[9];
+            care.energy = 100 - record[9]; /* V1–V3 journals encode fatigue. */
             care.mood = record[10];
             care.affection = record[11];
             care.scene = record[12];
@@ -100,7 +100,7 @@ void pet_care_init(uint16_t flash_id) {
         }
     }
     pending_stats.satiety = care.satiety;
-    pending_stats.sleepiness = care.sleepiness;
+    pending_stats.energy = care.energy;
     pending_stats.mood = care.mood;
     pending_stats.affection = care.affection;
 }
@@ -154,9 +154,9 @@ static void adjust(uint8_t *value, int delta) {
 }
 
 static int bond_direction(void) {
-    if (pending_stats.satiety <= 25 || pending_stats.mood <= 30 || pending_stats.sleepiness >= 80)
+    if (pending_stats.satiety <= 25 || pending_stats.mood <= 30 || pending_stats.energy <= 20)
         return pending_stats.affection ? -1 : 0;
-    if (pending_stats.satiety >= 70 && pending_stats.mood >= 70 && pending_stats.sleepiness <= 30)
+    if (pending_stats.satiety >= 70 && pending_stats.mood >= 70 && pending_stats.energy >= 70)
         return pending_stats.affection < 100 ? 1 : 0;
     return 0;
 }
@@ -168,10 +168,10 @@ static void reset_bond_if_changed(int previous) {
     }
 }
 
-void pet_care_adjust(int satiety, int sleepiness, int mood, int affection) {
+void pet_care_adjust(int satiety, int energy, int mood, int affection) {
     int previous = bond_direction();
     adjust(&pending_stats.satiety, satiety);
-    adjust(&pending_stats.sleepiness, sleepiness);
+    adjust(&pending_stats.energy, energy);
     adjust(&pending_stats.mood, mood);
     adjust(&pending_stats.affection, affection);
     reset_bond_if_changed(previous);
@@ -179,7 +179,7 @@ void pet_care_adjust(int satiety, int sleepiness, int mood, int affection) {
 }
 
 bool pet_care_set_stat(uint8_t index, uint8_t value) {
-    uint8_t *fields[] = {&pending_stats.satiety, &pending_stats.sleepiness, &pending_stats.mood, &pending_stats.affection};
+    uint8_t *fields[] = {&pending_stats.satiety, &pending_stats.energy, &pending_stats.mood, &pending_stats.affection};
     if (!journal_available || index >= sizeof(fields) / sizeof(fields[0]) || value > 100) return false;
     int previous = bond_direction();
     adjust(fields[index], (int)value - *fields[index]);
@@ -188,7 +188,7 @@ bool pet_care_set_stat(uint8_t index, uint8_t value) {
     return !dirty;
 }
 
-void pet_care_tick(uint32_t elapsed_ms, bool sleeping) {
+void pet_care_tick(uint32_t elapsed_ms, bool sleeping, unsigned exertion) {
     /* Charge time only while this pet is on screen. Separate fatigue progress
      * avoids attributing a whole minute to a sleep entered on its last tick. */
     if (elapsed_ms > 60000) elapsed_ms = 60000;
@@ -204,19 +204,26 @@ void pet_care_tick(uint32_t elapsed_ms, bool sleeping) {
         if (bond_ms / 60000u != saved_minutes) dirty = true;
     }
     if (was_sleeping != sleeping) {
-        fatigue_ms = 0;
+        energy_ms = 0;
         was_sleeping = sleeping;
     }
-    const uint32_t fatigue_interval = sleeping ? 20000 : 60000;
-    fatigue_ms += elapsed_ms;
-    while (fatigue_ms >= fatigue_interval) {
-        fatigue_ms -= fatigue_interval;
-        adjust(&pending_stats.sleepiness, sleeping ? -1 : 1);
+    const uint32_t energy_interval = sleeping ? 20000 : 60000;
+    energy_ms += elapsed_ms;
+    while (energy_ms >= energy_interval) {
+        energy_ms -= energy_interval;
+        adjust(&pending_stats.energy, sleeping ? 1 : -1);
+    }
+    exercise_ms += elapsed_ms * exertion;
+    if (exercise_ms >= 60000u) {
+        const int cost = exercise_ms / 60000u;
+        exercise_ms %= 60000u;
+        adjust(&pending_stats.satiety, -cost);
+        adjust(&pending_stats.energy, -cost);
     }
     metabolism_ms += elapsed_ms;
     if (metabolism_ms >= 60000) {
         metabolism_ms -= 60000;
-        if (pending_stats.satiety < 25 || pending_stats.sleepiness > 85) adjust(&pending_stats.mood, -1);
+        if (pending_stats.satiety < 25 || pending_stats.energy < 15) adjust(&pending_stats.mood, -1);
         adjust(&pending_stats.satiety, -1);
     }
     reset_bond_if_changed(previous);
@@ -240,7 +247,7 @@ static bool append_record(void) {
     uint32_t serial = ++sequence;
     memcpy(record + 4, &serial, sizeof(serial));
     record[8] = pending_stats.satiety;
-    record[9] = pending_stats.sleepiness;
+    record[9] = 100 - pending_stats.energy;
     record[10] = pending_stats.mood;
     record[11] = pending_stats.affection;
     record[12] = care.scene;
@@ -273,7 +280,7 @@ void pet_care_save(void) {
     }
     retry_pending = dirty = false;
     care.satiety = pending_stats.satiety;
-    care.sleepiness = pending_stats.sleepiness;
+    care.energy = pending_stats.energy;
     care.mood = pending_stats.mood;
     care.affection = pending_stats.affection;
 }

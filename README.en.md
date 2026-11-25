@@ -41,7 +41,7 @@ The rabbit eats snacks one at a time, returns to its hutch to sleep and sometime
 
 ## Adjust a stat
 
-In Pet mode, click the color display, then **属性数值** (Stat values). Enter a whole number from 0 to 100 and click **保存** (Save) on that row. You can change fullness, sleepiness, mood or affection. A higher sleepiness value means a more tired rabbit. The keyboard confirms the value and saves it in flash. Edits made while disconnected only affect the local preview. Manual editing requires pet protocol generation 10 or later.
+In Pet mode, click the color display, then **属性数值** (Stat values). Enter a whole number from 0 to 100 and click **保存** (Save) on that row. You can change fullness, energy, mood or affection. Higher energy means the rabbit is more rested. Sleep restores energy. Walking and vigorous movement consume both fullness and energy. Older saves retain their equivalent energy level. The keyboard confirms the value and saves it in flash. Edits made while disconnected only affect the local preview. Manual editing requires pet protocol generation 10 or later.
 
 ![Stat editor with the current reading, numeric input and Save button for each attribute](docs/images/pet-stats.png)
 
@@ -49,7 +49,7 @@ Stats continue to change during Pet mode. With sustained good care, affection ri
 
 ## Optional AI control
 
-Open **AI 控制** (AI control) in pet settings. Enter the base URL, model name and key for an OpenAI-compatible API that supports tool calls. The included Alibaba Cloud Beijing Token Plan endpoint requires a Token Plan key. You can set the rabbit’s personality and enable autonomous actions. Head strokes, feeding and placing a toy trigger a decision. A continuous knob stroke counts once, after you stop. During quiet periods, the next decision starts 60 seconds after the previous round ends. The model observes the pet and available actions through MCP and can arrange a sequence such as feeding the rabbit and waiting for it to finish. [MCP tools and events, in Chinese](docs/pet-mcp.md)
+Open **AI 控制** (AI control) in pet settings. Enter the base URL, model name and key for an OpenAI-compatible API that supports tool calls. The included Alibaba Cloud Beijing Token Plan endpoint requires a Token Plan key. You can set the rabbit’s personality and enable autonomous actions. Head strokes, feeding and placing a toy trigger a decision. A continuous knob stroke counts once, after you stop. During quiet periods, the next decision starts 60 seconds after the previous round ends. The model observes the pet and available actions through MCP and can arrange a sequence of rabbit movements such as blinking and hopping. The owner controls food, toys and scene changes. [MCP tools and events, in Chinese](docs/pet-mcp.md)
 
 ## Build from source
 
