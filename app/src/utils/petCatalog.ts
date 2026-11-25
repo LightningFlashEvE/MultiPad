@@ -1,7 +1,7 @@
 // The array positions are action and scene IDs on the USB wire. Append new IDs.
 export const petCareGraceMs = 300_000
 export const petUnattendedDecayMs = 120_000
-export const petSleepRecoveryMs = 2_000
+export const petSleepRecoveryMs = 30_000
 export const petDaydreamMs = 15_000
 export const petGazeOwnerMs = 8_000
 export const petAutoSleepIdleMs = 45_000

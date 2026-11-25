@@ -234,15 +234,15 @@ static void unattended_care_declines_slowly(void) {
 static void sleep_restores_energy_even_while_unattended(void) {
     new_flash();
     assert(pet_care_set_stat(1, 0));
-    pet_care_tick(1999, true, 0, true);
+    pet_care_tick(29999, true, 0, true);
     stats(65, 0, 70, 35);
     pet_care_tick(1, true, 0, true);
     stats(65, 1, 70, 35);
-    pet_care_tick(58000, true, 0, true);
-    stats(65, 30, 70, 35);
+    pet_care_tick(30000, true, 0, true);
+    stats(65, 2, 70, 35);
     pet_care_tick(60000, true, 0, true);
     pet_care_init(W25Q128);
-    stats(64, 60, 69, 34);
+    stats(64, 4, 69, 34);
 }
 static void pendant_lamp_persists(void) {
     new_flash();

@@ -166,19 +166,21 @@ test('unattended stats fall while awake, and a head pat restarts the grace perio
   assert.equal(state.stats.affection, treated.affection)
 })
 
-test('sleep restores one energy point every two seconds from arrival in the hutch', () => {
+test('sleep restores one energy point every thirty seconds and petting does not reset it', () => {
   const {world,state,tick} = preview(100)
   state.stats.energy = 40
   assert.equal(world.use(3, 2), '')
   for (let i = 0; state.action !== 2 && i < 200; i++) tick(25)
   assert.equal(state.action, 2)
   assert.equal(state.stats.energy, 40)
-  tick(1975)
+  tick(29_975)
   assert.equal(state.stats.energy, 40)
+  assert.equal(world.use(22, 0), '')
+  assert.ok(state.headPatRemaining > 0)
   tick(25)
   assert.equal(state.stats.energy, 41)
-  tick(58_000)
-  assert.equal(state.stats.energy, 70)
+  tick(30_000)
+  assert.equal(state.stats.energy, 42)
 })
 test('an awake rabbit naturally daydreams for fifteen seconds and gazes for eight', () => {
   const {world,state,tick} = preview()
