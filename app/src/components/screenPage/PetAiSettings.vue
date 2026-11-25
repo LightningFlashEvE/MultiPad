@@ -70,7 +70,7 @@ const test = (kind: 'connection' | 'blink') => run(async () => { current.value =
 
 <template>
   <section class="pet-ai">
-    <p>摸头、投喂或放玩具会触发 AI 决策；连续摸头在停手后回应一次。平时每 60 秒决定一轮，AI 只控制兔子自身，每轮最多六步动作。每步执行前都会重新检查兔子的状态。</p>
+    <p>摸头、投喂或放玩具会触发 AI 决策；连续摸头在停手后回应一次。平时每 60 秒决定一轮，AI 每轮最多决定一个动作，执行前重新检查兔子的状态。兔子忙时会继续当前活动。</p>
     <label>API 地址
       <input v-model.trim="apiUrl" type="url" placeholder="https://api.example.com/v1" maxlength="2048" autocomplete="off">
     </label>
