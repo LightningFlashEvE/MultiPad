@@ -987,6 +987,11 @@ const showAppInfo = () => {
             <button type="button" :aria-pressed="appMode === 'work'" :disabled="progressShow || firmwareUpdating" @click="setAppMode('work')">工作模式</button>
             <button type="button" :aria-pressed="appMode === 'pet'" :disabled="progressShow || firmwareUpdating" @click="setAppMode('pet')">养宠模式</button>
           </div>
+          <span v-if="appMode === 'work' && pendingWorkLayers.length" class="work-sync-status" role="status">
+            {{ progressShow ? '正在同步' : workSyncFailed ? '同步中断，正在重试' : conState ? '等待同步' : '连接后自动同步' }}
+          </span>
+          <span v-else-if="appMode === 'work' && performanceUnavailable && showingPerformance"
+            class="work-sync-status" role="status">性能监测需升级固件</span>
         </div>
       </template>
     </WindowTitle>
@@ -1044,11 +1049,6 @@ const showAppInfo = () => {
         :class="{ 'device-active': isDeviceButtonActive(10) }"
         @click.stop="openConfigWindow(10)">旋钮 3</button>
     </div>
-    <p v-if="appMode === 'work' && pendingWorkLayers.length" class="work-sync-status" role="status">
-      {{ progressShow ? '正在同步' : workSyncFailed ? '同步中断，正在重试' : conState ? '等待同步' : '连接后自动同步' }}
-    </p>
-    <p v-if="appMode === 'work' && performanceUnavailable && configStore.screenData[0].content?.mode === 'performance'"
-      class="firmware-hint" role="status">彩屏性能监测需要升级键盘固件。</p>
     <dialog ref="petDialog" class="pet-dialog" :class="{ 'param-dialog': petScreen > 0 }">
       <form method="dialog">
         <header>
@@ -1142,7 +1142,6 @@ const showAppInfo = () => {
 .home-toolbar .mode-switch button { padding: 5px 7px; border: 0; border-radius: 6px; font-size: 13px; white-space: nowrap; color: #263d46; background: transparent; cursor: pointer; }
 .home-toolbar .mode-switch button[aria-pressed="true"] { color: white; background: #263d46; }
 .mode-status { grid-column: 1 / -1; align-self: center; font-size: 12px; color: #405058; }
-.firmware-hint { position: absolute; bottom: 0; left: 22px; margin: 0; font-size: 12px; }
 .pet-dialog { box-sizing: border-box; width: min(640px, 96%); max-height: calc(100vh - 28px); overflow: auto; margin: auto; padding: 18px; color: #24323a; border: 1px solid #aab7bd; border-radius: 14px; background: #f7fafb; }
 .pet-dialog.param-dialog { width: min(330px, 94%); }
 .pet-tabs { display:flex; flex-wrap:wrap; gap:4px; margin:0 0 14px; padding-bottom:8px; border-bottom:1px solid #d3dfdd; }
@@ -1372,7 +1371,7 @@ const showAppInfo = () => {
 }
 #home-content .display-entry-points button:hover { background: #f6f9f8; }
 #home-content .display-entry-points button.selected { background: #214c49; color: #f0fcf8; }
-.work-sync-status { margin: 4px 0 0 12px; font-size: 12px; }
+.work-sync-status { color: #324a54; font-size: 11px; font-weight: 500; }
 
 #menu-box {
   display: flex;
