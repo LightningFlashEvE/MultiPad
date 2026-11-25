@@ -237,19 +237,22 @@ test('idle plans allow variable length, isolate invalid actions and wait briefly
   const saved = new Map()
   class Store { get(key) { return saved.get(key) } set(key, value) { saved.set(key, value) } }
   let timer, scheduledDelay, modelRequest, reply, beforeResponse, calls = 0, now = 10_000, whenWaiting
+  let providerFailure, retryAfter
   const ai = loadModule('../electron/controller/petAi.ts', {
     electron: {safeStorage:{isEncryptionAvailable:()=>true,encryptString:s=>Buffer.from(s),decryptString:b=>b.toString()}},
     'electron-store': Store, './petMcp': f.mcp, [pathToCatalog]: catalog,
     'node:timers/promises': { setTimeout: async ms => { now += ms; whenWaiting?.() } },
     '../../src/utils/petPersonality': loadModule('../src/utils/petPersonality.ts')
   }, {
-    Date: {now: () => now},
+    Date: class extends Date { static now() { return now } },
     setTimeout(fn, ms) { scheduledDelay = ms; timer = fn; return 1 },
     clearTimeout() { timer = undefined },
     async fetch(_url, options) {
       calls++
       modelRequest = JSON.parse(options.body)
       beforeResponse?.()
+      if (providerFailure === 'offline') throw new TypeError('fixture offline')
+      if (providerFailure === 429) return new Response('', {status:429, headers:retryAfter ? {'Retry-After':retryAfter} : {}})
       return new Response(JSON.stringify({ choices: [{ message: reply ?? {} }] }))
     }
   })
@@ -347,12 +350,111 @@ test('idle plans allow variable length, isolate invalid actions and wait briefly
 
   const beforeFallback = writes().length
   reply = {}
-  assert.match((await auto()).message, /模型未给出可执行的动作.*本地活动.*舔毛/)
+  const fallback = await auto()
+  assert.match(fallback.message, /模型未给出可执行的动作.*本地活动/)
+  assert(actions().some(action => catalog.petActionLabels[action] === fallback.lastDecision))
+  assert.notEqual(fallback.lastDecision, catalog.petActionLabels.daydream)
   assert.equal(writes().length, beforeFallback + 1)
   f.board.payload = payload(11, {13:80})
   offer({behavior:'run'},{behavior:'eat'})
   assert.match((await auto()).message, /本地活动.*睡觉/)
   assert.equal(writes().at(-1), 2 | (catalog.petMaxDurationSeconds << 5) | (catalog.petRecoveredEnergy << 14))
+
+  await t.test('a rejected long action releases its slot while the next step waits for food', async () => {
+    f.board.payload = payload(13)
+    offer({behavior:'daydream',durationSeconds:300}, {behavior:'blink'})
+    const initialWrites = writes().length
+    beforeResponse = () => { f.board.payload = payload(13, {1:3}, [1]) }
+    assert.match((await auto()).message, /已跳过/)
+    beforeResponse = undefined
+    const planCalls = calls
+    assert.equal(scheduledDelay, 0)
+    for (let i = 0; i < 3; i++) {
+      assert.match((await step()).message, /等待进食结束/)
+      assert.equal(scheduledDelay, 2000)
+      assert.equal(ai.getPetAiActivity().queue.next, '眨眼')
+    }
+    assert.equal(writes().length, initialWrites)
+    f.board.payload = payload(13)
+    assert.equal((await step()).lastDecision, '眨眼')
+    assert.equal(writes().length, initialWrites + 1)
+    assert.equal(calls, planCalls)
+
+    // A skipped slot must not consume an explicit rest or replay an expired step after resume.
+    offer({behavior:'daydream',durationSeconds:300}, {behavior:'rest'}, {behavior:'blink'})
+    beforeResponse = () => { f.board.payload = payload(13, {1:3}, [1]) }
+    assert.match((await auto()).message, /已跳过/)
+    assert.equal(scheduledDelay, 10_000)
+    beforeResponse = undefined
+    f.board.payload = payload(13)
+    offer({behavior:'rest'}, {behavior:'daydream',durationSeconds:300}, {behavior:'blink'})
+    await auto()
+    now += 20_000
+    const beforeResume = writes().length
+    await step()
+    assert.equal(writes().length, beforeResume)
+    assert.equal(scheduledDelay, 0)
+    assert.equal((await step()).lastDecision, '眨眼')
+  })
+
+  await t.test('rate limiting honors seconds and HTTP dates, recovers and leaves local actions available', async () => {
+    for (const format of ['seconds','date','missing']) {
+      const initialCalls = calls
+      const seconds = format === 'missing' ? 60 : 180
+      providerFailure = 429
+      beforeResponse = () => {
+        retryAfter = format === 'seconds' ? '180' : format === 'date' ? new Date(now + 180_000).toUTCString() : undefined
+      }
+      assert.match((await auto()).source, /模型限流.*本地活动/)
+      beforeResponse = undefined
+      providerFailure = undefined
+      const blocked = await ai.testPetAi('connection')
+      assert.match(blocked.status.message, /模型限流/)
+      assert.equal(calls, initialCalls + 1)
+      for (let elapsed = 60; elapsed < seconds; elapsed += 60) {
+        assert.match((await step()).source, /模型限流/)
+        assert.equal(calls, initialCalls + 1)
+      }
+      plan('rest')
+      assert.equal((await step()).phase, 'idle')
+      assert.equal(calls, initialCalls + 2)
+    }
+  })
+
+  await t.test('offline variety follows room, energy, mood and device capabilities', async () => {
+    providerFailure = 'offline'
+    const vigorous = ['jump','run','binky']
+    for (const [room, generation] of [[0,13],[1,13],[0,6]]) {
+      f.board.payload = payload(generation, {12:85,13:15,14:85,16:room})
+      const chosen = []
+      for (let i = 0; i < 24; i++) {
+        const status = await step()
+        const action = catalog.petActions[writes().at(-1) & 31]
+        assert.equal(status.lastDecision, catalog.petActionLabels[action])
+        assert(actions().includes(action))
+        assert(!chosen.slice(-1).includes(action))
+        if (vigorous.includes(action)) assert(!chosen.slice(-2).some(previous => vigorous.includes(previous)))
+        chosen.push(action)
+      }
+      if (generation === 13) {
+        for (const action of ['daydream','blink','walk','groom_fur','groom_ear','gaze_owner','stand_watch',...vigorous]) assert(chosen.includes(action), action)
+        assert.equal(chosen.includes('inspect_table'), room === 1)
+      } else {
+        for (const action of ['groom_ear','binky','stand_watch','inspect_table']) assert(!chosen.includes(action), action)
+      }
+    }
+    for (const fields of [{12:20},{13:50},{14:30}]) {
+      f.board.payload = payload(13,fields)
+      for (let i = 0; i < 12; i++) {
+        await step()
+        assert(!vigorous.includes(catalog.petActions[writes().at(-1) & 31]))
+      }
+    }
+    const recent = JSON.parse(modelRequest.messages[1].content).observation.recentActions
+    assert.equal(recent.length, 6)
+    assert(recent.every(action => catalog.playableActions.includes(action)))
+    providerFailure = undefined
+  })
 
   ai.observePetAiSession(null)
   assert.equal(timer, undefined)
@@ -415,6 +517,7 @@ test('owner inputs coalesce, interrupt stale plans and rearm a single idle round
   const config = new Map()
   class Store { get(k){ return config.get(k) } set(k,v){ config.set(k,v) } }
   const observations = []
+  let limitProvider = false
   let timer, pollDevice, stall, expireRequest, deadline, responseSteps, responseCalls, waitingTouch, aborted = false
   let now = 10_000
   const ai = loadModule('../electron/controller/petAi.ts', {
@@ -434,6 +537,7 @@ test('owner inputs coalesce, interrupt stale plans and rearm a single idle round
     } },
     async fetch(_url,options) {
       observations.push(JSON.parse(JSON.parse(options.body).messages[1].content).observation)
+      if (limitProvider) return new Response('', {status:429,headers:{'Retry-After':'180'}})
       if (stall) await new Promise((_,reject) => options.signal.addEventListener('abort',()=>{
         aborted=true;reject(Error('aborted'))
       },{once:true}))
@@ -517,19 +621,27 @@ test('owner inputs coalesce, interrupt stale plans and rearm a single idle round
   f.board.payload = payload(6, {12:58}, [1])
   ai.observePetOwnerCommand(session,2,1,f.board.payload)
   await runTimer()
-  assert.equal(observations.length, beforePending + 1)
+  assert.equal(observations.length, beforePending)
+  assert.equal(ai.getPetAiActivity().message, '食物已在场，等待兔子进食')
+  f.board.payload = payload(13, {1:3}, [1])
+  ai.observePetOwnerCommand(session,2,1,f.board.payload)
+  await runTimer()
+  assert.equal(observations.length, beforePending)
+  assert.equal(ai.getPetAiActivity().message, '正在进食，保持当前活动')
   assert(!f.board.requests.some(r => r.command > 0))
 
   f.board.payload = payload(6)
   stall = true
   ai.observePetOwnerCommand(session,2,3,payload(6))
   timer.fn()
-  for (let i = 0; i < 200 && observations.length === beforePending + 1; i++) await flush()
+  for (let i = 0; i < 200 && observations.length === beforePending; i++) await flush()
   assert.equal(deadline, 4000)
   expireRequest()
   await done()
-  assert.match(ai.getPetAiActivity().message, /模型超时.*眨眼/)
-  assert.deepEqual(f.board.requests.filter(r => r.command > 0).map(r => r.value), [10])
+  assert.match(ai.getPetAiActivity().message, /模型超时.*本地回应/)
+  const reactionWrites = f.board.requests.filter(r => r.command > 0)
+  assert.equal(reactionWrites.length, 1)
+  assert.equal(ai.getPetAiActivity().lastDecision, catalog.petActionLabels[catalog.petActions[reactionWrites[0].value]])
   stall = false
 
   const sequence = steps => ({type:'function',function:{name:'pet_perform_sequence',arguments:JSON.stringify({steps})}})
@@ -545,9 +657,78 @@ test('owner inputs coalesce, interrupt stale plans and rearm a single idle round
     sequence([{behavior:'eat'},{behavior:'walk',waitMs:2000,durationSeconds:45,untilEnergy:70},{behavior:'blink'}])
   ), [1])
   assert.match(ai.getPetAiActivity().message, /最近决定/)
-  assert.deepEqual(await react(sequence([{behavior:'apple'}])), [10])
-  assert.match(ai.getPetAiActivity().message, /模型未给出可执行的动作.*眨眼/)
+  const localReaction = await react(sequence([{behavior:'apple'}]))
+  assert.equal(localReaction.length,1)
+  assert(['blink','gaze_owner','groom_ear','stand_watch'].includes(catalog.petActions[localReaction[0]]))
+  assert.match(ai.getPetAiActivity().message, /模型未给出可执行的动作.*本地回应/)
   assert.deepEqual(await react(sequence([{behavior:'rest'},{behavior:'walk'}])), [])
+
+  // Two new inputs cancel an unfinished reaction. The replacement gets the original input once.
+  stall = true
+  aborted = false
+  const beforeBurst = observations.length
+  ai.observePetOwnerCommand(session,2,1,payload(13))
+  timer.fn()
+  for (let i = 0; i < 200 && observations.length === beforeBurst; i++) await flush()
+  assert.deepEqual(latest(), [{type:'fruit_queued',fruit:'apple'}])
+  ai.observePetOwnerCommand(session,12,0,payload(13,{16:0,19:10,29:2}))
+  ai.observePetOwnerCommand(session,2,2,payload(13))
+  await done()
+  assert(aborted)
+  stall = false
+  await runTimer()
+  assert.deepEqual(latest(), [
+    {type:'fruit_queued',fruit:'apple'}, {type:'toy_placed',toy:'carrot_toy'}, {type:'fruit_queued',fruit:'banana'}
+  ])
+
+  // New input while a command is reaching the device must not replay the previous interaction.
+  f.board.onWrite = () => ai.observePetOwnerCommand(session,2,2,payload(13))
+  assert.deepEqual(await react(sequence([{behavior:'walk'}])), [1])
+  f.board.onWrite = undefined
+  responseCalls = [sequence([{behavior:'rest'}])]
+  await runTimer()
+  assert.deepEqual(latest(), [{type:'fruit_queued',fruit:'banana'}])
+  assert.equal(f.board.requests.filter(r => r.command > 0).length, 1)
+
+  // A 300-second sleep can end early. Replan once from live state and drop the stale next step.
+  f.board.payload = payload(13, {13:64})
+  responseCalls = [sequence([{behavior:'sleep',durationSeconds:300,untilEnergy:40},{behavior:'walk'}])]
+  await runTimer()
+  assert.equal(timer.ms, 300_000)
+  assert.equal(ai.getPetAiActivity().queue?.next, '散步')
+  now += 60_000
+  f.board.payload = payload(13, {13:60})
+  f.board.events.push([16,1,0,0],[2,0,0,0])
+  await poll()
+  assert.equal(ai.getPetAiActivity().queue, undefined)
+  assert.equal(timer.ms, 200)
+  responseCalls = [sequence([{behavior:'rest'}])]
+  await runTimer()
+  assert.equal(observations.at(-1).stats.energy, 40)
+  const afterWake = timer
+  await poll()
+  assert.equal(timer, afterWake)
+
+  await t.test('owner gestures during provider cooldown produce varied local reactions', async () => {
+    f.board.payload = payload(13)
+    limitProvider = true
+    const initialCalls = observations.length
+    const pats = new Set()
+    for (let i = 0; i < 5; i++) {
+      f.board.events.push([18,1,1,3])
+      await poll()
+      await runTimer()
+      const status = ai.getPetAiActivity()
+      assert.equal(status.source, '模型限流 · 本地回应')
+      pats.add(status.lastDecision)
+    }
+    assert.equal(observations.length, initialCalls + 1)
+    assert.deepEqual(pats, new Set(['面向主人发呆','眨眼','抱耳梳理','舔毛']))
+    ai.observePetOwnerCommand(session,12,0,payload(13,{16:0,19:10,29:2}))
+    await runTimer()
+    assert.equal(observations.length, initialCalls + 1)
+    assert(['站起来眺望','散步','眨眼','面向主人发呆'].includes(ai.getPetAiActivity().lastDecision))
+  })
 
   ai.observePetOwnerCommand(session,2,3,payload(6))
   ai.observePetAiSession(null)
