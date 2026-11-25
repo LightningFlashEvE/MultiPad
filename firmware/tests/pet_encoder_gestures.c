@@ -77,7 +77,7 @@ static void gestures_and_framebuffer(void) {
     scan(true, 0); advance(65); scan(false, 0);
     expect_pat(1, 0, 1); expect_reaction(120, 0);
     const PetCare *care = pet_care_get();
-    assert(care->affection == 36 && care->mood == 71 && care->satiety == 65);
+    assert(care->affection == 36 && care->mood == 70 && care->satiety == 65);
     advance(140); assert(memcmp(lcd, before, sizeof(lcd)) != 0);
     advance(1160); expect_reaction(0, 0);
     assert(memcmp(lcd, before, sizeof(lcd)) == 0); /* Entire overlay cleared. */
@@ -111,19 +111,30 @@ static void concurrent_activities(void) {
     assert(pet_mode_control(22, 1) == 0); expect_pat(5, 1, 2);
     assert(pet_mode_is_bedtime() && pet_mode_action() == PET_SLEEP);
     advance(1350); assert(pet_mode_control(22, 4) == 0); expect_pat(6, 2, 2);
-    assert(pet_care_get()->mood == mood + 1 && pet_care_get()->satiety == satiety);
+    assert(pet_care_get()->mood == mood && pet_care_get()->satiety == satiety);
     assert(pet_mode_control(22, 5) == 0); expect_pat(6, 2, 2);
     assert(pet_mode_control(2, 1) == 0);
     for (unsigned i = 0; i < 5000 && pet_mode_action() != PET_EAT; i++) advance(1);
     assert(pet_mode_action() == PET_EAT && pet_mode_fruit() == 1);
     scan(true, 4); scan(false, 0); expect_pat(7, 2, 1);
     assert(pet_mode_action() == PET_EAT && pet_mode_fruit() == 1);
-    advance(1200); assert(pet_care_get()->satiety == satiety + 12);
+    uint8_t affection = pet_care_get()->affection;
+    advance(1200);
+    assert(pet_care_get()->satiety == satiety + 12);
+    assert(pet_care_get()->mood == mood + 3 && pet_care_get()->affection == affection + 1);
     assert(pet_mode_control(7, 2) == 0);
     for (unsigned i = 0; i < 5000 && pet_mode_toy_phase() != 2; i++) advance(1);
     assert(pet_mode_active_toy() == 2 && pet_mode_toy_phase() == 2);
     scan(true, 0); advance(80); scan(false, 0); expect_pat(8, 0, 1);
     assert(pet_mode_active_toy() == 2 && pet_mode_toy_phase() == 2);
+    affection = pet_care_get()->affection;
+    advance(4000);
+    assert(pet_mode_active_toy() == 0);
+    assert(pet_care_get()->mood == mood + 9 && pet_care_get()->affection == affection + 1);
+    affection = pet_care_get()->affection;
+    assert(pet_mode_control(3, PET_GAZE_OWNER) == 0);
+    advance(8500);
+    assert(pet_care_get()->mood == mood + 9 && pet_care_get()->affection == affection);
 }
 
 static void table_and_food_positions(void) {

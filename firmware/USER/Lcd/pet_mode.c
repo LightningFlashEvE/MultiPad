@@ -112,16 +112,16 @@ typedef struct {
     int8_t facing;
     PetAction activity;
     uint16_t duration_ms;
-    int8_t energy_delta, mood_delta, affection_delta;
+    int8_t energy_delta;
 } PetToy;
 
 static const PetToy toys[] = {
-    {TOY_RABBIT_HUTCH, PET_NURSERY, 0, -1, PET_SLEEP, 4500, 12, 5, 2},
-    {TOY_CARROT, ANY_SCENE, CARROT_X - 23, 1, PET_EAT, 2400, -2, 6, 2},
-    {NURSERY_TABLE, PET_NURSERY, 98, -1, PET_INSPECT_TABLE, 3400, 0, 0, 0}
+    {TOY_RABBIT_HUTCH, PET_NURSERY, 0, -1, PET_SLEEP, 4500, 12},
+    {TOY_CARROT, ANY_SCENE, CARROT_X - 23, 1, PET_EAT, 2400, -2},
+    {NURSERY_TABLE, PET_NURSERY, 98, -1, PET_INSPECT_TABLE, 3400, 0}
 };
 static const PetToy *active_toy;
-static uint8_t toy_phase, toy_source, action_source, walk_stops;
+static uint8_t toy_phase, toy_source, walk_stops;
 static bool bedtime, return_for_garden_food;
 static uint32_t timed_duration_ms;
 static uint8_t timed_energy_target;
@@ -160,7 +160,6 @@ static void set_action_from(PetAction next, uint32_t now, uint8_t source) {
     }
     if (next != PET_SLEEP || !bedtime) timed_duration_ms = timed_energy_target = 0;
     action = next;
-    action_source = source;
     action_since = now;
     manual_idle = next == PET_IDLE && source == SOURCE_MCP;
     record_event(PET_EVENT_ACTION, next, source, fruit);
@@ -397,7 +396,7 @@ uint8_t pet_mode_pat_phase(void) {
 static void pat_head(uint8_t kind, uint8_t source, bool reward, uint32_t now) {
     if (!head_pat_remaining(now)) {
         head_pat_started = now;
-        if (reward) pet_care_adjust(0, 0, 1, 1);
+        if (reward) pet_care_adjust(0, 0, 0, 1);
     }
     head_pat_active = true;
     if (kind) {
@@ -715,7 +714,9 @@ static void update_action(uint32_t now, uint32_t step_ms) {
                 y = approach_y + (target_y() - approach_y) * approach_travel / approach_distance;
             }
         } else if (!bedtime && elapsed >= active_toy->duration_ms) {
-            pet_care_adjust(active_toy->id == TOY_CARROT ? -1 : 0, active_toy->energy_delta, active_toy->mood_delta, active_toy->affection_delta);
+            const bool played = active_toy->id == TOY_CARROT;
+            pet_care_adjust(played ? -1 : 0, active_toy->energy_delta, played ? 6 : 0,
+                played && toy_source != SOURCE_AUTOMATIC ? 1 : 0);
             end_toy(false, toy_source, now);
         }
         return;
@@ -751,12 +752,10 @@ static void update_action(uint32_t now, uint32_t step_ms) {
         case PET_EAT:
             if (elapsed >= (fruit ? FRUIT_EAT_MS : 2100u)) {
                 if (fruit) {
-                    pet_care_eat_fruit();
+                    pet_care_eat_fruit(floor->foods[0].source != SOURCE_AUTOMATIC);
                     record_event(PET_EVENT_FRUIT_EATEN, fruit, floor->foods[0].source, pet_care_get()->scene);
                     floor->count--;
                     memmove(floor->foods, floor->foods + 1, floor->count * sizeof(FloorFood));
-                } else if (action_source == SOURCE_PHYSICAL) {
-                    pet_care_adjust(4, 0, 1, 1);
                 }
                 fruit = 0;
                 last_input = now;
@@ -767,7 +766,6 @@ static void update_action(uint32_t now, uint32_t step_ms) {
         case PET_GAZE_OWNER:
             if (elapsed >= (timed_duration_ms ? timed_duration_ms : action == PET_TRIP_ANGRY ? 2050u : GAZE_OWNER_MS)) {
                 if (action == PET_TRIP_ANGRY) pet_care_adjust(0, -1, -4, 0);
-                else if (!unattended(now)) pet_care_adjust(0, 0, 1, action_source == SOURCE_MCP ? 1 : 0);
                 set_action(PET_IDLE, now);
             }
             return;

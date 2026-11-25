@@ -35,20 +35,18 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
   let exerciseMs = 0
   let wasSleeping = false
 
-  function bondDirection(stats: typeof previewCare) {
-    if (stats.satiety <= 25 || stats.mood <= 30 || stats.energy <= 20) return stats.affection > 0 ? -1 : 0
-    if (stats.satiety >= 70 && stats.mood >= 70 && stats.energy >= 70) return stats.affection < 100 ? 1 : 0
-    return 0
+  function bondDeclining(stats: typeof previewCare) {
+    return stats.affection > 0 && (stats.satiety <= 25 || stats.mood <= 30 || stats.energy <= 20)
   }
 
   function reward(satiety: number, energy: number, mood: number, affection: number) {
     const stats = state().stats!
-    const previous = bondDirection(stats)
+    const previous = bondDeclining(stats)
     stats.satiety = clampStat(stats.satiety + satiety)
     stats.energy = clampStat(stats.energy + energy)
     stats.mood = clampStat(stats.mood + mood)
     stats.affection = clampStat(stats.affection + affection)
-    if (previous !== bondDirection(stats)) bondMs = 0
+    if (previous !== bondDeclining(stats)) bondMs = 0
   }
 
   function startBinky() {
@@ -91,13 +89,11 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
   }
 
   function updateCare(pet: PetState, stats: typeof previewCare, dt: number) {
-    const bond = bondDirection(stats)
-    if (bond) {
+    if (bondDeclining(stats)) {
       bondMs += dt
-      const interval = bond > 0 ? 600_000 : 300_000
-      if (bondMs >= interval) {
-        bondMs -= interval
-        reward(0, 0, 0, bond)
+      if (bondMs >= 300_000) {
+        bondMs -= 300_000
+        reward(0, 0, 0, -1)
       }
     }
     const sleeping = pet.action === 2
@@ -174,7 +170,6 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     } else if (gesture?.action === 13) pet.actionAgeMs = time + 3875 - gesture.until
     if (gesture && (food || time >= gesture.until)) {
       if (!food && gesture.action === 11) reward(0, -1, -4, 0)
-      if (!food && gesture.action === 12 && !unattended) reward(0, 0, 1, 1)
       gesture = undefined
     }
     if (!play && gesture?.action !== 15 && stats.mood < 90 && stats.energy > 15 && room.awaitingPlay && time - room.droppedAt >= fallMs && !food && !(hungry && first)) {
@@ -212,7 +207,8 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
         } else if (move(151, dt * .078)) play.usingAt = time
       } else if (!play.bedtime && time - play.usingAt >= (hutch ? 4500 : play.item === 3 ? 3400 : 2400)) {
         leavingTable = play.item === 3
-        if (play.item !== 3) reward(hutch ? 0 : -1, hutch ? 12 : -2, hutch ? 5 : 6, 2)
+        if (hutch) reward(0, 12, 0, 0)
+        else if (play.item === 2) reward(-1, -2, 6, 1)
         lastInput = time
         play = undefined
       }
@@ -222,7 +218,7 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
       } else if (time - food.eatingAt >= 850) {
         room.foods.shift()
         food = undefined
-        reward(12, 0, 3, 2)
+        reward(12, 0, 3, 1)
         lastInput = time
       }
     }
@@ -276,9 +272,9 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     const stat = petStats.find(entry => entry.command === command)
     if (stat) {
       if (!isStatValue(value)) return '请输入 0 至 100 的整数。'
-      const before = bondDirection(pet.stats!)
+      const before = bondDeclining(pet.stats!)
       pet.stats![stat.id] = value
-      if (before !== bondDirection(pet.stats!)) bondMs = 0
+      if (before !== bondDeclining(pet.stats!)) bondMs = 0
     } else if (command === 22) {
       if (value < 0 || value > 23 || value === 7 || !Number.isInteger(value)) return '无法识别摸头手势。'
       if (value === 5 || value === 6) {
@@ -286,7 +282,7 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
         update()
         return ''
       }
-      if (value < 3 && time >= patUntil) reward(0, 0, 1, 1)
+      if (value < 3 && time >= patUntil) reward(0, 0, 0, 1)
       patUntil = time + 1200
       pet.headPatKind = value >= 8 ? (value < 16 ? 1 : 2) : value > 2 ? value - 2 : value
       if (value <= 2) rubIndex = 2

@@ -102,26 +102,26 @@ static void actual_changes_survive_unplug(void) {
     stats(100, 100, 100, 100);
 }
 
-static void long_term_affection(void) {
+static void affection_only_decays_over_time(void) {
     new_flash();
     pet_care_adjust(35, 25, 10, 0);
     for (int i = 0; i < 9; ++i) tick(60000, false);
     pet_care_init(W25Q128);
     assert(pet_care_get()->affection == 35);
     tick(60000, false);
-    assert(pet_care_get()->affection == 36);
+    assert(pet_care_get()->affection == 35);
     pet_care_adjust(0, 0, -60, 0); /* Low mood alone is enough. */
     for (int i = 0; i < 4; ++i) tick(60000, false);
     pet_care_adjust(0, 0, 35, 0); /* A neutral interval breaks the streak. */
     pet_care_adjust(0, 0, -35, 0);
     tick(60000, false);
-    assert(pet_care_get()->affection == 36);
+    assert(pet_care_get()->affection == 35);
     pet_care_init(W25Q128);
     for (int i = 0; i < 4; ++i) tick(60000, false);
-    assert(pet_care_get()->affection == 35);
+    assert(pet_care_get()->affection == 34);
     pet_care_adjust(0, -100, 70, 0); /* A tired rabbit loses affection even when happy. */
     for (int i = 0; i < 5; ++i) tick(60000, false);
-    assert(pet_care_get()->affection == 34);
+    assert(pet_care_get()->affection == 33);
     pet_care_adjust(-100, 100, 0, -100);
     for (int i = 0; i < 5; ++i) tick(60000, true);
     assert(pet_care_get()->affection == 0);
@@ -163,14 +163,14 @@ static void fruit_reward_is_visible_during_flash_retry(void) {
     new_flash();
     assert(pet_care_set_stat(0, 0));
     program_bytes = 12;
-    pet_care_eat_fruit();
-    stats(12, 75, 73, 37);
-    pet_care_eat_fruit(); /* A second meal during the retry window still counts once. */
-    stats(24, 75, 76, 39);
+    pet_care_eat_fruit(true);
+    stats(12, 75, 73, 36);
+    pet_care_eat_fruit(true); /* A second meal during the retry window still counts once. */
+    stats(24, 75, 76, 37);
     program_bytes = RECORD;
     tick(1000, false);
     pet_care_init(W25Q128);
-    stats(24, 75, 76, 39);
+    stats(24, 75, 76, 37);
 }
 
 static void sector_rotation_survives_unplug(void) {
@@ -235,7 +235,7 @@ int main(void) {
     unattended_care_declines_slowly();
     exercise_charges_both_stats();
     actual_changes_survive_unplug();
-    long_term_affection();
+    affection_only_decays_over_time();
     new_flash();
     for (unsigned i = 0; i < 4; ++i) assert(pet_care_set_stat(i, i == 3 ? 100 : i));
     assert(!pet_care_set_stat(4, 20) && !pet_care_set_stat(0, 101));

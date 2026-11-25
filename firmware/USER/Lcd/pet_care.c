@@ -80,7 +80,7 @@ void pet_care_init(uint16_t flash_id) {
             sequence = serial;
             care = initial_care;
             /* V3 reserved byte 27 was zero on older firmware. */
-            bond_ms = record[3] == 3 && record[27] < 10 ? record[27] * 60000u : 0;
+            bond_ms = record[3] == 3 && record[27] < 5 ? record[27] * 60000u : 0;
             care.satiety = record[8];
             care.energy = 100 - record[9]; /* V1–V3 journals encode fatigue. */
             care.mood = record[10];
@@ -157,23 +157,20 @@ static void adjust(uint8_t *value, int delta) {
     *value = result;
 }
 
-static int bond_direction(void) {
-    if (pending_stats.satiety <= 25 || pending_stats.mood <= 30 || pending_stats.energy <= 20)
-        return pending_stats.affection ? -1 : 0;
-    if (pending_stats.satiety >= 70 && pending_stats.mood >= 70 && pending_stats.energy >= 70)
-        return pending_stats.affection < 100 ? 1 : 0;
-    return 0;
+static bool bond_declining(void) {
+    return pending_stats.affection &&
+        (pending_stats.satiety <= 25 || pending_stats.mood <= 30 || pending_stats.energy <= 20);
 }
 
-static void reset_bond_if_changed(int previous) {
-    if (previous != bond_direction()) {
+static void reset_bond_if_changed(bool previous) {
+    if (previous != bond_declining()) {
         if (bond_ms >= 60000u) dirty = true;
         bond_ms = 0;
     }
 }
 
 void pet_care_adjust(int satiety, int energy, int mood, int affection) {
-    int previous = bond_direction();
+    const bool previous = bond_declining();
     adjust(&pending_stats.satiety, satiety);
     adjust(&pending_stats.energy, energy);
     adjust(&pending_stats.mood, mood);
@@ -182,20 +179,20 @@ void pet_care_adjust(int satiety, int energy, int mood, int affection) {
     pet_care_save();
 }
 
-void pet_care_eat_fruit(void) {
-    pet_care_adjust(12, 0, 3, 2);
+void pet_care_eat_fruit(bool owner_fed) {
+    pet_care_adjust(12, 0, 3, owner_fed ? 1 : 0);
     if (!dirty) return;
     /* The fruit has been consumed. Show its reward while flash retries the
      * pending snapshot. Explicit stat edits still require verified storage. */
     care.satiety = adjusted(care.satiety, 12);
     care.mood = adjusted(care.mood, 3);
-    care.affection = adjusted(care.affection, 2);
+    if (owner_fed) care.affection = adjusted(care.affection, 1);
 }
 
 bool pet_care_set_stat(uint8_t index, uint8_t value) {
     uint8_t *fields[] = {&pending_stats.satiety, &pending_stats.energy, &pending_stats.mood, &pending_stats.affection};
     if (!journal_available || index >= sizeof(fields) / sizeof(fields[0]) || value > 100) return false;
-    int previous = bond_direction();
+    const bool previous = bond_declining();
     adjust(fields[index], (int)value - *fields[index]);
     reset_bond_if_changed(previous);
     pet_care_save();
@@ -221,14 +218,13 @@ void pet_care_tick(uint32_t elapsed_ms, bool sleeping, unsigned exertion, bool u
         return;
     }
     unattended_ms = 0;
-    int previous = bond_direction();
+    const bool previous = bond_declining();
     if (previous) {
         unsigned saved_minutes = bond_ms / 60000u;
         bond_ms += elapsed_ms;
-        unsigned interval = previous > 0 ? 600000u : 300000u;
-        if (bond_ms >= interval) {
-            bond_ms -= interval;
-            adjust(&pending_stats.affection, previous);
+        if (bond_ms >= 300000u) {
+            bond_ms -= 300000u;
+            adjust(&pending_stats.affection, -1);
         }
         if (bond_ms / 60000u != saved_minutes) dirty = true;
     }
