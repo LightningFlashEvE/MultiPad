@@ -184,6 +184,11 @@ function showOfflineTime() {
   petState.value.minute = now.getMinutes()
 }
 
+async function refreshAfterAiStep(session: string) {
+  await petTask
+  if (appMode.value === 'pet' && session === petSession) refreshPetDevice()
+}
+
 function refreshPetDevice() {
   showOfflineTime()
   if (!conState.value && appMode.value === 'pet') previewWorld.start()
@@ -919,7 +924,7 @@ const showAppInfo = () => {
           </span>
           <span>{{ appMode === 'pet' ? (index ? petContent(index - 1).rows.map(row => row.label).join(' · ') : '宠物设置') : label }}</span>
         </button>
-        <PetAiActivity v-if="appMode === 'pet'" :session="petLinked && petState.active ? petSession : undefined" />
+        <PetAiActivity @step-accepted="refreshAfterAiStep" v-if="appMode === 'pet'" :session="petLinked && petState.active ? petSession : undefined" />
         <div v-if="appMode === 'pet'" class="mode-status" role="status">
           {{ petNotice || interactionNotice || (petLinked && petState.active ? '键盘养宠模式已同步' : '本机宠物预览') }}
         </div>

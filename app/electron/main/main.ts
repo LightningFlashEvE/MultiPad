@@ -13,7 +13,7 @@ import { fileReadListener } from "../controller/fileRead"
 import { fetchScreenValue } from '../controller/screenApi'
 import { startPetMcp } from '../controller/petMcp'
 import { isStatCommand, isStatValue, isHeadPetInput, isHutchPosition } from '../../src/utils/petCatalog'
-import { getPetAiActivity, getPetAi, savePetAi, startPetAi, stopPetAi, testPetAi } from '../controller/petAi'
+import { getPetAiActivity, observePetAiSession, getPetAi, savePetAi, startPetAi, stopPetAi, testPetAi } from '../controller/petAi'
 import type { IpcMainInvokeEvent, WebContents } from 'electron'
 
 // A detached Windows launcher can close its logging pipes while MultiPad is open.
@@ -87,7 +87,9 @@ ipcMain.handle('wait-sign', async () => {
 // 硬件连接
 ipcMain.handle('connection-state', async () => {
   // 创建窗口之后连接硬件
-  return await SerialConnect.connectHardware()
+  const connected = await SerialConnect.connectHardware()
+  if (!connected) observePetAiSession(null)
+  return connected
 })
 
 // 发送数据
@@ -109,6 +111,11 @@ ipcMain.handle('pet-action', async (event, command, value) => {
       ((command === 11 || command === 13) && (value < 1 || value > 2))) return { state: 'unavailable' }
   if (command >= 8) fromHome(event)
   const reply = await SerialConnect.pet({ command, value })
+  if ((command === 0 || command === 1) && reply.state === 'ready' && reply.status === 0 && reply.session) {
+    observePetAiSession(reply.payload[0] ? reply.session : null)
+  } else if (reply.state === 'disconnected') {
+    observePetAiSession(null)
+  }
   return reply.state === 'ready' ? { ...reply, payload: Uint8Array.from(reply.payload) } : reply
 })
 let mainContents: WebContents | undefined

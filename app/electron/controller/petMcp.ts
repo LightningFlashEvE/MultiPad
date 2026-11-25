@@ -1,4 +1,5 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
+import { setTimeout as delay } from 'node:timers/promises'
 import { createServer } from 'node:http'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
@@ -273,7 +274,7 @@ export function createPetMcp(enabled: () => boolean = () => true,
       let state = await command(commands.state)
       const expected = session ?? state.session
       for (const step of steps) {
-        if (step.waitMs) await new Promise(resolve => setTimeout(resolve, step.waitMs))
+        if (step.waitMs) await delay(step.waitMs, undefined, { signal: extra.signal })
         state = await command(commands.state)
         if (!enabled() || extra.signal.aborted || state.session !== expected || !automaticBehaviors(state).includes(step.behavior))
           return { accepted, stoppedBefore: step.behavior, state }

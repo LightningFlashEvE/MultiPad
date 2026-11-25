@@ -74,7 +74,8 @@ const completionSchema = z.object({
 })
 
 interface Settings { apiUrl: string; model: string; encryptedKey: string; enabled: boolean; personality?: string }
-interface Status { phase: 'idle' | 'thinking' | 'queued' | 'landed' | 'eaten' | 'action' | 'error' | 'unconfirmed'; message: string; fruit?: string; sequence?: number; uptimeMs?: number }
+interface DecisionStep { label: string; index: number; total: number; next?: string }
+interface Status { step?: DecisionStep; lastDecision?: string; phase: 'idle' | 'thinking' | 'queued' | 'landed' | 'eaten' | 'action' | 'error' | 'unconfirmed'; message: string; fruit?: string; sequence?: number; uptimeMs?: number }
 interface Provider { endpoint: string; model: string; key: string }
 
 let settingsStore: Store<{ settings: Settings }> | undefined
@@ -87,16 +88,25 @@ let running = false
 let timer: ReturnType<typeof setTimeout> | undefined
 let status: Status = { phase: 'idle', message: '等待下一次决策' }
 
+let observedSession: string | null | undefined
+let nextDecisionAt: number | undefined
+let requestAbort: AbortController | undefined
+let autoRunning = false
+let stepLabels: string[] = []
 let activitySession: string | undefined
 let activityVersion = 0
 let activityListener: ((activity: ReturnType<typeof getPetAiActivity>) => void) | undefined
 
 export function getPetAiActivity() {
-  return { version: activityVersion, enabled: !!store().get('settings')?.enabled, session: activitySession, message: status.message }
+  return { version: activityVersion, enabled: !!store().get('settings')?.enabled, session: activitySession, phase: status.phase, message: status.message, step: status.step, lastDecision: status.lastDecision, nextDecisionAt }
 }
 
 function setStatus(next: Status) {
   status = next
+  publishActivity()
+}
+
+function publishActivity() {
   activityVersion++
   activityListener?.(getPetAiActivity())
 }
@@ -137,9 +147,10 @@ export function savePetAi(input: unknown) {
   store().set('settings', { apiUrl: endpoint, model, encryptedKey, enabled,
     personality: (personality ?? saved?.personality) || defaultRabbitPersonality })
   revision++
+  requestAbort?.abort()
   activitySession = undefined
   setStatus({ phase: 'idle', message: enabled ? '等待下一次 AI 决策' : 'AI 控制已暂停' })
-  schedule()
+  schedule(observedSession ? 200 : 1500)
   return getPetAi()
 }
 
@@ -158,7 +169,10 @@ function providerFor(settings: Settings): Provider {
 async function withPetMcp<T>(task: (client: Client) => Promise<T>) {
   const started = revision
   const server = createPetMcp(() => started === revision, (behavior, index, total) => {
-    if (started === revision) setStatus({ phase: 'action', message: '第 ' + index + '/' + total + ' 步已接收 · ' + behaviorLabel(behavior) })
+    if (started !== revision) return
+    const label = behaviorLabel(behavior)
+    setStatus({ phase: 'action', message: '第 ' + index + '/' + total + ' 步已接收 · ' + label,
+      step: { label, index, total, next: stepLabels[index] } })
   })
   const client = new Client({ name: 'multipad-pet-ai', version: '1.0.0' })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
@@ -171,8 +185,8 @@ async function withPetMcp<T>(task: (client: Client) => Promise<T>) {
   }
 }
 
-async function callPet(client: Client, name: string, args: Record<string, unknown> = {}) {
-  const result = await client.callTool({ name, arguments: args })
+async function callPet(client: Client, name: string, args: Record<string, unknown> = {}, signal?: AbortSignal) {
+  const result = await client.callTool({ name, arguments: args }, undefined, { signal })
   if (result.isError || !result.structuredContent) {
     const content = Array.isArray(result.content) ? result.content[0] : undefined
     throw Error(content?.type === 'text' ? content.text : '桌宠工具调用失败')
@@ -191,7 +205,7 @@ const rabbitRole = [
   '角色性格决定动作偏好，实际工具、参数和当前设备状态决定能执行的行为。'
 ].join('\n')
 
-async function decide(provider: Provider, client: Client, observation: string | object, pet?: PetState, personality?: string) {
+async function decide(provider: Provider, client: Client, observation: string | object, pet?: PetState, personality?: string, controller = new AbortController()) {
   const { tools } = await client.listTools()
   const selected = tools.find(t => t.name === (pet ? 'pet_perform_sequence' : 'pet_feed'))
   if (!selected) throw Error('缺少宠物动作工具')
@@ -201,27 +215,35 @@ async function decide(provider: Provider, client: Client, observation: string | 
     : selected.description
   const offered = [{type: 'function', function: {name: selected.name, description, parameters}}]
   const timeout = AbortSignal.timeout(75_000)
-  const response = await fetch(provider.endpoint, {
-    method: 'POST', redirect: 'error', signal: timeout,
-    headers: { Authorization: 'Bearer ' + provider.key, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: provider.model, stream: false, tool_choice: 'auto',
-      messages: [
-        { role: 'system', content: pet ? rabbitRole : '这是键盘宠物的工具调用诊断。只生成指定工具调用一次，省略文字。' },
-        { role: 'user', content: typeof observation === 'string' ? observation :
-          JSON.stringify({ personality: personality || defaultRabbitPersonality, observation }) }
-      ],
-      tools: offered
-    })
-  }).catch(() => { throw Error(timeout.aborted ? '模型在 75 秒内未回复' : '无法连接模型 API，请检查网络或代理') })
-  if (!response.ok) {
-    await response.body?.cancel().catch(() => {})
-    if (response.status === 401 && new URL(provider.endpoint).hostname === new URL(defaultUrl).hostname) {
-      throw Error('Token Plan 返回 401，请使用对应套餐的专用 API Key')
+  const onTimeout = () => controller.abort()
+  timeout.addEventListener('abort', onTimeout, { once: true })
+  let body: unknown
+  try {
+    const response = await fetch(provider.endpoint, {
+      method: 'POST', redirect: 'error', signal: controller.signal,
+      headers: { Authorization: 'Bearer ' + provider.key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: provider.model, stream: false, tool_choice: 'auto',
+        messages: [
+          { role: 'system', content: pet ? rabbitRole : '这是键盘宠物的工具调用诊断。只生成指定工具调用一次，省略文字。' },
+          { role: 'user', content: typeof observation === 'string' ? observation :
+            JSON.stringify({ personality: personality || defaultRabbitPersonality, observation }) }
+        ],
+        tools: offered
+      })
+    }).catch(() => { throw Error(timeout.aborted ? '模型在 75 秒内未回复' : '无法连接模型 API，请检查网络或代理') })
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => {})
+      if (response.status === 401 && new URL(provider.endpoint).hostname === new URL(defaultUrl).hostname) {
+        throw Error('Token Plan 返回 401，请使用对应套餐的专用 API Key')
+      }
+      throw Error('模型 API 返回 HTTP ' + response.status + '，请检查地址、模型和 Key')
     }
-    throw Error('模型 API 返回 HTTP ' + response.status + '，请检查地址、模型和 Key')
+    body = await response.json().catch(() => undefined)
+  } finally {
+    timeout.removeEventListener('abort', onTimeout)
   }
-  const parsed = completionSchema.safeParse(await response.json().catch(() => undefined))
+  const parsed = completionSchema.safeParse(body)
   if (!parsed.success) throw Error('模型未返回有效的工具调用格式')
   const calls = parsed.data.choices[0].message.tool_calls ?? []
   if (calls.length > 1) throw Error('模型一次请求了多个动作，本轮已跳过')
@@ -290,7 +312,7 @@ async function feedAndObserve(client: Client, fruit: typeof fruits[number], expe
     if (receipt.session !== before.session || (receipt.foods
       ? receipt.foods.length !== 1 || receipt.foods[0].fruit !== fruit
       : receipt.queuedFruit !== 1)) throw Error()
-    while (Date.now() < deadline) {
+    while (stillEnabled() && Date.now() < deadline) {
       try {
         page = await readEvents(client, cursor)
       } catch {
@@ -333,10 +355,16 @@ async function run(kind: 'auto' | 'connection' | 'feed') {
   if (kind === 'auto' && !saved.enabled) return getPetAi()
   const startingRevision = revision
   running = true
+  autoRunning = kind === 'auto'
+  nextDecisionAt = undefined
+  clearTimeout(timer)
+  requestAbort = new AbortController()
+  setStatus({ phase: 'thinking', message: kind === 'connection' ? '正在测试模型连接' : '正在读取键盘实况' })
   try {
     await withPetMcp(async client => {
       const stillEnabled = () => startingRevision === revision
       const pet = kind === 'connection' ? undefined : await readState(client)
+      if (!stillEnabled()) return
       activitySession = pet?.session
       if (pet && !pet.active) {
         if (kind === 'feed') throw Error('请先让键盘进入养宠模式')
@@ -352,11 +380,8 @@ async function run(kind: 'auto' | 'connection' | 'feed') {
             previousPlan: previousPlan?.session === pet.session ? { accepted: previousPlan.accepted, stoppedBefore: previousPlan.stoppedBefore } : null }
         : '这是 MultiPad 的投喂测试，请调用 pet_feed，参数 fruit 为 apple。'
       if (!stillEnabled()) return
-      const decision = await decide(providerFor(saved), client, request, kind === 'auto' ? pet : undefined, saved.personality)
-      if (!stillEnabled()) {
-        setStatus({ phase: 'idle', message: '模型设置已更新，本轮没有执行动作' })
-        return
-      }
+      const decision = await decide(providerFor(saved), client, request, kind === 'auto' ? pet : undefined, saved.personality, requestAbort)
+      if (!stillEnabled()) return
       if (kind !== 'auto' && (decision?.name !== 'pet_feed' || decision.fruit !== 'apple')) {
         throw Error('模型没有发出预期的苹果投喂调用')
       }
@@ -365,13 +390,15 @@ async function run(kind: 'auto' | 'connection' | 'feed') {
       } else if (pet && decision?.name === 'pet_feed') {
         await feedAndObserve(client, decision.fruit, pet.session, stillEnabled, kind === 'auto')
       } else if (pet && decision?.name === 'pet_perform_sequence') {
-        setStatus({ phase: 'thinking', message: '准备' + behaviorLabel(decision.steps[0].behavior) })
+        stepLabels = decision.steps.map(step => behaviorLabel(step.behavior))
+        setStatus({ phase: 'thinking', message: '准备' + stepLabels[0],
+          step: { label: stepLabels[0], index: 1, total: stepLabels.length, next: stepLabels[1] } })
         const outcome = z.object({ accepted: z.array(z.string()), stoppedBefore: z.string().optional() })
-          .parse(await callPet(client, decision.name, { steps: decision.steps, session: pet.session }))
+          .parse(await callPet(client, decision.name, { steps: decision.steps, session: pet.session }, requestAbort?.signal))
         if (!stillEnabled()) return
         previousPlan = { session: pet.session, accepted: outcome.accepted, stoppedBefore: outcome.stoppedBefore }
         const last = outcome.accepted.at(-1)
-        setStatus({ phase: last ? 'action' : 'idle', message: outcome.stoppedBefore
+        setStatus({ phase: last ? 'action' : 'idle', lastDecision: last && !outcome.stoppedBefore ? stepLabels[outcome.accepted.length - 1] : undefined, message: outcome.stoppedBefore
           ? (last ? '已接收' + behaviorLabel(last) + '，' : '') + '已跳过' + behaviorLabel(outcome.stoppedBefore)
           : last ? '最近决定 · ' + behaviorLabel(last) + (outcome.accepted.length > 1 ? '（共 ' + outcome.accepted.length + ' 步）' : '') : '本轮没有执行动作' })
       } else {
@@ -379,11 +406,14 @@ async function run(kind: 'auto' | 'connection' | 'feed') {
       }
     })
   } catch (error) {
-    setStatus({ phase: 'error', message: error instanceof z.ZodError ? '模型或设备返回的参数格式不正确'
+    if (startingRevision === revision) setStatus({ phase: 'error', message: error instanceof z.ZodError ? '模型或设备返回的参数格式不正确'
       : error instanceof Error ? error.message : 'AI 控制失败' })
   } finally {
     running = false
-    schedule(intervalMs)
+    autoRunning = false
+    requestAbort = undefined
+    stepLabels = []
+    schedule(startingRevision === revision ? intervalMs : 200)
   }
   return getPetAi()
 }
@@ -394,12 +424,27 @@ export function testPetAi(kind: 'connection' | 'feed') {
 
 function schedule(wait = 1500) {
   clearTimeout(timer)
-  if (store().get('settings')?.enabled) {
-    timer = setTimeout(() => {
-      if (running) schedule(intervalMs)
-      else void run('auto').catch(() => schedule(intervalMs))
-    }, wait)
+  nextDecisionAt = undefined
+  if (!running && observedSession !== null && store().get('settings')?.enabled) {
+    nextDecisionAt = Date.now() + wait
+    timer = setTimeout(() => { void run('auto').catch(() => schedule(intervalMs)) }, wait)
   }
+  publishActivity()
+}
+
+// Home already reads the keyboard. Wake the scheduler once per confirmed entry or reconnect.
+export function observePetAiSession(session: string | null) {
+  if (session === observedSession) return
+  const firstObservation = observedSession === undefined
+  observedSession = session
+  if (!store().get('settings')?.enabled) return
+  if (running && !autoRunning) return
+  if (firstObservation && session && autoRunning) return
+  revision++
+  requestAbort?.abort()
+  activitySession = session ?? undefined
+  setStatus({ phase: 'idle', message: session ? '准备读取键盘实况' : '等待键盘进入养宠模式' })
+  schedule(200)
 }
 
 export function startPetAi(listener?: typeof activityListener) {
@@ -408,6 +453,8 @@ export function startPetAi(listener?: typeof activityListener) {
 }
 export function stopPetAi() {
   activityListener = undefined
+  observedSession = null
+  requestAbort?.abort()
   revision++
   clearTimeout(timer)
 }

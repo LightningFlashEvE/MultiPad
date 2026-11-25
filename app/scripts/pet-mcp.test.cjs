@@ -187,13 +187,13 @@ test('model sees its personality, the complete available event window and care s
   const f=fixture(t)
   const saved=new Map()
   class Store { get(key){return saved.get(key)} set(key,value){saved.set(key,value)} }
-  let timer, modelRequest, nextTool
+  let timer, scheduledDelay, modelRequest, nextTool
   const ai=loadModule('../electron/controller/petAi.ts',{
     electron:{safeStorage:{isEncryptionAvailable:()=>true,encryptString:s=>Buffer.from(s),decryptString:b=>b.toString()}},
     'electron-store':Store,'./petMcp':f.mcp,'./petCareGuide':guide,[pathToCatalog]:catalog,
     '../../src/utils/petPersonality':loadModule('../src/utils/petPersonality.ts')
   },{
-    setTimeout(fn,ms){if(ms===1500)timer=fn;return 1},clearTimeout(){},
+    setTimeout(fn,ms){scheduledDelay=ms;timer=fn;return 1},clearTimeout(){timer=undefined},
     async fetch(_url,options){
       modelRequest=JSON.parse(options.body)
       const message=nextTool?{tool_calls:[{type:'function',function:{name:nextTool,arguments: nextTool === 'pet_perform_sequence' ? JSON.stringify({steps:[{behavior:'blink'},{behavior:'jump',waitMs:10}]}) : '{"fruit":"apple"}'}}]}:{}
@@ -254,9 +254,28 @@ test('model sees its personality, the complete available event window and care s
   assert(activity.some(a=>a.message.includes('1/2') && a.message.includes('眨眼') && a.session===session))
   assert(activity.some(a=>a.message.includes('2/2') && a.message.includes('跳跃')))
   assert.match(ai.getPetAiActivity().message,/最近决定.*跳跃/)
+  const steps = activity.filter(a => a.phase === 'action' && a.step)
+  assert.deepEqual(steps.map(a => a.step), [
+    { label:'眨眼', index:1, total:2, next:'跳跃' }, { label:'跳跃', index:2, total:2, next:undefined }
+  ])
+  assert.equal(ai.getPetAiActivity().lastDecision,'跳跃')
+  assert(scheduledDelay===60000 && ai.getPetAiActivity().nextDecisionAt>Date.now())
   assert(!JSON.stringify(activity).includes(cfg.apiKey))
   f.board.onWrite=()=>{f.board.payload=payload(6,{},[],[120,1,4])}
   await auto()
   assert.deepEqual(f.board.requests.filter(r=>r.command>0).map(r=>r.value),[10,7,10])
   assert.match(ai.getPetAiActivity().message,/已接收眨眼.*已跳过跳跃/)
+  ai.observePetAiSession(null)
+  assert.equal(timer,undefined)
+  assert.equal(ai.getPetAiActivity().nextDecisionAt,undefined)
+  ai.observePetAiSession(session)
+  assert.equal(scheduledDelay,200)
+  const firstTimer=timer
+  ai.observePetAiSession(session)
+  assert.equal(timer,firstTimer)
+  timer()
+  ai.observePetAiSession(null)
+  while(ai.getPetAi().running) await new Promise(r=>setImmediate(r))
+  assert.equal(timer,undefined)
+  assert.equal(ai.getPetAiActivity().message,'等待键盘进入养宠模式')
 })
