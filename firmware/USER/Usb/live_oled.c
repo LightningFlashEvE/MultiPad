@@ -19,6 +19,7 @@ enum {
 
 static const uint8_t request_magic[] = {0xaa, 0xbb, 0xce, 0x44};
 static uint8_t reply[] = {'M', 'P', 'O', 'L', 0, 0, 0, 0, 0, 0, 0, 0};
+static bool reply_pending;
 static uint8_t request[HEADER_SIZE + CHUNK_SIZE];
 static volatile uint32_t request_size;
 static uint8_t active_menu;
@@ -69,8 +70,16 @@ void live_oled_mode_changed(void) {
     live_oled_menu_applied(active_menu);
 }
 
+static void send_reply(void) {
+    if (CDC_Transmit_FS(reply, sizeof(reply)) == USBD_OK) reply_pending = false;
+}
+
 void live_oled_poll(void) {
-    if (!request_size || !CDC_TransmitReady_FS()) return;
+    if ((!request_size && !reply_pending) || !CDC_TransmitReady_FS()) return;
+    if (reply_pending) {
+        send_reply();
+        return;
+    }
 
     uint8_t screen = request[5];
     uint8_t chunk = request[6];
@@ -115,6 +124,7 @@ void live_oled_poll(void) {
     reply[6] = active_menu;
     reply[7] = overlay_mask;
     for (uint8_t i = 0; i < 4; i++) reply[8 + i] = (uint8_t)(generation >> (8 * i));
-    CDC_Transmit_FS(reply, sizeof(reply));
+    reply_pending = true;
     request_size = 0;
+    send_reply();
 }

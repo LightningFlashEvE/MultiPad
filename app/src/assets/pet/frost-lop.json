@@ -3,7 +3,7 @@
   "height": 44,
   "anchorX": 28,
   "anchorY": 41,
-  "fruitContactX": 44,
+  "fruitContactX": 47,
   "tickRateHz": 16,
   "compatibilityFrames": [
     "idle",
@@ -145,6 +145,138 @@
         10
       ],
       "loop": true
+    },
+    "stand_watch": {
+      "first": 74,
+      "poses": [
+        0,
+        74,
+        75,
+        76,
+        75,
+        74,
+        0
+      ],
+      "ticks": [
+        2,
+        3,
+        23,
+        2,
+        25,
+        4,
+        3
+      ],
+      "loop": false
+    },
+    "inspect_table": {
+      "first": 69,
+      "ticks": [
+        3,
+        3,
+        12,
+        8,
+        10
+      ],
+      "loop": true,
+      "loopFrom": 2
+    },
+    "binky": {
+      "first": 77,
+      "poses": [
+        18,
+        19,
+        77,
+        78,
+        22,
+        23,
+        24,
+        0
+      ],
+      "ticks": [
+        2,
+        2,
+        3,
+        2,
+        2,
+        2,
+        2,
+        3
+      ],
+      "loop": false
+    },
+    "groom_fur": {
+      "first": 79,
+      "poses": [
+        0,
+        79,
+        80,
+        79,
+        80,
+        79,
+        80,
+        79,
+        0
+      ],
+      "ticks": [
+        3,
+        5,
+        6,
+        4,
+        6,
+        4,
+        6,
+        4,
+        2
+      ],
+      "loop": false
+    },
+    "groom_ear": {
+      "first": 81,
+      "poses": [
+        65,
+        81,
+        82,
+        83,
+        82,
+        81,
+        82,
+        83,
+        82,
+        81,
+        65
+      ],
+      "ticks": [
+        3,
+        4,
+        5,
+        6,
+        4,
+        4,
+        5,
+        6,
+        4,
+        4,
+        3
+      ],
+      "loop": false
     }
-  }
+  },
+  "biteMouth": [
+    [
+      45,
+      37
+    ],
+    [
+      46,
+      38
+    ],
+    [
+      46,
+      38
+    ],
+    [
+      46,
+      37
+    ]
+  ]
 }

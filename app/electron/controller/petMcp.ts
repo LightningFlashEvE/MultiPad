@@ -4,58 +4,163 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { z } from 'zod'
 import SerialConnect from './serialPort'
+import { petCareGuide, petServerInstructions } from './petCareGuide'
 import type { PetRequest } from './screenReadback'
-import { petActions, playableActions, petScenes, petToys, petToyIds, petToyPhases } from '../../src/utils/petCatalog'
+import { petActions, playableActions, petScenes, petRoomItems, petToyIds, petToyPhases, petFruitIds as fruits,
+  petItems, toysForScene, petStateGeneration, petFoodStages, petHeadGestures, petDecorations, hutchBounds } from '../../src/utils/petCatalog'
 
-const fruits = ['apple', 'banana', 'orange', 'grape', 'strawberry', 'pear', 'cherry', 'watermelon'] as const
 const seasons = ['spring', 'summer', 'autumn', 'winter'] as const
 const sources = ['automatic', 'physical', 'mcp'] as const
-const commands = { state: 0, mode: 1, feed: 2, action: 3, hour: 4, season: 5, scene: 6, toy: 7 }
+const commands = { state: 0, mode: 1, feed: 2, action: 3, hour: 4, season: 5, scene: 6, toy: 7,
+  interactToy: 11, placeToy: 13, moveHutch: 14, visitHutch: 15 }
 // Older MCP clients used toy_factory for the room at USB scene index 1.
 const sceneInput = z.preprocess(value => value === 'toy_factory' ? 'nursery' : value, z.enum(petScenes))
-const toyForWireId = (id: number) => petToys.find(toy => toy.wireId === id)?.id ?? null
+const toyForWireId = (id: number) => petRoomItems.find(item => item.wireId === id)?.id ?? null
+const decoration = z.literal('rabbit_hutch')
+
+function deviceError(code: string, message: string) {
+  return Object.assign(Error(message), { code })
+}
 
 async function requestDevice(request: PetRequest, session?: string) {
   const reply = await SerialConnect.pet(request, session)
   if (reply.state !== 'ready') {
     const errors = {
       busy: '键盘正在传输数据，请稍后重试。',
-      unsupported: '当前固件不支持桌宠 MCP。',
+      unsupported: '当前固件不支持这项桌宠功能，请升级键盘固件。',
       disconnected: 'MultiPad 未连接。',
       unavailable: '没有收到设备回复。修改操作可能已经生效，请先查询状态或事件。'
     }
-    throw Error(errors[reply.state])
+    throw deviceError(reply.state, errors[reply.state])
   }
   if (reply.status !== 0) {
-    if (reply.status === 4) throw Error('兔子正在处理水果或使用玩具，请稍后重试。')
-    if (reply.status === 5) throw Error('请先用 pet_set_mode 进入桌宠模式。')
-    if ('command' in request && request.command === commands.toy) throw Error('请确认固件支持该玩具，且已进入玩具所在的场景。')
-    throw Error('键盘拒绝了此桌宠命令，请确认固件支持所选功能。')
+    if (reply.status === 4) {
+      const blocked = '先读 pet_get_state.availableNow，等可执行后再决定。'
+      if ('command' in request && request.command === commands.feed) throw deviceError('pet_busy', '键盘当前无法接收更多水果。' + blocked)
+      if ('command' in request && request.command === commands.placeToy) throw deviceError('slot_occupied', '当前场景已有其他玩具。' + blocked)
+      throw deviceError('pet_busy', '兔子当前状态无法执行此操作。' + blocked)
+    }
+    if (reply.status === 5) throw deviceError('inactive', '键盘处于工作模式。主人选择养宠模式后可再操作。')
+    if ('command' in request && request.command === commands.hour) throw deviceError('time_rejected', '键盘拒绝修改时间，请读取 followRealTime 和 availableNow.setHour。')
+    if ('command' in request && [commands.toy, commands.placeToy, commands.interactToy].includes(request.command)) {
+      throw deviceError('toy_unavailable', '查看 pet_get_state.availableNow 和 deployedToys。第 4 代的兔窝通过 pet_interact_with_decoration 使用。')
+    }
+    throw deviceError('device_rejected', '键盘拒绝了此桌宠命令，请读取 generation 和 availableNow，确认固件支持所选功能。')
   }
   return reply
 }
 
-async function command(command: number, value = 0) {
-  const { payload, session } = await requestDevice({ command, value })
-  const extended = payload.length >= 19
-  if (payload.length !== 12 && !extended) throw Error('桌宠状态格式不匹配。')
+function decodeState(payload: Buffer, session?: string) {
+  const generation = petStateGeneration(payload)
+  if (!generation) throw Error('桌宠状态格式不匹配。')
+  const extended = generation >= 2
   const scene = extended ? petScenes[payload[16]] ?? null : null
+  const visitingTable = generation >= 7 && payload[17] === 3
+  const visitingHutch = generation >= 4 && payload[17] === 1
+  const endOfFoods = generation >= 3 ? 33 + 6 * payload[32] : 0
+  const phase = extended ? petToyPhases[payload[18]] : null
+  const readFoods = (offset: number) => Array.from({ length: payload[offset] }, (_, index) => {
+    const i = offset + 1 + index * 6
+    return { fruit: fruits[payload[i] - 1], x: payload.readUInt16LE(i + 1),
+      y: payload.readInt16LE(i + 3), stage: petFoodStages[payload[i + 5]] }
+  })
+  const other = scene === 'garden' ? 'nursery' : 'garden'
+  const flags = payload[endOfFoods + 7]
   return {
     session,
+    generation,
     active: Boolean(payload[0]),
     action: payload[0] ? petActions[payload[1]] ?? null : null,
     positionX: payload[0] ? payload.readUInt16LE(2) : null,
+    positionY: generation >= 4 && payload[0] ? payload[endOfFoods + 3] : null,
     frames: payload.readUInt32LE(4),
     fruit: fruits[payload[8] - 1] ?? null,
     hour: payload[9],
+    minute: generation >= 3 ? payload[28] : null,
     season: seasons[payload[10]],
     queuedFruit: payload[11],
     stats: extended ? { satiety: payload[12], sleepiness: payload[13], mood: payload[14], affection: payload[15] } : null,
     scene,
-    activeToy: extended ? toyForWireId(payload[17]) : null,
-    toyPhase: extended ? petToyPhases[payload[18]] ?? null : null,
-    availableToys: petToys.filter(toy => toy.scene === scene).map(toy => toy.id)
+    activeToy: extended && !visitingHutch && !visitingTable ? toyForWireId(payload[17]) : null,
+    toyPhase: visitingHutch || visitingTable ? 'idle' : phase,
+    activeDecoration: visitingTable ? 'nursery_table' : visitingHutch ? 'rabbit_hutch' : null,
+    decorationPhase: generation >= 4 ? (visitingTable || visitingHutch ? phase : 'idle') : null,
+    hutchPosition: generation >= 4 ? { x: payload.readUInt16LE(endOfFoods), y: payload[endOfFoods + 2] } : null,
+    actionAgeMs: generation >= 8 ? payload.readUInt16LE(payload.length - 3) : null,
+    facing: generation >= 6 ? (flags & 1 ? 'right' : 'left') : null,
+    otherRoom: generation >= 6 ? { scene: other, foods: readFoods(endOfFoods + 9), toyDropProgress: payload[endOfFoods + 8] } : null,
+    awaitingPlay: generation >= 6 ? { garden: Boolean(flags & 2), nursery: Boolean(flags & 4) } : null,
+    headPet: generation >= 5 ? { remainingMs: payload[endOfFoods + 4] * 10,
+      ...(generation >= 6 ? { phase: payload[endOfFoods + 6] } : {}),
+      gesture: payload[endOfFoods + 4] ? petHeadGestures[payload[endOfFoods + 5]] : null } : null,
+    availableToys: toysForScene(scene, generation).map(toy => toy.id),
+    keyBindings: generation >= 3 ? Array.from(payload.subarray(19, 27), slot =>
+      petItems.find(item => item.itemId === slot)?.id ?? null) : null,
+    followRealTime: generation >= 3 ? Boolean(payload[27] & 1) : null,
+    bedtime: generation >= 3 ? Boolean(payload[27] & 2) : null,
+    deployedToys: generation >= 3 ? { garden: toyForWireId(payload[29]), nursery: toyForWireId(payload[30]) } : null,
+    toyDropProgress: generation >= 3 ? payload[31] : null,
+    foods: generation >= 3 ? readFoods(32) : null
   }
+}
+
+type State = ReturnType<typeof decodeState>
+
+function leavesFoodOnGround(state: State) {
+  return (state.stats?.satiety ?? 0) >= (state.generation >= 6 ? 90 : 100)
+}
+
+function careNote(state: State) {
+  if (!state.active) return '键盘在工作模式，等待主人进入养宠模式。'
+  if (state.fruit) return '兔子正在取食 ' + state.fruit + '。可等 fruit_eaten 再决定下一步。'
+  if (state.bedtime) return state.action === 'sleep'
+    ? '兔子正在窝里长睡。可以继续休息，或用 idle 叫醒。'
+    : '兔子正在走回窝里睡觉。等到 using，再看困意。'
+  if (state.activeToy || state.activeDecoration) return '兔子正在靠近或使用道具。等 finished 事件，就能判断互动是否自然结束。'
+  if (state.generation >= 3 && leavesFoodOnGround(state)) return '兔子吃饱了。已经落地的食物会留到下次饿时再吃。'
+  if (state.foods?.length || state.queuedFruit) return '已有水果，接下来会落地或取食。'
+  if (state.toyDropProgress !== null && state.toyDropProgress < 100) return '玩具正在落下，等到进度 100 后兔子可以靠近。'
+  return '可以选一个动作，也可以让兔子继续当前活动。'
+}
+
+function availableNow(state: State) {
+  const { generation, active, scene, availableToys, fruit } = state
+  const floor = generation >= 3
+  const occupied = Boolean(state.activeToy || state.activeDecoration)
+  const legacyBusy = !floor && Boolean(fruit || state.queuedFruit || occupied)
+  const full = state.stats?.satiety === 100
+  const foodSlots = 8 - (state.foods?.length ?? state.queuedFruit)
+  const deployed = scene && state.deployedToys?.[scene]
+  const actions = playableActions.filter(action => {
+    if (!active || fruit || legacyBusy) return false
+    if ((action === 'groom_fur' || action === 'groom_ear') && generation < 9) return false
+    if (action === 'binky' && generation < 8) return false
+    if ((action === 'stand_watch' || action === 'inspect_table') && generation < 7) return false
+    if (action === 'inspect_table' && (scene !== 'nursery' || occupied)) return false
+    if (generation === 1 && petActions.indexOf(action) > petActions.indexOf('blink')) return false
+    if (floor && action === 'eat' && full) return false
+    return !occupied || state.bedtime || action === 'sleep'
+  })
+  return {
+    actions,
+    feed: active && foodSlots > 0 && !(generation === 2 && occupied),
+    foodSlots: active ? foodSlots : 0,
+    useToys: active && !legacyBusy ? availableToys : [],
+    placeToys: active && floor ? availableToys.filter(toy => !deployed || toy === deployed) : [],
+    interactToys: active && deployed && !occupied && state.toyDropProgress === 100 && (!state.foods?.length || leavesFoodOnGround(state))
+      ? [deployed] : [],
+    visitDecorations: active && generation >= 4 && !fruit ? ['rabbit_hutch', ...(actions.includes('inspect_table') ? ['nursery_table'] : [])] : [],
+    moveDecorations: active && generation >= 4 ? ['rabbit_hutch'] : [],
+    scenes: active && generation >= 2 ? petScenes.filter(id => !legacyBusy || id === scene) : [],
+    setHour: active && !state.followRealTime, setSeason: active, setMode: true,
+    careNote: careNote(state)
+  }
+}
+
+async function command(command: number, value = 0, expectedSession?: string) {
+  const { payload, session } = await requestDevice({ command, value }, expectedSession)
+  const state = decodeState(payload, session)
+  return { ...state, availableNow: availableNow(state) }
 }
 
 function decodeEvent(payload: Buffer, offset: number) {
@@ -74,11 +179,23 @@ function decodeEvent(payload: Buffer, offset: number) {
     case 5: return { ...base, type: 'fruit_eaten', fruit: fruits[value - 1] }
     case 6: return { ...base, type: 'hour_changed', hour: value, previousHour: detail }
     case 7: return { ...base, type: 'season_changed', season: seasons[value], previousSeason: seasons[detail] }
-    case 8: return { ...base, type: 'key_pressed', key: value }
+    case 8: {
+      const entry = petItems.find(item => item.itemId === detail)
+      // Zero was also a placeholder on legacy boards. Only label a reported, known binding.
+      const binding = entry?.kind === 'fruit' ? { item: entry.id, fruit: entry.id } :
+        entry?.kind === 'toy' ? { item: entry.id, toy: entry.id } : entry ? { item: entry.id } : {}
+      return { ...base, type: 'key_pressed', key: value, ...binding }
+    }
     case 9: return { ...base, type: 'snack', encoder: detail }
     case 10: return { ...base, type: 'scene_changed', scene: petScenes[value], previousScene: petScenes[detail] }
     case 11: return { ...base, type: 'toy_started', toy: toyForWireId(value) }
     case 12: return { ...base, type: 'toy_finished', toy: toyForWireId(value), interrupted: Boolean(detail) }
+    case 13: return { ...base, type: 'toy_placed', toy: toyForWireId(value), scene: petScenes[detail] }
+    case 14: return { ...base, type: 'toy_removed', toy: toyForWireId(value), scene: petScenes[detail] }
+    case 15: return { ...base, type: 'decoration_started', decoration: value === 3 ? 'nursery_table' : toyForWireId(value) }
+    case 16: return { ...base, type: 'decoration_finished', decoration: value === 3 ? 'nursery_table' : toyForWireId(value), interrupted: Boolean(detail) }
+    case 17: return { ...base, type: 'decoration_moved', decoration: value === 3 ? 'nursery_table' : toyForWireId(value), scene: petScenes[detail] }
+    case 18: return { ...base, type: 'head_petted', gesture: petHeadGestures[value], encoder: detail }
     default: return { ...base, type: 'unknown', value, detail }
   }
 }
@@ -100,16 +217,88 @@ async function result(run: () => Promise<Record<string, unknown>>) {
     const data = await run()
     return { content: [{ type: 'text' as const, text: JSON.stringify(data) }], structuredContent: data }
   } catch (error) {
-    return { isError: true, content: [{ type: 'text' as const, text: error instanceof Error ? error.message : String(error) }] }
+    const message = error instanceof Error ? error.message : String(error)
+    const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'invalid_response'
+    return { isError: true, content: [{ type: 'text' as const, text: message }], structuredContent: { error: { code, message } } }
   }
 }
 
-export function createPetMcp() {
-  const server = new McpServer({ name: 'multipad-pet', version: '1.1.0' })
-  server.registerTool('pet_get_state', {
-    description: '读取兔子的动作、位置、水果、时间、季节、场景、玩具和四项属性（0–100）。旧固件的扩展字段为 null。',
+const behaviors = [...playableActions, ...fruits, ...petScenes, 'place_carrot', 'play_carrot', 'visit_hutch'] as const
+export const planSteps = z.array(z.object({
+  behavior: z.enum(behaviors),
+  waitMs: z.number().int().min(0).max(8000).default(0).describe('执行此步之前等待的毫秒数')
+}).strict()).min(1).max(6)
+
+function automaticBehaviors(s: Awaited<ReturnType<typeof command>>) {
+  if (!s.active || s.headPet?.remainingMs || s.fruit || s.foods?.some(f => f.stage === 'eating')) return []
+  const a = s.availableNow, stats = s.stats
+  if ((s.activeDecoration || s.activeToy) && !(s.bedtime && s.action === 'sleep')) return []
+  const canEat = !!stats && stats.satiety < 90
+  const canSleep = !!stats && stats.sleepiness >= 25
+  const canPlay = !!stats && stats.mood < 90 && stats.sleepiness < 85
+  if (canEat && (s.foods?.length || s.queuedFruit)) return []
+  return behaviors.filter(b => {
+    if (s.bedtime && s.action === 'sleep') return b === 'idle' && (stats?.sleepiness ?? 0) <= 5
+    if (fruits.some(f => f === b)) return canEat && a.feed && !s.foods?.length && !s.queuedFruit
+    if (b === 'place_carrot') return canPlay && a.placeToys.includes('carrot_toy') && s.scene && !s.deployedToys?.[s.scene]
+    if (b === 'play_carrot') return canPlay && a.interactToys.includes('carrot_toy')
+    if (b === 'visit_hutch') return canSleep && a.visitDecorations.length > 0
+    if (b === 'garden' || b === 'nursery') return s.scene !== b && a.scenes.includes(b)
+    if (b === 'eat' && !canEat || b === 'sleep' && !canSleep || b === 'gaze_owner' && (stats?.affection ?? 100) >= 90) return false
+    return a.actions.some(action => action === b)
+  })
+}
+
+function behaviorCommand(b: typeof behaviors[number]): [number, number] {
+  const fruit = fruits.findIndex(f => f === b)
+  if (fruit >= 0) return [commands.feed, fruit + 1]
+  if (b === 'place_carrot' || b === 'play_carrot') return [b === 'place_carrot' ? commands.placeToy : commands.interactToy, 2]
+  if (b === 'visit_hutch') return [commands.visitHutch, 0]
+  if (b === 'garden' || b === 'nursery') return [commands.scene, petScenes.indexOf(b)]
+  return [commands.action, petActions.findIndex(action => action === b)]
+}
+
+let planRunning = false
+export function createPetMcp(enabled: () => boolean = () => true) {
+  const server = new McpServer({ name: 'multipad-pet', version: '1.4.0' }, { instructions: petServerInstructions })
+  server.registerTool('pet_perform_sequence', {
+    description: '按顺序安排 1–6 步身体动作、投喂（水果名）、场景、玩具或回窝。waitMs 是每步发出前的等待。每步读取真机，需求已满足、被摸头、设备忙或会话改变即停止。accepted 是已接收的步骤，实际完成看事件。',
+    inputSchema: { steps: planSteps, session: z.string().optional().describe('使用这次观察到的设备会话') }
+  }, ({steps, session}, extra) => result(async () => {
+    if (planRunning) throw Error('上一段动作尚未结束')
+    planRunning = true
+    const accepted: string[] = []
+    try {
+      let state = await command(commands.state)
+      const expected = session ?? state.session
+      for (const step of steps) {
+        if (step.waitMs) await new Promise(resolve => setTimeout(resolve, step.waitMs))
+        state = await command(commands.state)
+        if (!enabled() || extra.signal.aborted || state.session !== expected || !automaticBehaviors(state).includes(step.behavior))
+          return { accepted, stoppedBefore: step.behavior, state }
+        const [opcode, value] = behaviorCommand(step.behavior)
+        try {
+          state = await command(opcode, value, expected)
+        } catch (error) {
+          return { accepted, stoppedBefore: step.behavior, reason: error instanceof Error ? error.message : '设备未确认此步' }
+        }
+        accepted.push(step.behavior)
+      }
+      return { accepted, state }
+    } finally { planRunning = false }
+  }))
+  server.registerTool('pet_get_care_guide', {
+    description: '查阅固件照料手册，包括属性方向、各种动作的时长和效果、投喂、玩具、兔窝、场景和事件。无需连接键盘。',
     annotations: { readOnlyHint: true }
-  }, () => result(() => command(commands.state)))
+  }, () => result(async () => petCareGuide))
+  server.registerTool('pet_get_state', {
+    description: '读取键盘实况。availableNow 给出此刻可选的动作、道具和操作，generation 表示固件能力。' +
+      '结合动作、属性、食物阶段、玩具和装饰互动进度决定行动或等待。旧固件缺少的扩展字段为 null。',
+    annotations: { readOnlyHint: true }
+  }, () => result(async () => {
+    const state = await command(commands.state)
+    return { ...state, automaticBehaviors: automaticBehaviors(state) }
+  }))
 
   server.registerTool('pet_set_mode', {
     description: '进入桌宠模式，或者退出并恢复当前层的彩屏画面。',
@@ -117,22 +306,22 @@ export function createPetMcp() {
   }, ({ enabled }) => result(() => command(commands.mode, Number(enabled))))
 
   server.registerTool('pet_play_action', {
-    description: '播放指定动作。trip_angry 会先绊脚再生气，gaze_owner 会转向主人发呆。idle 可叫醒兔子，投喂水果请用 pet_feed。',
+    description: '播放指定动作。sleep 会去宝宝房的兔窝睡觉；在途时 action 仍为 walk，bedtime 为 true。idle 可叫醒兔子，投喂水果请用 pet_feed。',
     inputSchema: { action: z.enum(playableActions) }
   }, ({ action }) => result(() => command(commands.action, petActions.indexOf(action))))
 
   server.registerTool('pet_feed', {
-    description: '投喂一份水果。水果会从屏幕上方落下，兔子随后走过去吃。',
+    description: '投下一份水果。最多同时保留八份。兔子饱了会把水果留在地上，只有 fruit_eaten 事件表示吃完。',
     inputSchema: { fruit: z.enum(fruits) }
   }, ({ fruit }) => result(() => command(commands.feed, fruits.indexOf(fruit) + 1)))
 
   server.registerTool('pet_set_time', {
-    description: '设置花园的整点时间，0–23。此时间只用于彩屏场景。',
+    description: '手动设置场景的整点时间，0–23。先在设置里关闭跟随现实时间。',
     inputSchema: { hour: z.number().int().min(0).max(23) }
   }, ({ hour }) => result(() => command(commands.hour, hour)))
 
   server.registerTool('pet_set_season', {
-    description: '设置春、夏、秋或冬，立即切换花园配色。',
+    description: '设置春、夏、秋或冬，切换当前场景的季节配色。',
     inputSchema: { season: z.enum(seasons) }
   }, ({ season }) => result(() => command(commands.season, seasons.indexOf(season))))
 
@@ -146,15 +335,61 @@ export function createPetMcp() {
     inputSchema: { scene: sceneInput.optional() },
     annotations: { readOnlyHint: true }
   }, ({ scene }) => result(async () => {
-    const selected = scene ?? (await command(commands.state)).scene
-    const toys = petToys.filter(toy => toy.scene === selected).map(({ id, label, description }) => ({ id, label, description }))
+    // An explicit scene also supports browsing the app's catalogue without a keyboard.
+    const pet = await command(commands.state).catch((error: unknown) => {
+      if (scene && error instanceof Error && 'code' in error && error.code === 'disconnected') return null
+      throw error
+    })
+    const selected = scene ?? pet?.scene ?? null
+    const generation = pet?.generation ?? 4
+    const toys = toysForScene(selected, generation).map(({ id, label, description }) => ({ id, label, description }))
     return { scene: selected, toys }
   }))
 
   server.registerTool('pet_use_toy', {
-    description: '让兔子走向当前场景中的玩具并与它互动。可用玩具见 pet_get_state.availableToys，toy_finished.interrupted 表示是否中途退出。',
+    description: '切换当前场景中的玩具。首次放下后兔子会去玩；再次选择同一玩具会收回，选择其他玩具会替换。旧版固件执行一次短暂互动。',
     inputSchema: { toy: z.enum(petToyIds) }
-  }, ({ toy }) => result(() => command(commands.toy, petToys.find(entry => entry.id === toy)!.wireId)))
+  }, ({ toy }) => result(async () => {
+    // Existing clients used this call for a hutch rest before it became permanent scenery.
+    if (toy === 'rabbit_hutch' && (await command(commands.state)).generation >= 4) return command(commands.visitHutch)
+    return command(commands.toy, petRoomItems.find(entry => entry.id === toy)!.wireId)
+  }))
+
+  server.registerTool('pet_place_toy', {
+    description: '在当前场景的空位放下玩具。相同玩具已放置时保持原状；若已有其他玩具，返回忙。',
+    inputSchema: { toy: z.enum(petToyIds) }
+  }, ({ toy }) => result(() => command(commands.placeToy, petRoomItems.find(entry => entry.id === toy)!.wireId)))
+
+  server.registerTool('pet_interact_with_toy', {
+    description: '让兔子和当前场景中已落地的玩具再玩一次，保留玩具的位置。',
+    inputSchema: { toy: z.enum(petToyIds) }
+  }, ({ toy }) => result(() => command(commands.interactToy, petRoomItems.find(entry => entry.id === toy)!.wireId)))
+
+  server.registerTool('pet_list_decorations', {
+    description: '查询场景中常驻的互动装饰，包括当前位置和可移动范围。省略 scene 时查询当前场景。',
+    inputSchema: { scene: sceneInput.optional() },
+    annotations: { readOnlyHint: true }
+  }, ({ scene }) => result(async () => {
+    const state = await command(commands.state)
+    const selected = scene ?? state.scene
+    const entries = selected === 'nursery' && state.hutchPosition ? petDecorations.map(({ id, label, description }) =>
+      ({ id, label, description, position: state.hutchPosition, bounds: hutchBounds })) : []
+    const table = selected === 'nursery' && state.generation >= 7
+      ? [{ id: 'nursery_table', label: '玩具桌', description: '走到木桌右侧，搭着桌沿看桌上的玩具。', movable: false, position: { x: 82, y: 93 } }] : []
+    return { scene: selected, decorations: [...entries, ...table] }
+  }))
+
+  server.registerTool('pet_move_decoration', {
+    description: '移动宝宝房的兔窝。坐标是 320×172 画面中兔窝底边中心的位置，键盘保存设置。',
+    inputSchema: { decoration, x: z.number().int().min(hutchBounds.minX).max(hutchBounds.maxX),
+      y: z.number().int().min(hutchBounds.minY).max(hutchBounds.maxY) }
+  }, ({ x, y }) => result(() => command(commands.moveHutch, x | (y << 9))))
+
+  server.registerTool('pet_interact_with_decoration', {
+    description: '访问兔窝小憩，或在宝宝房走到玩具桌边，站起来搭住桌沿观察。',
+    inputSchema: { decoration: z.enum(['rabbit_hutch', 'nursery_table']) }
+  }, ({ decoration }) => result(() => decoration === 'nursery_table'
+    ? command(commands.action, petActions.indexOf('inspect_table')) : command(commands.visitHutch)))
 
   server.registerTool('pet_get_events', {
     description: '读取已发生的桌宠事件。后续调用传入上次响应的 cursor。包括实体投喂键、旋钮改动和自动动作。',

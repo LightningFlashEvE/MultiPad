@@ -170,6 +170,7 @@ export default class SerialConnect {
     const session = this.petSession
     if (!reader || !session) return { state: 'unsupported' }
     const reset = Boolean(cursorSession && cursorSession !== session)
+    if (reset && 'command' in request) return { state: 'disconnected' }
     if (reset && 'after' in request) request = { after: 0 }
     const deadline = Date.now() + 1500
     do {
