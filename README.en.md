@@ -14,6 +14,17 @@ MultiPad is a programmable desktop keypad with eight keys, three rotary encoders
 
 ![The item picker and physical key bindings in the Windows app](docs/images/pet-items.png)
 
+## Hardware design and enclosure
+
+The original schematics and PCB layouts were published by iLx11. Open the Design Files section of the upstream project for the EasyEDA Pro design. [Original hardware project](https://oshwhub.com/ilx1/multi-pad#1)
+
+| PCB revision | Display connection | Enclosure fit |
+| --- | --- | --- |
+| FPC | The LCD and OLEDs connect via flexible flat cables | Fits the front and rear shells designed for the FPC revision |
+| Module | Uses display modules | Can reuse the FPC rear shell and requires a front shell adapted to the module board |
+
+See the author's [enclosure assembly video](https://www.bilibili.com/video/BV1rw6aYAEAK/) for the enclosure layout and installation steps.
+
 ## Work mode
 
 Select **工作模式** (Work) at the top of the Windows app. You can also hold the large encoder on the keypad for about 1.2 seconds to switch modes. When leaving Pet mode, hold it without turning, then release.

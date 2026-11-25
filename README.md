@@ -21,6 +21,17 @@ Windows 上位机和 STM32 固件在同一仓库维护，涉及 USB 协议的改
 | [app](app/) | Electron / Vue 上位机 | [iLx11/key-pad-application](https://github.com/iLx11/key-pad-application) · `e2844bf` |
 | [firmware](firmware/) | STM32F103VETx 固件 | [iLx11/multi-pad](https://github.com/iLx11/multi-pad) · `78c1ee5` |
 
+## 硬件工程与外壳
+
+MultiPad 的原理图和 PCB 由原作者 iLx11 发布。打开嘉立创开源硬件平台上的原项目，进入「设计图」查看嘉立创 EDA 专业版工程。[原始硬件工程](https://oshwhub.com/ilx1/multi-pad#1)
+
+| PCB 版本 | 屏幕连接 | 外壳兼容性 |
+| --- | --- | --- |
+| FPC 版 | 液晶屏和 OLED 通过 FPC 软排线连接 | 适用原作者为 FPC 版设计的前壳和后壳 |
+| 模块版 | 使用屏幕模块 | 可用 FPC 版后壳，前壳需要适配模块版 |
+
+外壳结构与装配步骤见原作者的[外壳装配视频](https://www.bilibili.com/video/BV1rw6aYAEAK/)。
+
 ## 工作模式
 
 在 Windows 软件顶部选择 **工作模式**。按住键盘的大旋钮约 1.2 秒也可以切换模式。从养宠模式退出时，按住不转，然后松开。
