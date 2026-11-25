@@ -109,7 +109,9 @@ static bool handle_small_pet_encoder(uint8_t event, uint8_t button, bool *pet_pr
         return active || *pet_pressed;
     }
     if (active && (event == ANTICLOCKWISE || event == CLOCKWISE)) {
-        pet_mode_adjust_scene(event == CLOCKWISE ? 1 : -1, right);
+        // The left encoder's physical direction is reversed for the pet clock.
+        const bool forward = right ? event == CLOCKWISE : event == ANTICLOCKWISE;
+        pet_mode_adjust_scene(forward ? 1 : -1, right);
         return true;
     }
     return *pet_pressed;

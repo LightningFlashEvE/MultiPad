@@ -213,11 +213,15 @@ static void small_encoders_keep_work_layers_out_of_pet_mode(void) {
     assert(get_menu_index() == 3 && !menu_previews && !menu_loads && macros == before);
 
     assert(pet_mode_control(9, 0) == 0);
-    const uint8_t hour = pet_mode_hour(), season = pet_mode_season();
+    const uint8_t season = pet_mode_season();
     const uint8_t scene = pet_care_get()->scene;
+    assert(pet_mode_control(4, 23) == 0);
+    encoder1_callback(ANTICLOCKWISE); /* Physical clockwise on the left encoder. */
+    assert(pet_mode_hour() == 0);
     encoder1_callback(CLOCKWISE);
+    assert(pet_mode_hour() == 23);
     encoder2_callback(CLOCKWISE);
-    assert(pet_mode_hour() == (hour + 1) % 24 && pet_mode_season() == (season + 1) % 4);
+    assert(pet_mode_season() == (season + 1) % 4);
     encoder2_callback(ENCODER_DOWN);
     encoder2_callback(UP_CLOCKWISE);
     encoder2_callback(ENCODER_UP);
