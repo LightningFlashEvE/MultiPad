@@ -133,6 +133,7 @@ function availableNow(state: State) {
   const deployed = scene && state.deployedToys?.[scene]
   const actions = playableActions.filter(action => {
     if (!active || fruit || legacyBusy) return false
+    if ((action === 'groom_fur' || action === 'groom_ear') && generation < 9) return false
     if (action === 'binky' && generation < 8) return false
     if ((action === 'stand_watch' || action === 'inspect_table') && generation < 7) return false
     if (action === 'inspect_table' && (scene !== 'nursery' || occupied)) return false

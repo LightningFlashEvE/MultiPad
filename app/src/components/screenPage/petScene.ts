@@ -1,5 +1,5 @@
 export type PetAction = 'idle' | 'walk' | 'sleep' | 'eat' | 'react' | 'run' | 'flee' | 'blink' |
-  'daydream' | 'trip_angry' | 'gaze_owner' | 'stand_watch' | 'inspect_table' | 'binky'
+  'daydream' | 'trip_angry' | 'gaze_owner' | 'stand_watch' | 'inspect_table' | 'binky' | 'groom_fur' | 'groom_ear'
 
 function rect(ctx: CanvasRenderingContext2D, color: string, x: number, y: number, w: number, h: number) {
   ctx.fillStyle = color

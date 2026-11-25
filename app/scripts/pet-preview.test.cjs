@@ -103,6 +103,32 @@ test('the rabbit kicks forward, turns in the air and lands facing back before fe
   assert.equal(state.action, 5)
 })
 
+test('good care takes ten minutes and poor care takes five minutes to change affection', () => {
+  const {state, tick} = preview(100)
+  state.stats.sleepiness = 0
+  tick(599975)
+  assert.equal(state.stats.affection, 35)
+  tick(25)
+  assert.equal(state.stats.affection, 36)
+  state.stats.mood = 30
+  tick(300000)
+  assert.equal(state.stats.affection, 35)
+})
+
+test('each grooming action stays in place and completes without an interaction reward', () => {
+  const {world, state, tick} = preview()
+  for (const [id, duration] of [[16, 2500], [17, 3000]]) {
+    const before = { ...state.stats }, x = state.x
+    assert.equal(world.use(3, id), '')
+    tick(duration - 25)
+    assert.equal(state.action, id)
+    tick(25)
+    assert.equal(state.action, 0)
+    assert.equal(state.x, x)
+    assert.deepEqual(state.stats, before)
+  }
+})
+
 test('the nursery table has a fixed approach and paw contact without a care reward', () => {
   const {world,state,tick} = preview()
   assert.ok(world.use(3,14))

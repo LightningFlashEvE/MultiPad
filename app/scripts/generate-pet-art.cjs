@@ -44,11 +44,18 @@ function render(width, height, draw, originX = 0, originY = 0) {
   return { width, height, pixels }
 }
 
-function encode(images) {
+function encode(images, reuseRows = false) {
+  const rowOffsets = new Map()
   const rows = []
   const runs = []
   for (const { width, height, pixels } of images) {
     for (let row = 0; row < height; row++) {
+      if (reuseRows) {
+        const key = pixels.subarray(row * width, (row + 1) * width).join(',')
+        const existing = rowOffsets.get(key)
+        if (existing !== undefined) { rows.push(existing); continue }
+        rowOffsets.set(key, runs.length / 2)
+      }
       rows.push(runs.length / 2)
       for (let x = 0; x < width;) {
         const color = pixels[row * width + x]
@@ -140,7 +147,7 @@ function clipDefinitions(frameCount) {
 async function generate() {
   const garden = encode([render(320, 172, scene.drawGarden)])
   const frames = await readSprite()
-  const rabbit = encode(frames)
+  const rabbit = encode(frames, true)
   const nursery = encode([render(320, 172, ctx => scene.drawNursery(ctx, 12, 0, true))])
   const hutch = encode([render(81, 74, scene.drawNurseryHutch, 205, 73)])
   if (pat.rabbitBrows.length !== frames.length) throw Error('Each rabbit frame needs a head-pat contact point')

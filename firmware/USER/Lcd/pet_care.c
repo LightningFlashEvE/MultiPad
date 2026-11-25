@@ -17,6 +17,7 @@ static PetCare care;
 static struct { uint8_t satiety, sleepiness, mood, affection; } pending_stats;
 static uint32_t sequence, metabolism_ms, fatigue_ms, retry_at;
 static uint16_t next_slot;
+static uint32_t bond_ms;
 static bool dirty, journal_available, retry_pending, was_sleeping;
 
 static uint16_t crc16(const uint8_t *data, unsigned bytes) {
@@ -52,7 +53,7 @@ static bool valid(const uint8_t *record, unsigned bytes) {
 
 void pet_care_init(uint16_t flash_id) {
     care = initial_care;
-    sequence = metabolism_ms = fatigue_ms = next_slot = 0;
+    sequence = metabolism_ms = fatigue_ms = bond_ms = next_slot = 0;
     dirty = retry_pending = was_sleeping = false;
     switch (flash_id) {
         case W25Q16: case W25Q32: case W25Q64: case W25Q128: case W25Q256:
@@ -78,6 +79,8 @@ void pet_care_init(uint16_t flash_id) {
             found = true;
             sequence = serial;
             care = initial_care;
+            /* V3 reserved byte 27 was zero on older firmware. */
+            bond_ms = record[3] == 3 && record[27] < 10 ? record[27] * 60000u : 0;
             care.satiety = record[8];
             care.sleepiness = record[9];
             care.mood = record[10];
@@ -150,11 +153,28 @@ static void adjust(uint8_t *value, int delta) {
     *value = result;
 }
 
+static int bond_direction(void) {
+    if (pending_stats.satiety <= 25 || pending_stats.mood <= 30 || pending_stats.sleepiness >= 80)
+        return pending_stats.affection ? -1 : 0;
+    if (pending_stats.satiety >= 70 && pending_stats.mood >= 70 && pending_stats.sleepiness <= 30)
+        return pending_stats.affection < 100 ? 1 : 0;
+    return 0;
+}
+
+static void reset_bond_if_changed(int previous) {
+    if (previous != bond_direction()) {
+        if (bond_ms >= 60000u) dirty = true;
+        bond_ms = 0;
+    }
+}
+
 void pet_care_adjust(int satiety, int sleepiness, int mood, int affection) {
+    int previous = bond_direction();
     adjust(&pending_stats.satiety, satiety);
     adjust(&pending_stats.sleepiness, sleepiness);
     adjust(&pending_stats.mood, mood);
     adjust(&pending_stats.affection, affection);
+    reset_bond_if_changed(previous);
     pet_care_save();
 }
 
@@ -162,6 +182,17 @@ void pet_care_tick(uint32_t elapsed_ms, bool sleeping) {
     /* Charge time only while this pet is on screen. Separate fatigue progress
      * avoids attributing a whole minute to a sleep entered on its last tick. */
     if (elapsed_ms > 60000) elapsed_ms = 60000;
+    int previous = bond_direction();
+    if (previous) {
+        unsigned saved_minutes = bond_ms / 60000u;
+        bond_ms += elapsed_ms;
+        unsigned interval = previous > 0 ? 600000u : 300000u;
+        if (bond_ms >= interval) {
+            bond_ms -= interval;
+            adjust(&pending_stats.affection, previous);
+        }
+        if (bond_ms / 60000u != saved_minutes) dirty = true;
+    }
     if (was_sleeping != sleeping) {
         fatigue_ms = 0;
         was_sleeping = sleeping;
@@ -178,6 +209,7 @@ void pet_care_tick(uint32_t elapsed_ms, bool sleeping) {
         if (pending_stats.satiety < 25 || pending_stats.sleepiness > 85) adjust(&pending_stats.mood, -1);
         adjust(&pending_stats.satiety, -1);
     }
+    reset_bond_if_changed(previous);
     pet_care_save();
 }
 
@@ -208,6 +240,7 @@ static bool append_record(void) {
     record[24] = (uint8_t)care.hutch_x;
     record[25] = (uint8_t)(care.hutch_x >> 8);
     record[26] = care.hutch_y;
+    record[27] = bond_ms / 60000u;
     uint16_t crc = crc16(record, sizeof(record));
     record[RECORD_BYTES-2] = (uint8_t)crc;
     record[RECORD_BYTES-1] = (uint8_t)(crc >> 8);

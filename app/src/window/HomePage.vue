@@ -969,8 +969,8 @@ const showAppInfo = () => {
               <div class="pet-fields" role="group" aria-label="宠物互动">
                 <button type="button" :disabled="interacting || !!petState.fruit || (petLinked && generation < 3 && !!currentToy)"
                   @click="interactWithPet(3, isSleeping ? 0 : 2)">{{ isSleeping ? '叫醒' : '睡觉' }}</button>
-                <button v-for="action in (['trip_angry', 'gaze_owner', 'stand_watch', 'binky'] as const)" :key="action"
-                  type="button" :disabled="legacyPet || interacting || !!currentToy || (petLinked && ((action === 'stand_watch' && generation < 7) || (action === 'binky' && generation < 8)))"
+                <button v-for="action in (['trip_angry', 'gaze_owner', 'stand_watch', 'binky', 'groom_fur', 'groom_ear'] as const)" :key="action"
+                  type="button" :disabled="legacyPet || interacting || !!currentToy || (petLinked && ((action === 'stand_watch' && generation < 7) || (action === 'binky' && generation < 8) || ((action === 'groom_fur' || action === 'groom_ear') && generation < 9)))"
                   @click="interactWithPet(3, petActions.indexOf(action))">{{ petActionLabels[action] }}</button>
               </div>
             </section>

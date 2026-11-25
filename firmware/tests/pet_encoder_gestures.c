@@ -181,6 +181,17 @@ int main(void) {
     concurrent_activities();
     table_and_food_positions();
     dance_and_window();
+    const PetAction grooming[] = {PET_GROOM_FUR, PET_GROOM_EAR};
+    for (unsigned i = 0; i < 2; ++i) {
+        int x = pet_mode_x(), affection = pet_care_get()->affection;
+        assert(pet_mode_control(3, grooming[i]) == 0);
+        advance(400);
+        memcpy(before, lcd, sizeof(lcd));
+        advance(410);
+        assert(pet_mode_action() == grooming[i] && memcmp(before, lcd, sizeof(lcd)) != 0);
+        advance(i ? 2250 : 1750);
+        assert(pet_mode_action() == PET_IDLE && pet_mode_x() == x && pet_care_get()->affection == affection);
+    }
     pet_care_adjust(100, -100, 0, 0);
     bool saw_lookout = false, saw_table = false;
     for (unsigned i = 0; i < 1200 && !(saw_lookout && saw_table); i++) {

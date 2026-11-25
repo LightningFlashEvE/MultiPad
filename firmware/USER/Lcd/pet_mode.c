@@ -539,7 +539,7 @@ uint8_t pet_mode_control(uint8_t opcode, uint8_t value) {
             if (!value || value > FRUIT_COUNT) return INVALID;
             return queue_fruit(value, SOURCE_MCP, now) ? OK : BUSY;
         case PLAY:
-            if (value > PET_BINKY || value == PET_FALL || value == PET_FETCH) return INVALID;
+            if (value > PET_GROOM_EAR || value == PET_FALL || value == PET_FETCH) return INVALID;
             if (fruit || (value == PET_EAT && !hungry())) return BUSY;
             if (value == PET_INSPECT_TABLE) {
                 if (pet_care_get()->scene != PET_NURSERY) return INVALID;
@@ -732,6 +732,10 @@ static void update_action(uint32_t now, uint32_t step_ms) {
             direction = elapsed >= 500 ? -dance_direction : dance_direction;
             if (elapsed >= 1125) set_action(PET_IDLE, now);
             return;
+        case PET_GROOM_FUR:
+        case PET_GROOM_EAR:
+            if (elapsed >= (action == PET_GROOM_FUR ? 2500u : 3000u)) set_action(PET_IDLE, now);
+            return;
         case PET_STAND_WATCH:
             if (elapsed >= 3875) set_action(PET_IDLE, now);
             return;
@@ -769,6 +773,8 @@ static void update_action(uint32_t now, uint32_t step_ms) {
             }
             if (walk_stops % 6 == 3 && pet_care_get()->scene == PET_NURSERY)
                 start_toy(find_toy(NURSERY_TABLE), false, SOURCE_AUTOMATIC, now);
+            else if (walk_stops % 5 == 0) set_action(PET_GROOM_EAR, now);
+            else if (walk_stops % 5 == 2) set_action(PET_GROOM_FUR, now);
             else if (walk_stops % 3 == 1) set_action(PET_STAND_WATCH, now);
             else set_action(walk_stops % 4 == 2 && pet_care_get()->affection < 90 ? PET_GAZE_OWNER : PET_IDLE, now);
         }
@@ -845,6 +851,8 @@ static RabbitClipId action_clip(uint32_t elapsed) {
         case PET_STAND_WATCH: return RABBIT_STAND_WATCH;
         case PET_INSPECT_TABLE: return RABBIT_INSPECT_TABLE;
         case PET_BINKY: return RABBIT_BINKY;
+        case PET_GROOM_FUR: return RABBIT_GROOM_FUR;
+        case PET_GROOM_EAR: return RABBIT_GROOM_EAR;
         case PET_GAZE_OWNER: return RABBIT_GAZE_OWNER;
     }
     return RABBIT_IDLE;
@@ -972,7 +980,7 @@ static void paint_rabbit(uint8_t *line, uint16_t row) {
     if (sprite_y < 0 || sprite_y >= RABBIT_HEIGHT) return;
     const uint16_t row_index = frame.sprite * RABBIT_HEIGHT + sprite_y;
     uint8_t offset = 0;
-    for (uint16_t run = rabbit_rows[row_index]; run < rabbit_rows[row_index + 1]; run++) {
+    for (uint16_t run = rabbit_rows[row_index]; offset < RABBIT_WIDTH; run++) {
         const uint8_t count = rabbit_runs[run * 2];
         const uint8_t color = rabbit_runs[run * 2 + 1];
         if (color) {

@@ -102,6 +102,31 @@ static void actual_changes_survive_unplug(void) {
     stats(100, 0, 100, 100);
 }
 
+static void long_term_affection(void) {
+    new_flash();
+    pet_care_adjust(35, -25, 10, 0);
+    for (int i = 0; i < 9; ++i) tick(60000, false);
+    pet_care_init(W25Q128);
+    assert(pet_care_get()->affection == 35);
+    tick(60000, false);
+    assert(pet_care_get()->affection == 36);
+    pet_care_adjust(0, 0, -60, 0); /* Low mood alone is enough. */
+    for (int i = 0; i < 4; ++i) tick(60000, false);
+    pet_care_adjust(0, 0, 35, 0); /* A neutral interval breaks the streak. */
+    pet_care_adjust(0, 0, -35, 0);
+    tick(60000, false);
+    assert(pet_care_get()->affection == 36);
+    pet_care_init(W25Q128);
+    for (int i = 0; i < 4; ++i) tick(60000, false);
+    assert(pet_care_get()->affection == 35);
+    pet_care_adjust(0, 100, 70, 0); /* A tired rabbit loses affection even when happy. */
+    for (int i = 0; i < 5; ++i) tick(60000, false);
+    assert(pet_care_get()->affection == 34);
+    pet_care_adjust(-100, -100, 0, -100);
+    for (int i = 0; i < 5; ++i) tick(60000, true);
+    assert(pet_care_get()->affection == 0);
+}
+
 static void failed_writes_recover(void) {
     new_flash();
     pet_care_adjust(1, 1, 1, 1);
@@ -164,6 +189,7 @@ static void sector_rotation_survives_unplug(void) {
 
 int main(void) {
     actual_changes_survive_unplug();
+    long_term_affection();
     failed_writes_recover();
     sector_rotation_survives_unplug();
     puts("Pet care power-loss tests passed");
