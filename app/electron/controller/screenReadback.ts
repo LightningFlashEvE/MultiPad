@@ -12,6 +12,7 @@ const STATUS_OK = 0
 const STATUS_EMPTY = 1
 const PET_CONTROL = 0xfa
 const PET_EVENTS = 0xfb
+const MENU_CONFIG = 0xfc
 
 export type PetRequest = { command: number; value: number } | { after: number }
 export type PetReply =
@@ -137,6 +138,16 @@ export default class ScreenReadback {
     const pressed = this.pressedButtons
     this.pressedButtons = 0
     return { state: 'ready', held: this.heldButtons, pressed }
+  }
+
+  async readWorkLayout() {
+    if (this.closed) return { state: 'disconnected' as const }
+    if (this.busy) return { state: 'busy' as const }
+    const frame = await this.exchange(MENU_CONFIG)
+    if (!frame || frame[6] !== STATUS_OK || frame[7] !== MENU_CONFIG || frame.length !== HEADER_SIZE + 31) {
+      return { state: 'unavailable' as const }
+    }
+    return { state: 'ready' as const, menu: frame[18], bytes: Uint8Array.from(frame.subarray(HEADER_SIZE)) }
   }
 
   async performance(menu: number, metrics?: number[]) {

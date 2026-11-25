@@ -196,6 +196,12 @@ ipcMain.handle('device-configuring', async (event, enabled: boolean) => {
   }
 })
 
+ipcMain.handle('device-work-layout', async (event: IpcMainInvokeEvent) => {
+  fromHome(event)
+  if (event.sender !== configOwner) return { state: 'busy' }
+  return SerialConnect.readWorkLayout()
+})
+
 // 创建主窗口
 const createMainWindow = async () => {
   let mainW = new CreateWindow()

@@ -108,6 +108,7 @@ contextBridge.exposeInMainWorld('myApi', {
   connectHardware,
   readDeviceScreens: (knownGeneration?: number) => ipcRenderer.invoke('device-screens', knownGeneration),
   readDeviceButtons: () => ipcRenderer.invoke('device-buttons'),
+  readWorkLayout: () => ipcRenderer.invoke('device-work-layout'),
   setDeviceConfiguring: (enabled: boolean) => ipcRenderer.invoke('device-configuring', enabled),
   pcPerformance: () => ipcRenderer.invoke('pc-performance'),
   livePerformance: (menu: number, metrics?: number[]) => ipcRenderer.invoke('live-performance', menu, metrics),
