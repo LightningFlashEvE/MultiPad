@@ -47,7 +47,7 @@ Click **发送到键盘** (Send to keypad) to transfer the enabled layers and th
 | Click the color display | Open pet settings. Move the hutch under **装饰布置** (Decorations), or enable **跟随现实时间** to sync the scene clock with the PC. |
 | Click either OLED | Pick two parameters for that display. Pet stats have a label, a number and a progress bar. |
 | Press the large encoder | Pet the rabbit. Hold and turn to stroke its head. Hold still for about 1.2 seconds and release to leave Pet mode. |
-| Turn the small encoders | The left encoder changes the time. The right changes the season. Hold and turn the right encoder to switch between garden and nursery. |
+| Turn the small encoders | Turn the left encoder clockwise to advance the scene clock by one hour, or counterclockwise to go back one hour. The right changes the season. Hold and turn the right encoder to switch between garden and nursery. |
 | Press a bound item key | Drop a snack or place a toy. Press the toy key again to pick it up. Each scene holds one toy and up to eight snacks. |
 
 The rabbit eats snacks one at a time, returns to its hutch to sleep and sometimes stands up to look around. A happier rabbit is more likely to leap, kick in midair and land facing the other way. The nursery window changes from sunlight to moonlight with the scene clock.
