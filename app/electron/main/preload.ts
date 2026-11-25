@@ -120,7 +120,7 @@ contextBridge.exposeInMainWorld('myApi', {
   pcPerformance: () => ipcRenderer.invoke('pc-performance'),
   pcPerformancePreview: (menu: number) => ipcRenderer.invoke('pc-performance-preview', menu),
   livePerformance: (menu: number, metrics?: number[]) => ipcRenderer.invoke('live-performance', menu, metrics),
-  petAction: (command: number, value = 0) => ipcRenderer.invoke('pet-action', command, value),
+  petAction: (command: number, value = 0, expectedSession?: string) => ipcRenderer.invoke('pet-action', command, value, expectedSession),
   openPetSettings: (snapshot: PetSettingsSnapshot) => ipcRenderer.invoke('pet-settings-open', snapshot),
   updatePetSettings: (snapshot: PetSettingsSnapshot) => ipcRenderer.send('pet-settings-update', snapshot),
   onPetSettingsClosed: (callback: () => void) => listen('pet-settings-closed', callback),

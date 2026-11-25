@@ -8,7 +8,7 @@ import { z } from 'zod'
 import { actionTiming, createPetMcp, readPetEvents, validActionTiming } from './petMcp'
 import { defaultRabbitPersonality, personalityLimit, tokenPlanModels } from '../../src/utils/petPersonality'
 import { petActionLabels, playableActions, petScenes, petToys, timedPetActions, petMaxDurationSeconds, petRecoveredEnergy,
-  petFruitIds as fruits, petFruitLabels as fruitLabel } from '../../src/utils/petCatalog'
+  petHeadGestures, petFruitIds as fruits, petFruitLabels as fruitLabel } from '../../src/utils/petCatalog'
 
 const settingsSchema = z.object({
   apiUrl: z.string().trim().min(1).max(2048),
@@ -54,6 +54,8 @@ const maxIdleActions = 8
 const slotMs = 10_000
 const reactionTimeoutMs = 4_000
 const idleTimeoutMs = 8_000
+const rateLimitMessage = '模型限流'
+let providerRetryAt = 0
 const defaultUrl = 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1'
 const defaultModel = tokenPlanModels[0]
 let revision = 0
@@ -63,7 +65,7 @@ let status: Status = { phase: 'idle', message: '等待下一次决策' }
 
 let observedSession: string | null | undefined
 type OwnerInteraction =
-  | { type: 'head_petted' }
+  | { type: 'head_petted'; gesture?: typeof petHeadGestures[number] }
   | { type: 'fruit_queued'; fruit: typeof fruits[number] }
   | { type: 'toy_placed'; toy: 'carrot_toy' }
 interface Reaction { events: OwnerInteraction[]; session: string }
@@ -71,11 +73,13 @@ interface PlannedStep { action: RabbitAction; at: number; session: string; durat
 let reaction: Reaction | undefined
 let activeReaction: Reaction | undefined
 let idleSteps: PlannedStep[] = []
+let planEndAt = 0
 let nextIdleAt: number | undefined
 let stopEventWatch: (() => void) | undefined
 let nextDecisionAt: number | undefined
 let requestAbort: AbortController | undefined
 let autoRunning = false
+let deliveringAction = false
 let activitySession: string | undefined
 let activityVersion = 0
 let activityListener: ((activity: ReturnType<typeof getPetAiActivity>) => void) | undefined
@@ -99,6 +103,21 @@ function publishActivity() {
 
 function behaviorLabel(name: string): string {
   return petActionLabels[name as keyof typeof petActionLabels] ?? name
+}
+
+function clearIdlePlan() {
+  idleSteps = []
+  planEndAt = 0
+}
+
+function shiftIdlePlan(delta: number) {
+  for (const step of idleSteps) step.at += delta
+  planEndAt += delta
+}
+
+function releaseSkippedSlot(start: number, durationSeconds = 0) {
+  const unused = start + Math.max(slotMs, durationSeconds * 1000) - Date.now()
+  if (planEndAt && unused > 0) shiftIdlePlan(-unused)
 }
 
 function endpointFor(input: string) {
@@ -128,13 +147,15 @@ export function savePetAi(input: unknown) {
     ? encryptKey(apiKey)
     : saved?.apiUrl === endpoint ? saved.encryptedKey : ''
   if (!encryptedKey && (enabled || saved?.encryptedKey)) throw Error('请填写此 API 地址的 API Key')
+  if (saved?.apiUrl !== endpoint || saved.model !== model || apiKey) providerRetryAt = 0
   store().set('settings', { apiUrl: endpoint, model, encryptedKey, enabled,
     personality: (personality ?? saved?.personality) || defaultRabbitPersonality })
   revision++
   requestAbort?.abort()
   activitySession = undefined
+  activeReaction = undefined
   reaction = undefined
-  idleSteps = []
+  clearIdlePlan()
   watchOwnerEvents(enabled ? observedSession : null)
   setStatus({ phase: 'idle', message: enabled ? '等待下一次 AI 决策' : 'AI 控制已暂停' })
   schedule(observedSession ? 200 : 1500)
@@ -184,7 +205,9 @@ async function callPet(client: Client, name: string, args: Record<string, unknow
 const rabbitRole = '你扮演 MultiPad 键盘上的垂耳兔。选择符合性格、属性和主人互动的动作。' +
   'satiety 越高越饱，energy 越高越有精神，mood 越高越开心，affection 越高越亲近主人。' +
   '精神低时可睡，恢复到够用就醒。饱食或精神偏低时少做剧烈动作。' +
-  '空闲时多发呆，偶尔散步或梳毛，避免频繁切换、连续重复和无缘无故蹦跳。' +
+  'recentActions 是键盘最近接收的动作。结合性格和场景，从可用动作中换换花样，如散步、梳耳、眺望或看主人。' +
+  '心情好、吃饱且精力充足时偶尔蹦跳或跳兔子舞，活跃动作之间留出安静时间。可以继续休息。' +
+  '摸头事件中 tap 是轻点，cw 和 ccw 是顺、逆时针揉头。轻点可抬头看主人，揉头可梳耳、舔毛或眨眼。' +
   '主人投喂或给玩具时，优先留出时间吃东西或玩。rest 表示保留当前活动。只调用工具，不输出解释。'
 
 const actionTool = 'pet_perform_sequence'
@@ -262,6 +285,15 @@ async function decide(provider: Provider, observation: object | string, actions:
     })
     if (!response.ok) {
       await response.body?.cancel().catch(() => {})
+      signal.throwIfAborted()
+      if (response.status === 429) {
+        const header = response.headers.get('Retry-After')?.trim() ?? ''
+        const now = Date.now()
+        const until = /^\d+$/.test(header) ? now + Number(header) * 1000
+          : /[a-z]{3}/i.test(header) ? Date.parse(header) : NaN
+        providerRetryAt = Number.isSafeInteger(until) ? Math.max(now, until) : now + intervalMs
+        throw new ProviderError(rateLimitMessage)
+      }
       if (response.status === 401 && host === new URL(defaultUrl).hostname) {
         throw new ProviderError('Token Plan 返回 401，请使用对应套餐的专用 API Key')
       }
@@ -313,18 +345,39 @@ async function decide(provider: Provider, observation: object | string, actions:
 
 const readState = async (client: Client) => stateSchema.parse(await callPet(client, 'pet_get_state'))
 
-function localDecision(pet: z.infer<typeof stateSchema>, reaction: boolean, previous?: RabbitAction) {
-  const actions = reaction ? pet.reactionBehaviors : pet.automaticBehaviors
-  if (reaction) return actions.includes('blink') ? { behavior: 'blink' as const } : undefined
-  const calm = (['daydream', 'groom_fur', 'walk'] as const).filter(action => actions.includes(action))
-  const behavior = pet.stats && pet.stats.energy <= 25 && actions.includes('sleep') ? 'sleep'
-    : calm.find(action => action !== previous) ?? calm[0]
-  if (pet.generation >= 11 && behavior === 'sleep') return { behavior, durationSeconds: petMaxDurationSeconds, untilEnergy: petRecoveredEnergy }
-  if (pet.generation >= 11 && behavior === 'daydream') return { behavior, durationSeconds: 25 }
-  return behavior ? { behavior } : undefined
+const livelyActions: RabbitAction[] = ['run', 'jump', 'binky']
+let history: { session: string; actions: RabbitAction[] } | undefined
+
+const gestureResponses: Record<typeof petHeadGestures[number], RabbitAction[]> = {
+  tap: ['gaze_owner', 'blink'], cw: ['groom_ear', 'blink'], ccw: ['groom_fur', 'blink']
 }
 
-let previousAction: { session: string; action: RabbitAction } | undefined
+function localDecision(pet: z.infer<typeof stateSchema>, reaction: OwnerInteraction | undefined, recent: RabbitAction[]) {
+  const actions = reaction ? pet.reactionBehaviors : pet.automaticBehaviors
+  if (pet.stats && pet.stats.energy <= 25 && actions.includes('sleep')) {
+    return pet.generation >= 11 ? { behavior: 'sleep' as const, durationSeconds: petMaxDurationSeconds, untilEnergy: petRecoveredEnergy }
+      : { behavior: 'sleep' as const }
+  }
+  let candidates: RabbitAction[]
+  if (reaction) {
+    candidates = reaction.type === 'toy_placed' ? ['stand_watch', 'walk', 'blink', 'gaze_owner']
+      : reaction.type === 'head_petted' ? (reaction.gesture ? gestureResponses[reaction.gesture] : ['gaze_owner', 'blink', 'groom_ear', 'groom_fur'])
+      : ['blink', 'gaze_owner', 'stand_watch']
+  } else {
+    candidates = ['daydream', 'groom_fur', 'walk', 'groom_ear', 'blink', 'gaze_owner']
+    if (pet.scene === 'garden') candidates.push('stand_watch')
+    if (pet.scene === 'nursery') candidates.push('inspect_table', 'stand_watch')
+    if (pet.stats && pet.stats.energy >= 65 && pet.stats.satiety >= 55 && pet.stats.mood >= 65 &&
+        !recent.slice(-2).some(action => livelyActions.includes(action))) candidates.push(...livelyActions)
+  }
+  const available = candidates.filter(action => actions.includes(action))
+  if (!available.length) return undefined
+  const oldest = Math.min(...available.map(action => recent.lastIndexOf(action)))
+  const pool = available.filter(action => recent.lastIndexOf(action) === oldest)
+  const behavior = reaction?.type === 'head_petted' && reaction.gesture ? pool[0] : pool[Math.floor(Math.random() * pool.length)]
+  if (pet.generation >= 11 && behavior === 'daydream') return { behavior, durationSeconds: 25 }
+  return { behavior }
+}
 
 async function run(kind: 'auto' | 'connection' | 'blink', scheduled?: PlannedStep) {
   if (running) throw Error('AI 正在处理上一轮')
@@ -335,7 +388,7 @@ async function run(kind: 'auto' | 'connection' | 'blink', scheduled?: PlannedSte
   const planning = kind === 'auto' && !trigger && !scheduled
   const roundStart = Date.now()
   if (planning) {
-    idleSteps = []
+    clearIdlePlan()
     nextIdleAt = roundStart + intervalMs
   }
   if (trigger) reaction = undefined
@@ -357,10 +410,15 @@ async function run(kind: 'auto' | 'connection' | 'blink', scheduled?: PlannedSte
         setStatus({ phase: 'idle', message: '等待键盘进入养宠模式' })
         return
       }
-      if (scheduled && (scheduled.session !== pet?.session || Date.now() >= scheduled.at + slotMs)) return
+      if (scheduled && scheduled.session !== pet?.session) return
+      if (scheduled && Date.now() >= scheduled.at + slotMs) {
+        releaseSkippedSlot(scheduled.at, scheduled.durationSeconds)
+        return
+      }
       if (trigger && trigger.session !== pet?.session) return
 
-      const last = previousAction?.session === pet?.session ? previousAction?.action : undefined
+      const recent = history && history.session === pet?.session ? history.actions : []
+      const last = recent.at(-1)
       let action: RabbitAction | undefined = scheduled?.action
       let durationSeconds = scheduled?.durationSeconds
       let untilEnergy = scheduled?.untilEnergy
@@ -369,19 +427,29 @@ async function run(kind: 'auto' | 'connection' | 'blink', scheduled?: PlannedSte
       if (!scheduled) {
         const automatic = (planning ? pet?.planningBehaviors : trigger ? pet?.reactionBehaviors : pet?.automaticBehaviors) ?? []
         const alternatives = automatic.filter(candidate => candidate !== last)
-        const actions = kind === 'auto' ? (trigger && alternatives.length ? alternatives : automatic) : ['blink'] as const
+        const repeated = last !== undefined && recent.at(-2) === last
+        const actions = kind === 'auto' ? ((trigger || repeated) && alternatives.length ? alternatives : automatic) : ['blink'] as const
+        if (kind === 'auto' && pet && !actions.length) {
+          const message = pet.action === 'eat' ? '正在进食，保持当前活动'
+            : pet.action === 'sleep' ? '正在睡觉，保持当前活动'
+            : pet.foodPending ? '食物已在场，等待兔子进食' : '兔子继续当前活动'
+          setStatus({ phase: 'idle', source: '本地决定', message })
+          return
+        }
         if (kind === 'blink' && !automatic.includes('blink')) throw Error('请等兔子空闲时再测试眨眼')
-        setStatus({ phase: 'thinking', message: kind === 'connection' ? '正在测试模型工具调用'
+        const coolingDown = Date.now() < providerRetryAt
+        if (!coolingDown) setStatus({ phase: 'thinking', message: kind === 'connection' ? '正在测试模型工具调用'
           : trigger ? 'AI 正在回应' + interactionLabel(trigger.events.at(-1)!) : 'AI 正在编排接下来的动作' })
         const request = kind === 'auto' && pet
           ? { personality: saved.personality || defaultRabbitPersonality,
               observation: { stats: pet.stats, action: pet.action, scene: pet.scene, bedtime: pet.bedtime,
-                ownerInteractions: trigger?.events ?? [], previousAction: last, generation: pet.generation,
+                ownerInteractions: trigger?.events ?? [], recentActions: recent.slice(-6), previousAction: last, generation: pet.generation,
                 timedRemainingSeconds: pet.timedRemainingSeconds, foodPending: pet.foodPending } }
           : '调用 pet_perform_sequence，只安排一步 blink，waitMs 为 0。'
         const timeoutMs = kind === 'connection' ? 15_000 : trigger ? reactionTimeoutMs : idleTimeoutMs
         let result: Awaited<ReturnType<typeof decide>> | undefined
         try {
+          if (coolingDown) throw new ProviderError(rateLimitMessage)
           result = await decide(providerFor(saved), request, actions, timeoutMs, controller.signal, planning, kind === 'auto' && (pet?.generation ?? 0) >= 11)
         } catch (error) {
           if (kind !== 'auto' || !(error instanceof ProviderError)) throw error
@@ -392,12 +460,12 @@ async function run(kind: 'auto' | 'connection' | 'blink', scheduled?: PlannedSte
           if (result?.timedOut) fallbackReason = '模型超时'
           else if (result?.invalidReply) fallbackReason = '模型未给出可执行的动作'
         }
-        if (fallbackReason && pet) {
+        if (fallbackReason && !coolingDown && pet) {
           const session = pet.session
           pet = await readState(client)
           if (!stillEnabled() || pet.session !== session || !pet.active) return
         }
-        const first = fallbackReason && pet ? localDecision(pet, !!trigger, last) : result?.steps?.[0]
+        const first = fallbackReason && pet ? localDecision(pet, trigger?.events.at(-1), recent) : result?.steps?.[0]
         action = first?.behavior === 'rest' ? undefined : first?.behavior
         durationSeconds = first?.durationSeconds
         untilEnergy = first?.untilEnergy
@@ -419,7 +487,7 @@ async function run(kind: 'auto' | 'connection' | 'blink', scheduled?: PlannedSte
             return index > 0 && step.behavior !== 'rest'
               ? [{ action: step.behavior, at: start, session, durationSeconds: step.durationSeconds, untilEnergy: step.untilEnergy }] : []
           })
-          nextIdleAt = Math.max(roundStart + intervalMs, at)
+          planEndAt = at
         }
         if (!action) {
           setStatus({ phase: 'idle', message: fallbackReason ? fallbackReason + ' · 兔子继续当前活动'
@@ -443,29 +511,54 @@ async function run(kind: 'auto' | 'connection' | 'blink', scheduled?: PlannedSte
       }
       if (playBy) {
         const session = pet.session
-        while (!eligible(pet).length && pet.action !== action && Date.now() + 400 < playBy) {
+        const eating = (state: NonNullable<typeof pet>) => state.action === 'eat' ||
+          (state.foodPending && !state.bedtime && (state.stats?.satiety ?? 100) < 90)
+        while (!eligible(pet).length && !eating(pet) && pet.action !== action && Date.now() + 400 < playBy) {
           await waitFor(400, undefined, { signal: controller.signal })
           pet = await readState(client)
           if (!stillEnabled() || pet.session !== session || !pet.active) return
         }
+        if (scheduled && !eligible(pet).length && eating(pet)) {
+          // Keep this next step. Its eligibility is checked again using a fresh snapshot.
+          idleSteps.unshift(scheduled)
+          shiftIdlePlan(Date.now() + 2000 - scheduled.at)
+          setStatus({ phase: 'idle', message: '等待进食结束，再继续已排动作' })
+          return
+        }
       }
       const label = behaviorLabel(action)
       if (!eligible(pet).includes(action) || (playBy !== undefined && Date.now() >= playBy)) {
+        if (playBy !== undefined) releaseSkippedSlot(playBy - slotMs, durationSeconds)
         setStatus({ phase: 'idle', message: '兔子状态已变化，已跳过' + label })
         return
       }
-      const outcome = z.object({ accepted: z.array(z.string()) })
+      // Once delivery starts, a later interaction must not replay this reaction.
+      deliveringAction = true
+      const outcome = z.object({ accepted: z.array(z.string()), confirmation: z.literal('unknown').optional(),
+        observedAction: z.string().optional(), reason: z.string().optional() })
         .parse(await callPet(client, actionTool, { steps: [{ behavior: action, durationSeconds, untilEnergy }],
           session: pet.session, interrupt }, controller.signal))
       if (!stillEnabled()) return
-      if (!outcome.accepted.length) {
-        setStatus({ phase: 'idle', message: '兔子状态已变化，已跳过' + label })
+      if (outcome.confirmation === 'unknown') {
+        if (outcome.observedAction === action) {
+          if (kind === 'auto') history = { session: pet.session, actions: [...recent, action].slice(-playableActions.length) }
+          setStatus({ phase: 'action', message: '已回读键盘，当前动作 · ' + label, lastDecision: label, source: '键盘回读' })
+        } else {
+          clearIdlePlan()
+          setStatus({ phase: 'idle', message: '键盘未确认 · ' + label + '，已停止本轮后续动作' })
+        }
         return
       }
-      if (kind === 'auto') previousAction = { session: pet.session, action }
-      const source = fallbackReason ? (trigger ? '本地回应' : '本地活动') : undefined
+      if (!outcome.accepted.length) {
+        if (playBy !== undefined) releaseSkippedSlot(playBy - slotMs, durationSeconds)
+        setStatus({ phase: 'idle', message: outcome.reason ? '已跳过' + label + ' · ' + outcome.reason : '兔子状态已变化，已跳过' + label })
+        return
+      }
+      if (kind === 'auto') history = { session: pet.session, actions: [...recent, action].slice(-playableActions.length) }
+      const local = trigger ? '本地回应' : '本地活动'
+      const source = fallbackReason === rateLimitMessage ? '模型限流 · ' + local : fallbackReason ? local : undefined
       setStatus({ phase: 'action', lastDecision: label, source,
-        message: (source ? fallbackReason + ' · ' + source + ' · ' : '最近决定 · ') + label })
+        message: (fallbackReason ? fallbackReason + ' · ' + local + ' · ' : '最近决定 · ') + label })
     })
   } catch (error) {
     if (startingRevision === revision) setStatus({ phase: 'error', message: error instanceof z.ZodError ? '模型或设备返回的参数格式不正确'
@@ -473,6 +566,7 @@ async function run(kind: 'auto' | 'connection' | 'blink', scheduled?: PlannedSte
   } finally {
     running = false
     autoRunning = false
+    deliveringAction = false
     activeReaction = undefined
     requestAbort = undefined
     schedule()
@@ -491,10 +585,13 @@ function schedule(initialDelay?: number) {
   if (!running && observedSession !== null && store().get('settings')?.enabled) {
     const now = Date.now()
     nextIdleAt ??= now + 1500
-    idleSteps = idleSteps.filter(step => step.at + slotMs > now)
+    while (idleSteps.length && idleSteps[0].at + slotMs <= now) {
+      const missed = idleSteps.shift()!
+      releaseSkippedSlot(missed.at, missed.durationSeconds)
+    }
     const step = idleSteps[0]
-    const playStep = !reaction && step && step.at < nextIdleAt
-    nextDecisionAt = reaction ? now : nextIdleAt
+    nextDecisionAt = reaction ? now : Math.max(nextIdleAt, planEndAt)
+    const playStep = !reaction && step && step.at < nextDecisionAt
     const due = playStep ? step.at : nextDecisionAt
     timer = setTimeout(() => {
       if (playStep) idleSteps.shift()
@@ -505,7 +602,7 @@ function schedule(initialDelay?: number) {
 }
 
 function interactionLabel(event: OwnerInteraction) {
-  if (event.type === 'head_petted') return '摸头'
+  if (event.type === 'head_petted') return event.gesture === 'tap' ? '轻点兔头' : event.gesture === 'cw' ? '顺时针揉头' : event.gesture === 'ccw' ? '逆时针揉头' : '摸头'
   if (event.type === 'fruit_queued') return '投喂' + fruitLabel[event.fruit]
   return '放下胡萝卜玩具'
 }
@@ -514,19 +611,21 @@ function queueInteractions(session: string, incoming: OwnerInteraction[]) {
   if (!incoming.length || session !== observedSession || !store().get('settings')?.enabled) return
   const now = Date.now()
   nextIdleAt = now + intervalMs
-  idleSteps = []
-  const heldTouch = incoming.every(event => event.type === 'head_petted') &&
-    activeReaction?.session === session && activeReaction.events.at(-1)?.type === 'head_petted'
-  if (heldTouch) return
-  const events = [...(reaction?.events ?? [])]
-  // A stream of encoder detents is one touch. Keep recent distinct inputs bounded by the device event window.
+  clearIdlePlan()
+  const pending = reaction ?? (deliveringAction ? undefined : activeReaction)
+  const events = pending?.session === session ? [...pending.events] : []
+  let previous = events.at(-1) ?? (activeReaction?.session === session ? activeReaction.events.at(-1) : undefined)
+  const initialCount = events.length
   for (const event of incoming) {
-    if (event.type === 'head_petted' && events.at(-1)?.type === event.type) events.pop()
+    if (event.type === 'head_petted' && (event.gesture === 'cw' || event.gesture === 'ccw') &&
+        previous?.type === 'head_petted' && previous.gesture === event.gesture) continue
     events.push(event)
+    previous = event
   }
+  if (events.length === initialCount) return
   const last = incoming[incoming.length - 1]
   reaction = { session, events: events.slice(-4) }
-  if (autoRunning) {
+  if (autoRunning && !deliveringAction) {
     revision++
     requestAbort?.abort()
   }
@@ -553,7 +652,7 @@ function watchOwnerEvents(session: string | null | undefined) {
   let cursor: string | undefined
   let active = true, primed = false, busy = false
   async function poll() {
-    if (!active || busy) return
+    if (!session || !active || busy) return
     busy = true
     try {
       for (let i = 0; i < 4; i++) {
@@ -564,12 +663,24 @@ function watchOwnerEvents(session: string | null | undefined) {
           const inputs: OwnerInteraction[] = []
           for (const e of page.events) {
             // The firmware records virtual pats as MCP. The built-in model cannot issue pats.
-            if (e.type === 'head_petted' && (e.source === 'physical' || e.source === 'mcp')) inputs.push({ type: 'head_petted' })
+            if (e.type === 'head_petted' && (e.source === 'physical' || e.source === 'mcp')) inputs.push({ type: 'head_petted', gesture: 'gesture' in e ? e.gesture : undefined })
             if (e.source !== 'physical') continue
             if (e.type === 'fruit_queued' && 'fruit' in e && e.fruit) inputs.push({ type: 'fruit_queued', fruit: e.fruit })
             if (e.type === 'toy_placed' && 'toy' in e && e.toy === 'carrot_toy') inputs.push({ type: 'toy_placed', toy: e.toy })
           }
-          if (session) queueInteractions(session, inputs)
+          if (inputs.length) {
+            queueInteractions(session, inputs)
+          } else if (!reaction && !activeReaction && page.events.some(e =>
+            e.type === 'decoration_finished' && 'decoration' in e && e.decoration === 'rabbit_hutch')) {
+            // The firmware leaves the hutch on waking, including early energy-based wakeups.
+            clearIdlePlan()
+            if (autoRunning && !deliveringAction) {
+              revision++
+              requestAbort?.abort()
+            }
+            nextIdleAt = Date.now() + 200
+            schedule()
+          }
         }
         if (!page.hasMore) { primed = true; break }
       }
@@ -587,8 +698,10 @@ export function observePetAiSession(session: string | null) {
   if (session === observedSession) return
   const firstObservation = observedSession === undefined
   observedSession = session
+  if (history?.session !== session) history = undefined
+  activeReaction = undefined
   reaction = undefined
-  idleSteps = []
+  clearIdlePlan()
   nextIdleAt = session ? Date.now() + 200 : undefined
   const enabled = store().get('settings')?.enabled
   watchOwnerEvents(enabled ? session : null)
@@ -609,8 +722,10 @@ export function startPetAi(listener?: typeof activityListener) {
 export function stopPetAi() {
   activityListener = undefined
   observedSession = null
+  history = undefined
+  activeReaction = undefined
   reaction = undefined
-  idleSteps = []
+  clearIdlePlan()
   nextIdleAt = undefined
   watchOwnerEvents(null)
   requestAbort?.abort()

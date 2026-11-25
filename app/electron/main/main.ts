@@ -104,7 +104,7 @@ ipcMain.handle('pc-performance', () => readPcPerformance())
 ipcMain.handle('pc-performance-preview', (_event, menu: number) =>
   SerialConnect.displayedPerformance(menu) ?? readPcPerformance())
 ipcMain.handle('live-performance', (_event, menu, metrics) => SerialConnect.performance(menu, metrics))
-ipcMain.handle('pet-action', async (event, command, value) => {
+ipcMain.handle('pet-action', async (event, command, value, expectedSession?: string) => {
   const furniture = petFurniture.find(item => item.command === command)
   if (!Number.isInteger(command) || command < 0 || (command > 15 && command !== 22 && command !== petLampCommand &&
       command !== petBuySnackCommand && command !== petToggleLampCommand && !furniture && !isStatCommand(command)) ||
@@ -118,7 +118,7 @@ ipcMain.handle('pet-action', async (event, command, value) => {
       (command === 9 && value > 1) || (command === 12 && value > 7) ||
       ((command === 11 || command === 13) && (value < 1 || value > 2))) return { state: 'unavailable' }
   if (command >= 8) fromHome(event)
-  const reply = await SerialConnect.pet({ command, value })
+  const reply = await SerialConnect.pet({ command, value }, expectedSession)
   if ((command === 0 || command === 1) && reply.state === 'ready' && reply.status === 0 && reply.session) {
     observePetAiSession(reply.payload[0] ? reply.session : null)
   } else if (reply.state === 'disconnected') {

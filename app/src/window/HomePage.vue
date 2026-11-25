@@ -37,7 +37,7 @@ let petTimer: ReturnType<typeof setInterval> | undefined
 let petMotionTimer: ReturnType<typeof setInterval> | undefined
 let petTask: Promise<void> | undefined
 let petSession: string | undefined
-let requestedMode: 'work' | 'pet' | undefined
+let requestedMode: { mode: 'work' | 'pet'; session: string } | undefined
 const appMode = ref<'work' | 'pet'>('work')
 const petState = ref<PetState>({ active: false, action: 1, x: 128, fruit: 0, hour: 18, season: 0, queue: 0,
   scene: 0, activeToy: 0, toyPhase: 0, stats: { ...previewCare }, deployedToys: [0, 0], foods: [],
@@ -105,9 +105,14 @@ function storeMode() {
   win.myApi.storageMenu('displayMode', appMode.value)
 }
 
+async function restoreDisplayMode() {
+  const savedMode = await win.myApi.getMenu('displayMode')
+  if (!petLinked.value && (savedMode === 'pet' || savedMode === 'work')) appMode.value = savedMode
+}
+
 function setAppMode(mode: 'work' | 'pet') {
   if (appMode.value === mode) return
-  requestedMode = mode
+  requestedMode = conState.value && petLinked.value && petSession ? { mode, session: petSession } : undefined
   appMode.value = mode
   storeMode()
   if (mode === 'work') refreshDeviceScreens()
@@ -223,24 +228,26 @@ function refreshPetDevice() {
     if (status.state !== 'ready' || status.status !== 0 || !hasPetPayload(status.payload)) {
       petLinked.value = false
       petSession = undefined
+      requestedMode = undefined
       petNotice.value = status.state === 'unsupported' ? '键盘固件需要升级才能同步养宠模式。' : ''
       return
     }
-    if (appMode.value === 'pet' && petSession !== status.session) requestedMode ??= 'pet'
+    const intent = requestedMode
     const actualMode = status.payload[0] ? 'pet' : 'work'
-    if (requestedMode && actualMode !== requestedMode) {
-      const target = requestedMode
+    if (intent && intent.session === status.session && actualMode !== intent.mode) {
+      const target = intent.mode
       if (target === 'work' && hasPerformanceScreens()) {
         const device = await win.myApi.liveOled()
         if (device.state === 'ready' && device.code === 0 && device.menu > 0 && device.menu <= 10) {
           if (performanceValues.value.length !== 3) await samplePerformance()
           await updatePerformanceColor(device.menu)
         }
-        if (requestedMode !== target) return
+        if (requestedMode !== intent) return
       }
-      const result = await win.myApi.petAction(1, target === 'pet' ? 1 : 0)
-      if (result.state === 'ready' && result.status === 0 && hasPetPayload(result.payload)) {
-        if (requestedMode === target) requestedMode = undefined
+      const result = await win.myApi.petAction(1, target === 'pet' ? 1 : 0, intent.session)
+      if (requestedMode !== intent) return
+      if (result.state !== 'busy') requestedMode = undefined
+      if (result.state === 'ready' && result.session === intent.session && result.status === 0 && hasPetPayload(result.payload)) {
         applyPetReply(result)
         if (target === 'pet') await syncClock()
         else refreshDeviceScreens()
@@ -596,11 +603,7 @@ onMounted(async () => {
   let jsonStr = await win.myApi.getMenu('configData')
   if(jsonStr != '' && jsonStr != undefined && jsonStr != null)
     parseMenuConfig(jsonStr)
-  const savedMode = await win.myApi.getMenu('displayMode')
-  if (savedMode === 'pet' || savedMode === 'work') {
-    appMode.value = savedMode
-    requestedMode = savedMode
-  }
+  await restoreDisplayMode()
   try {
     const savedParameters = JSON.parse(await win.myApi.getMenu('petScreenParameters') || 'null')
     const valid = (id: unknown): id is PetParameter => petParameters.some(option => option.id === id)
@@ -826,6 +829,7 @@ const conState = ref<boolean>(false)
 // 手动重新连接
 const titleClick = async () => {
   buttonSyncUnsupported = false
+  requestedMode = undefined
   petSession = undefined
   conState.value = await testConnection()
   liveScreens.forgetDevice()
@@ -886,6 +890,7 @@ const liveScreens = createLiveScreens(menu => appMode.value === 'work' || !petSt
   connected => {
     conState.value = connected
     if (!connected) {
+      requestedMode = undefined
       petLinked.value = false
       petSession = undefined
     }
