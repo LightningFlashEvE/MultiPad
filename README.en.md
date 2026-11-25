@@ -9,7 +9,7 @@ MultiPad is a programmable desktop keypad with eight keys, three rotary encoders
 ## Try it
 
 1. Install the Windows x64 app and connect a compatible MultiPad with a USB data cable. If the keyboard already has the MultiPad USB bootloader, select **USB 升级** (USB update) and choose the matching application firmware `.bin`. For first-time flashing and recovery, see the [USB firmware guide, in Chinese](docs/usb-firmware-update.md).
-2. Select **工作模式** (Work). Click a virtual key to configure it, the color display to choose an image or PC performance monitor, or an OLED to configure its content. The monitor can show CPU, memory and system drive usage.
+2. Select **工作模式** (Work). Click a virtual key to configure it, an OLED to configure its content, or open the dedicated image editor or PC performance monitor for the color display. The monitor can show CPU, memory and system drive usage.
 3. Select **养宠模式** (Pet), click the color display and open **道具与按键** (Items and keys). Select an apple and bind it to K1. Press K1 on the keyboard or click K1 in the app. The apple drops into the room and the rabbit approaches it when hungry.
 
 ![The item picker and physical key bindings in the Windows app](docs/images/pet-items.png)
@@ -35,7 +35,7 @@ Select **工作模式** (Work) at the top of the Windows app. You can also hold 
 | --- | --- |
 | K1–K8 and the three encoders | Click a key or encoder in the app to assign a shortcut, key sequence with delays, text, file or app launch, media control, or mouse action. Encoder presses and turns can have separate assignments. |
 | Configuration layers | Use the arrows beside **本机第 N 层** (Local layer N) to edit up to 10 layers. Assign **菜单控制** (Menu control) to a physical key to go to the previous, next, or a specific layer. For example, keep office and video-editing shortcuts on separate layers. |
-| Color display | Choose an image or **电脑性能监测** (PC performance monitor) for CPU, memory, and system drive usage. |
+| Color display | The image editor and **电脑性能监测** (PC performance monitor) have separate entries. The monitor can be assigned to the color display. |
 | Two OLEDs | Configure each display for the current layer with an image, custom text, time, date, date and time, or API data. |
 
 Saved Work mode key and display settings sync over USB. Edits saved offline sync when the keyboard reconnects in Work mode. Live PC metrics and dynamic OLED updates require the Windows app to stay connected over USB and compatible firmware.

@@ -12,7 +12,24 @@ function cpuTimes() {
 let previous = cpuTimes()
 const percent = (value: number) => Math.max(0, Math.min(100, Math.round(value * 100)))
 
+let sampledAt = 0
+let recent: number[] = []
+let sampling: Promise<number[]> | undefined
+
 export async function readPcPerformance() {
+  if (sampling) return sampling
+  if (Date.now() - sampledAt < 750) return recent
+  sampling = samplePcPerformance()
+  try {
+    recent = await sampling
+    sampledAt = Date.now()
+    return recent
+  } finally {
+    sampling = undefined
+  }
+}
+
+async function samplePcPerformance() {
   const current = cpuTimes()
   const elapsed = current.total - previous.total
   const cpu = elapsed > 0 ? percent(1 - (current.idle - previous.idle) / elapsed) : 255

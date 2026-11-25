@@ -51,22 +51,28 @@ static void clear_performance(void) {
 
 static void show_performance(const uint8_t *metrics, bool first) {
     static const char *labels[] = {"CPU", "MEM", "DISK"};
-    const uint16_t background = 0x1106, track = 0x29ca, accent = 0x575a;
+    static const uint16_t accents[] = {0x5f18, 0x85df, 0xedf0};
+    const uint16_t background = 0x1106, panel = 0x1968, track = 0x324c;
     if (first) {
         lcd_fill(0, 0, 320, 172, background, 0);
-        lcd_show_string(14, 10, (const uint8_t *)"PC PERFORMANCE", WHITE, background, 24, 0, 0);
+        lcd_show_string(14, 10, (const uint8_t *)"PC PERFORMANCE", 0xf7bf, background, 24, 0, 0);
     }
     for (uint8_t i = 0; i < 3; i++) {
-        if (!first && last_metrics[i] == metrics[i]) continue;
-        const uint16_t y = 50 + 36 * i;
+        const uint16_t y = 43 + 40 * i;
+        const uint16_t accent = accents[i];
+        if (first) {
+            lcd_fill(12, y - 4, 308, y + 30, panel, 0);
+            lcd_fill(12, y - 4, 15, y + 30, accent, 0);
+            lcd_show_string(25, y + 5, (const uint8_t *)labels[i], 0xf7bf, panel, 16, 0, 0);
+        } else if (last_metrics[i] == metrics[i]) continue;
+
         uint8_t value[8];
-        if (metrics[i] == 255) snprintf((char *)value, sizeof(value), "   --");
-        else snprintf((char *)value, sizeof(value), "%4u%%", (unsigned)metrics[i]);
-        lcd_show_string(14, y, (const uint8_t *)labels[i], WHITE, background, 16, 0, 0);
-        lcd_show_string(262, y, value, WHITE, background, 16, 0, 0);
-        lcd_fill(66, y + 3, 254, y + 13, track, 0);
+        if (metrics[i] == 255) snprintf((char *)value, sizeof(value), "  --");
+        else snprintf((char *)value, sizeof(value), "%3u%%", (unsigned)metrics[i]);
+        lcd_show_string(250, y, value, accent, panel, 24, 0, 0);
+        lcd_fill(82, y + 10, 235, y + 19, track, 0);
         if (metrics[i] > 0 && metrics[i] <= 100)
-            lcd_fill(66, y + 3, 66 + 188 * metrics[i] / 100, y + 13, accent, 0);
+            lcd_fill(82, y + 10, 82 + 153 * metrics[i] / 100, y + 19, accent, 0);
     }
     memcpy(last_metrics, metrics, sizeof(last_metrics));
 }

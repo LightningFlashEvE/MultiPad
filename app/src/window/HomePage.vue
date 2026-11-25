@@ -531,21 +531,18 @@ onMounted(async () => {
       return
     }
     try {
+      if (objData.screenPerformance) {
+        const { menu, enabled } = objData.screenPerformance as { menu: number; enabled: boolean }
+        const existing = configStore.menuConfig[menu]?.screenConfig[0]
+        const { baseData = '', buffData = [] } = existing ?? {}
+        saveWorkScreen(menu, 0, { baseData, buffData, content: enabled ? { mode: 'performance' } : undefined })
+        return
+      }
       if (objData.screenFrame) {
         const { menu, screen, frame } = objData.screenFrame as { menu: number; screen: number; frame: ScreenFrame }
-        if (menu === configStore.curMenu) {
-          configStore.screenData[screen] = frame
-          storageCurMenu()
-        } else {
-          const saved = configStore.menuConfig[menu]
-          const screenConfig = [0, 1, 2].map(index => index === screen ? frame :
-            saved.screenConfig[index] ?? { baseData: '', buffData: [] })
-          configStore.menuConfig[menu] = { ...saved, screenConfig }
-        }
-        closeStorage()
-        if (screen === 0 && frame.content?.mode === 'performance')
-          void samplePerformance().then(() => liveScreens.tick())
-        else liveScreens.tick()
+        const current = configStore.menuConfig[menu]?.screenConfig[screen]
+        saveWorkScreen(menu, screen, screen === 0 && current?.content?.mode === 'performance'
+          ? { ...frame, content: current.content } : frame)
         return
       }
       // 同步信息
@@ -831,6 +828,31 @@ const storageCurMenu = () => {
   
 }
 
+function saveWorkScreen(menu: number, screen: number, frame: ScreenFrame) {
+  if (!Number.isInteger(menu) || menu < 0 || menu >= 10 ||
+    !Number.isInteger(screen) || screen < 0 || screen >= 3) return
+  if (menu === configStore.curMenu) {
+    configStore.screenData[screen] = frame
+    storageCurMenu()
+  } else {
+    const saved = configStore.menuConfig[menu]
+    const screenConfig = [0, 1, 2].map(index => index === screen ? frame :
+      saved.screenConfig[index] ?? { baseData: '', buffData: [] })
+    configStore.menuConfig[menu] = { ...saved, screenConfig }
+  }
+  closeStorage()
+  if (screen === 0 && frame.content?.mode === 'performance') void samplePerformance().then(() => liveScreens.tick())
+  else liveScreens.tick()
+}
+
+const showingPerformance = computed(() => configStore.screenData[0].content?.mode === 'performance')
+
+function openPerformancePage() {
+  storageCurMenu()
+  closeStorage()
+  createWindow(`/performance?menu=${configStore.curMenu}`, { width: 510, height: 404, minWidth: 460, minHeight: 390 })
+}
+
 // 显示屏幕编辑
 const openScreenPage = (curScreen: number) => {
   if (appMode.value === 'pet') return configurePetScreen(curScreen)
@@ -977,24 +999,26 @@ const showAppInfo = () => {
       </div>
       <div class="screen-panel">
         <button v-for="(label, index) in screenLabels" :key="label" class="screen-card" type="button"
-          :title="appMode === 'pet' ? (index ? `设置${label}宠物参数` : '打开宠物设置') : `编辑${label}内容`" @click="openScreenPage(index)">
+          :title="appMode === 'pet' ? (index ? `设置${label}宠物参数` : '打开宠物设置') : (!index && showingPerformance ? '打开电脑性能监测' : `编辑${label}内容`)"
+          @click="appMode === 'work' && !index && showingPerformance ? openPerformancePage() : openScreenPage(index)">
           <span class="screen-image">
             <PetDisplay v-if="appMode === 'pet' && index === 0" :state="petState" :connected="petLinked && petState.active" />
             <img v-else-if="appMode === 'pet' && index && petImages[index - 1]" :src="petImages[index - 1]" alt="" />
-            <PerformanceDisplay v-else-if="appMode === 'work' && index === 0 && configStore.screenData[0].content?.mode === 'performance'"
-              :values="performanceValues" />
+            <PerformanceDisplay v-else-if="appMode === 'work' && index === 0 && showingPerformance"
+              :values="performanceValues" compact />
             <img v-else-if="appMode === 'work' && screenPreviews[index]" :src="screenPreviews[index]" alt="" />
           </span>
-          <span>{{ appMode === 'pet' ? (index ? petContent(index - 1).rows.map(row => row.label).join(' · ') : '宠物设置') : label }}</span>
+          <span>{{ appMode === 'pet' ? (index ? petContent(index - 1).rows.map(row => row.label).join(' · ') : '宠物设置') : (index ? label : showingPerformance ? '彩屏 · 性能监测' : '彩屏 · 图片') }}</span>
         </button>
         <PetAiActivity @step-accepted="refreshAfterAiStep" v-if="appMode === 'pet'" :session="petLinked && petState.active ? petSession : undefined" />
         <div v-if="appMode === 'pet'" class="mode-status" role="status">
           {{ petNotice || interactionNotice || (petLinked && petState.active ? '键盘养宠模式已同步' : '本机宠物预览') }}
         </div>
         <div v-else class="layer-actions">
-          <span v-if="pendingWorkLayers.length" class="work-sync-status" role="status">
-            {{ progressShow ? '正在同步' : workSyncFailed ? '同步中断，正在重试' : conState ? '等待同步' : '连接后自动同步' }}
-          </span>
+          <div class="display-entry-points" role="group" aria-label="彩屏设置">
+            <button type="button" @click="openScreenPage(0)">编辑图片</button>
+            <button type="button" :class="{ selected: showingPerformance }" @click="openPerformancePage">性能监测</button>
+          </div>
           <div id="menu-box" role="group" aria-label="本机配置层">
             <button class="layer-arrow" type="button" title="上一层" aria-label="上一层"
               @click="menuChange(0)"></button>
@@ -1020,6 +1044,9 @@ const showAppInfo = () => {
         :class="{ 'device-active': isDeviceButtonActive(10) }"
         @click.stop="openConfigWindow(10)">旋钮 3</button>
     </div>
+    <p v-if="appMode === 'work' && pendingWorkLayers.length" class="work-sync-status" role="status">
+      {{ progressShow ? '正在同步' : workSyncFailed ? '同步中断，正在重试' : conState ? '等待同步' : '连接后自动同步' }}
+    </p>
     <p v-if="appMode === 'work' && performanceUnavailable && configStore.screenData[0].content?.mode === 'performance'"
       class="firmware-hint" role="status">彩屏性能监测需要升级键盘固件。</p>
     <dialog ref="petDialog" class="pet-dialog" :class="{ 'param-dialog': petScreen > 0 }">
@@ -1331,7 +1358,21 @@ const showAppInfo = () => {
   gap: 8px;
 }
 
-.work-sync-status { font-size: 12px; }
+.display-entry-points {
+  display: flex;
+  gap: 4px;
+}
+#home-content .display-entry-points button {
+  padding: 6px;
+  border-radius: 6px;
+  background: #e9efed;
+  color: #273d45;
+  font-size: 11px;
+  white-space: nowrap;
+}
+#home-content .display-entry-points button:hover { background: #f6f9f8; }
+#home-content .display-entry-points button.selected { background: #214c49; color: #f0fcf8; }
+.work-sync-status { margin: 4px 0 0 12px; font-size: 12px; }
 
 #menu-box {
   display: flex;
