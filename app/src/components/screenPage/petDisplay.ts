@@ -29,6 +29,7 @@ export interface PetState {
   x: number
   rabbitY?: number
   headPatRemaining?: number
+  actionAgeMs?: number
   facing?: number
   headPatPhase?: number
   headPatKind?: number

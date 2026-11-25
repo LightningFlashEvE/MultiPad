@@ -17,7 +17,7 @@ typedef enum {
     PET_FLEE,
     PET_BLINK,
     PET_TRIP_ANGRY,
-    PET_GAZE_OWNER, PET_STAND_WATCH, PET_INSPECT_TABLE
+    PET_GAZE_OWNER, PET_STAND_WATCH, PET_INSPECT_TABLE, PET_BINKY
 } PetAction;
 
 typedef enum {
@@ -58,6 +58,7 @@ void pet_mode_poll(void);
 
 /* USB diagnostics report the action, position and completed LCD frame count. */
 PetAction pet_mode_action(void);
+uint16_t pet_mode_action_age(void);
 uint16_t pet_mode_x(void);
 uint8_t pet_mode_y(void);
 uint32_t pet_mode_frames(void);

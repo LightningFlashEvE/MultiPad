@@ -20,7 +20,8 @@ export const petCareGuide = {
     blink: '眨眼，约 0.125 秒。', walk: '散步，到边界或约 3.6 秒后会自行停下。',
     run: '奔跑，约 2.3 秒。', jump: '跳一下，约 0.5 秒。', daydream: '做白日梦，约 1.75 秒。',
     flee: '受惊逃跑，约 2.3 秒。', eat: '仅播放约 2.1 秒的进食动作，没有水果和饱食度收益。',
-    stand_watch: '原地用后腿撑起身体，抬头眺望约 2.6 秒。',
+    stand_watch: '用后腿撑起身体，直立观察约 3 秒，再落回四足。',
+    binky: '兔子舞：向前跃起，半空蹬伸后腿转身，背向起跳方向落地。心情越高越容易自发跳舞。',
     inspect_table: '在宝宝房走到玩具桌右侧，前爪搭桌沿观察约 3.4 秒，结束后回到地面。两种眺望都不额外改变属性。',
     trip_angry: '绊脚生气，约 2.05 秒。自然结束时困意 +1、心情 −4。',
     gaze_owner: '面向主人发呆，约 3 秒。由 MCP 发起且自然结束时心情 +1、好感 +1。',
@@ -55,6 +56,7 @@ export const petCareGuide = {
     2: '增加四项属性、trip_angry、gaze_owner 和场景；宝宝房兔窝通过 pet_use_toy 短暂互动。',
     3: '增加多份地面食物、玩具放置和重玩、回窝长睡、跟随时间与按键绑定。此代兔窝仍占用宝宝房玩具位。',
     4: '兔窝成为独立可移动装饰。使用 activeDecoration、decorationPhase 和 hutchPosition 读取回窝状态。',
+    8: '可执行 binky 兔子舞，动作年龄可用 actionAgeMs 观察。普通眺望直立约 3 秒。',
     7: '可站起来眺望，在宝宝房探访 nursery_table。家具互动阶段为 approaching 或 using。',
     6: '摸头期间兔子停在原地，转动决定手的位置和速度；饱食度达到90时留食，困意至少25才主动睡，降到5时结束长睡。',
     5: '可通过 headPet 和 head_petted 观察主人摸头。事件 source 为 physical 时来自键盘旋钮，mcp 表示软件操作。'

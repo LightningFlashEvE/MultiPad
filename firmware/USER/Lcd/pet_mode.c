@@ -49,6 +49,9 @@ typedef struct {
 
 static bool active;
 static PetAction action;
+static int16_t dance_origin;
+static int8_t dance_direction;
+static uint32_t dance_random = 0x41c64e6d;
 static uint32_t action_since, last_input, last_frame, last_motion, frames;
 static int16_t x, y, last_x, approach_x, approach_y;
 static uint16_t approach_travel, approach_distance;
@@ -143,6 +146,11 @@ uint8_t pet_mode_events(uint32_t after, PetEvent *out, bool *overrun, bool *more
 }
 
 static void set_action_from(PetAction next, uint32_t now, uint8_t source) {
+    if (next == PET_BINKY) {
+        dance_origin = x;
+        dance_direction = x < WALK_MIN + 36 ? 1 : x > WALK_MAX - 36 ? -1 : direction;
+        direction = dance_direction;
+    }
     action = next;
     action_source = source;
     action_since = now;
@@ -295,6 +303,22 @@ static void set_mode(bool enabled, uint8_t source, uint32_t now) {
 }
 
 bool pet_mode_is_active(void) { return active; }
+uint16_t pet_mode_action_age(void) {
+    uint32_t age = HAL_GetTick() - action_since;
+    return age < 65535 ? (uint16_t)age : 65535;
+}
+
+// The feet leave the floor after the crouch. Position remains continuous through the aerial turn.
+static unsigned dance_travel(uint32_t age) {
+    return age <= 125 ? 0 : age >= 812 ? 36 : (age - 125) * 36 / 687;
+}
+
+static int dance_lift(uint32_t age) {
+    if (age <= 125 || age >= 812) return 0;
+    uint32_t t = age - 125;
+    return (int)(96 * t * (687 - t) / (687 * 687));
+}
+
 PetAction pet_mode_action(void) { return active ? action : PET_IDLE; }
 uint16_t pet_mode_x(void) { return active ? (uint16_t)x : 0; }
 uint8_t pet_mode_y(void) { return active ? (uint8_t)y : GROUND; }
@@ -515,7 +539,7 @@ uint8_t pet_mode_control(uint8_t opcode, uint8_t value) {
             if (!value || value > FRUIT_COUNT) return INVALID;
             return queue_fruit(value, SOURCE_MCP, now) ? OK : BUSY;
         case PLAY:
-            if (value > PET_INSPECT_TABLE || value == PET_FALL || value == PET_FETCH) return INVALID;
+            if (value > PET_BINKY || value == PET_FALL || value == PET_FETCH) return INVALID;
             if (fruit || (value == PET_EAT && !hungry())) return BUSY;
             if (value == PET_INSPECT_TABLE) {
                 if (pet_care_get()->scene != PET_NURSERY) return INVALID;
@@ -652,14 +676,14 @@ static void update_action(uint32_t now, uint32_t step_ms) {
         }
         return;
     }
-    if (!fruit && wants_food() && floor->count && floor->foods[0].stage == FOOD_LANDED) {
+    if (action != PET_BINKY && !fruit && wants_food() && floor->count && floor->foods[0].stage == FOOD_LANDED) {
         fruit = floor->foods[0].id;
         direction = floor->foods[0].x >= x ? 1 : -1;
         walk_remainder = 0;
         set_action(PET_FETCH, now);
         return;
     }
-    if (!fruit && !floor->toy_falling && floor->awaiting_play && wants_play() && !(floor->count && wants_food())) {
+    if (action != PET_BINKY && !fruit && !floor->toy_falling && floor->awaiting_play && wants_play() && !(floor->count && wants_food())) {
         const PetToy *toy = find_toy(pet_care_get()->placed[pet_care_get()->scene]);
         if (toy) { start_toy(toy, false, floor->toy_source, now); return; }
     }
@@ -703,8 +727,13 @@ static void update_action(uint32_t now, uint32_t step_ms) {
                 set_action(PET_IDLE, now);
             }
             return;
+        case PET_BINKY:
+            x = dance_origin + dance_direction * (int)dance_travel(elapsed);
+            direction = elapsed >= 500 ? -dance_direction : dance_direction;
+            if (elapsed >= 1125) set_action(PET_IDLE, now);
+            return;
         case PET_STAND_WATCH:
-            if (elapsed >= 2600) set_action(PET_IDLE, now);
+            if (elapsed >= 3875) set_action(PET_IDLE, now);
             return;
         case PET_INSPECT_TABLE: return;
         case PET_JUMP:
@@ -732,6 +761,12 @@ static void update_action(uint32_t now, uint32_t step_ms) {
         if (move_in_garden(step_ms, 37) || elapsed >= 3600) {
             /* A short look toward the owner between walks. Most pauses stay idle. */
             walk_stops++;
+            dance_random = dance_random * 1664525u + 1013904223u;
+            unsigned dance_chance = 4 + pet_care_get()->mood * pet_care_get()->mood / 250;
+            if ((dance_random >> 16) % 100 < dance_chance) {
+                set_action(PET_BINKY, now);
+                return;
+            }
             if (walk_stops % 6 == 3 && pet_care_get()->scene == PET_NURSERY)
                 start_toy(find_toy(NURSERY_TABLE), false, SOURCE_AUTOMATIC, now);
             else if (walk_stops % 3 == 1) set_action(PET_STAND_WATCH, now);
@@ -755,10 +790,23 @@ static uint16_t nursery_light(uint16_t color) {
     return shade ? blend(color, HEX565(0x3f486a), shade, 4) : color;
 }
 
+static int window_cx, window_cy;
+static bool window_night;
+
 static void update_palette(void) {
     if (pet_care_get()->scene == PET_NURSERY) {
         for (unsigned i = 0; i < sizeof(pet_palette) / sizeof(pet_palette[0]); i++)
             nursery_palette[i] = nursery_light(pet_palette[i]);
+        for (unsigned i = 0; i < 5; i++) {
+            uint16_t a = window_hour_colors[hour * 5 + i];
+            uint16_t b = window_hour_colors[((hour + 1) % 24) * 5 + i];
+            nursery_palette[window_materials[i]] = nursery_light(blend(a, b, minute, 60));
+        }
+        window_night = hour < 6 || hour >= 19;
+        int period = window_night ? 660 : 780;
+        int t = (hour * 60 + minute + 1440 - (window_night ? 1140 : 360)) % 1440;
+        window_cx = 99 + (80 * t + period / 2) / period;
+        window_cy = 63 - (144 * t * (period - t) + period * period / 2) / (period * period);
         return;
     }
     const uint8_t start = hour / 3;
@@ -794,8 +842,9 @@ static RabbitClipId action_clip(uint32_t elapsed) {
         case PET_DAYDREAM: return RABBIT_DAYDREAM;
         case PET_FLEE: return RABBIT_FLEE;
         case PET_TRIP_ANGRY: return RABBIT_TRIP_ANGRY;
-        case PET_STAND_WATCH:
-        case PET_INSPECT_TABLE: return RABBIT_STAND_WATCH;
+        case PET_STAND_WATCH: return RABBIT_STAND_WATCH;
+        case PET_INSPECT_TABLE: return RABBIT_INSPECT_TABLE;
+        case PET_BINKY: return RABBIT_BINKY;
         case PET_GAZE_OWNER: return RABBIT_GAZE_OWNER;
     }
     return RABBIT_IDLE;
@@ -805,11 +854,11 @@ static uint8_t sprite_frame(RabbitClipId id, uint32_t elapsed) {
     const RabbitClip *clip = &rabbit_clips[id];
     uint32_t tick = (elapsed / 1000) * RABBIT_TICK_RATE + (elapsed % 1000) * RABBIT_TICK_RATE / 1000;
     if (tick >= clip->duration) {
-        if (!clip->loop) return clip->first + clip->count - 1;
+        if (!clip->loop) return clip->poses ? clip->poses[clip->count - 1] : clip->first + clip->count - 1;
         tick = clip->loop_start + (tick - clip->loop_start) % (clip->duration - clip->loop_start);
     }
     for (uint8_t index = 0; index < clip->count; index++) {
-        if (tick < clip->ticks[index]) return clip->first + index;
+        if (tick < clip->ticks[index]) return clip->poses ? clip->poses[index] : clip->first + index;
         tick -= clip->ticks[index];
     }
     return clip->first;
@@ -853,7 +902,7 @@ static void begin_frame(uint32_t now) {
     const uint8_t scene = pet_care_get()->scene;
     const uint8_t using = toy_phase == TOY_USING ? active_toy->id : 0;
     PetFrame next = {
-        .bottom = DIRTY_BOTTOM, .x = x, .y = y,
+        .bottom = DIRTY_BOTTOM, .x = x, .y = action == PET_BINKY ? y - dance_lift(elapsed) : y,
         .hutch_x = pet_care_get()->hutch_x, .hutch_y = pet_care_get()->hutch_y,
         .direction = direction, .sprite = sprite_frame(action_clip(elapsed), elapsed),
         .action = action, .elapsed = elapsed, .hour = hour, .minute = minute, .season = season,
@@ -868,7 +917,7 @@ static void begin_frame(uint32_t now) {
         next.pat_phase = pet_mode_pat_phase();
         if (head_pat_contact[next.pat_phase]) next.sprite = head_pat_touch_pose[next.sprite];
     }
-    const int min_y = y < frame.y ? y : frame.y;
+    const int min_y = next.y < frame.y ? next.y : frame.y;
     const int max_y = y > frame.y ? y : frame.y;
     if (min_y < GROUND) area.top -= GROUND - min_y;
     if (max_y > GROUND) next.bottom += max_y - GROUND;
@@ -1080,6 +1129,26 @@ static void paint_controls(uint8_t *line, uint16_t row) {
     }
 }
 
+// Called only for visible stretches of sky; the mullions, clouds, trees and curtains occlude the disc.
+static void paint_window_sky(uint8_t *line, int row, int left, int right) {
+    if (window_night) {
+        for (unsigned i = 0; i < sizeof(window_stars); i += 2) {
+            int x0 = window_stars[i];
+            if (row != window_stars[i+1] || x0 + 2 <= left || x0 >= right) continue;
+            paint_span(line, x0 < left ? left : x0, x0+2 > right ? right : x0+2, nursery_light(HEX565(0xfff0c6)));
+        }
+    }
+    int dy = row - window_cy;
+    if (dy < -8 || dy > 8) return;
+    int x0 = window_cx - 8 < left ? left : window_cx - 8;
+    for (int x = x0; x < right && x <= window_cx + 8; x++) {
+        int dx = x - window_cx, d = dx * dx + dy * dy;
+        if (d > (window_night ? 42 : 64) || (window_night && (dx-3)*(dx-3)+(dy+2)*(dy+2) <= 30)) continue;
+        uint16_t c = window_night ? HEX565(0xffebc1) : d <= 40 ? HEX565(0xfff1bf) : HEX565(0xffd68e);
+        paint_span(line, x, x+1, nursery_light(c));
+    }
+}
+
 static void paint_row(uint8_t *line, uint16_t row) {
     const bool nursery = frame.scene == PET_NURSERY;
     const uint16_t *rows = nursery ? nursery_rows : garden_rows;
@@ -1090,24 +1159,17 @@ static void paint_row(uint8_t *line, uint16_t row) {
         const uint8_t color = runs[run * 2 + 1];
         paint_span(line, x_pos, end, nursery ? nursery_palette[color] :
                                      color == 5 ? sky_color(row) : scene_palette[color]);
+        if (nursery && (color == window_materials[0] || color == window_materials[1]))
+            paint_window_sky(line, row, x_pos, end);
         x_pos = end;
     }
     if (!nursery) paint_sky(line, row);
-    else if ((frame.hour < 6 || frame.hour >= 20) && row >= 24 && row < 44) {
-        /* The nursery sun sits behind the window's horizontal mullion at row 44. */
-        const uint16_t sky = nursery_light(row < 40 ? HEX565(0xa7d4dd) : HEX565(0xbee1e1));
-        paint_span(line, 147, 168, sky);
-        const int dy = (int)row - 34;
-        for (int dx = -7; dx <= 7; dx++) {
-            if (dx * dx + dy * dy <= 49 && (dx - 3)*(dx - 3) + (dy + 3)*(dy + 3) > 36)
-                paint_span(line, 157 + dx, 158 + dx, HEX565(0xffeac4));
-        }
-    }
 
     if (nursery) {
-        if (!frame.using_toy && row >= frame.y - 1 && row <= frame.y + 2) {
+        int shadow_y = frame.action == PET_BINKY ? GROUND : frame.y;
+        if (!frame.using_toy && row >= shadow_y - 1 && row <= shadow_y + 2) {
             static const uint8_t radii[] = {14, 19, 18, 12};
-            const int radius = radii[row - frame.y + 1];
+            const int radius = radii[row - shadow_y + 1];
             for (int col = frame.x - radius; col < frame.x + radius; col++) {
                 if (col < frame.left || col >= frame.right) continue;
                 uint8_t *pixel = line + (col - frame.left) * 2;

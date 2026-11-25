@@ -139,7 +139,9 @@ static void table_and_food_positions(void) {
     advance(4200);
     assert(pet_mode_active_toy() == 0 && pet_mode_y() == 139);
     assert(pet_mode_control(3, PET_STAND_WATCH) == 0);
-    advance(2700);
+    advance(3200);
+    assert(pet_mode_action() == PET_STAND_WATCH && pet_mode_y() == 139);
+    advance(780);
     assert(pet_mode_action() != PET_STAND_WATCH);
     pet_care_adjust(-75, 0, 0, 0);
     assert(pet_mode_control(2, 1) == 0 && pet_mode_control(2, 2) == 0);
@@ -153,11 +155,32 @@ static void table_and_food_positions(void) {
     }
 }
 
+static void dance_and_window(void) {
+    assert(pet_mode_control(3, PET_BINKY) == 0);
+    const int origin = pet_mode_x(), facing = (pet_mode_room_flags() & 1) ? 1 : -1;
+    advance(300);
+    assert((pet_mode_x() - origin) * facing > 0 && (pet_mode_room_flags() & 1) == (facing > 0));
+    advance(340);
+    assert(pet_mode_action() == PET_BINKY && (pet_mode_room_flags() & 1) == (facing < 0));
+    advance(530);
+    assert(pet_mode_action() == PET_IDLE && pet_mode_x() == origin + 36 * facing);
+    assert((pet_mode_room_flags() & 1) == (facing < 0));
+
+    assert(pet_mode_control(9, 0) == 0);
+    assert(pet_mode_control(4, 10) == 0);
+    advance(150);
+    const uint16_t sky = lcd[28][124], frame_colour = lcd[28][137];
+    assert(pet_mode_control(4, 18) == 0);
+    advance(150);
+    assert(sky != lcd[28][124] && frame_colour == lcd[28][137]);
+}
+
 int main(void) {
     pet_care_init(0); /* In-memory care. Separate NOR tests exercise durable storage. */
     gestures_and_framebuffer();
     concurrent_activities();
     table_and_food_positions();
+    dance_and_window();
     pet_care_adjust(100, -100, 0, 0);
     bool saw_lookout = false, saw_table = false;
     for (unsigned i = 0; i < 1200 && !(saw_lookout && saw_table); i++) {

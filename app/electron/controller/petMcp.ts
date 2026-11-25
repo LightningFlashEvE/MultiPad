@@ -86,6 +86,7 @@ function decodeState(payload: Buffer, session?: string) {
     activeDecoration: visitingTable ? 'nursery_table' : visitingHutch ? 'rabbit_hutch' : null,
     decorationPhase: generation >= 4 ? (visitingTable || visitingHutch ? phase : 'idle') : null,
     hutchPosition: generation >= 4 ? { x: payload.readUInt16LE(endOfFoods), y: payload[endOfFoods + 2] } : null,
+    actionAgeMs: generation >= 8 ? payload.readUInt16LE(payload.length - 3) : null,
     facing: generation >= 6 ? (flags & 1 ? 'right' : 'left') : null,
     otherRoom: generation >= 6 ? { scene: other, foods: readFoods(endOfFoods + 9), toyDropProgress: payload[endOfFoods + 8] } : null,
     awaitingPlay: generation >= 6 ? { garden: Boolean(flags & 2), nursery: Boolean(flags & 4) } : null,
@@ -132,6 +133,7 @@ function availableNow(state: State) {
   const deployed = scene && state.deployedToys?.[scene]
   const actions = playableActions.filter(action => {
     if (!active || fruit || legacyBusy) return false
+    if (action === 'binky' && generation < 8) return false
     if ((action === 'stand_watch' || action === 'inspect_table') && generation < 7) return false
     if (action === 'inspect_table' && (scene !== 'nursery' || occupied)) return false
     if (generation === 1 && petActions.indexOf(action) > petActions.indexOf('blink')) return false

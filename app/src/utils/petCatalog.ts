@@ -1,10 +1,10 @@
 // The array positions are action and scene IDs on the USB wire. Append new IDs.
-export const petActions = ['idle', 'walk', 'sleep', 'eat', 'fall', 'fetch', 'run', 'jump', 'daydream', 'flee', 'blink', 'trip_angry', 'gaze_owner', 'stand_watch', 'inspect_table'] as const
-export const playableActions = ['idle', 'blink', 'walk', 'run', 'jump', 'sleep', 'daydream', 'eat', 'flee', 'trip_angry', 'gaze_owner', 'stand_watch', 'inspect_table'] as const
+export const petActions = ['idle', 'walk', 'sleep', 'eat', 'fall', 'fetch', 'run', 'jump', 'daydream', 'flee', 'blink', 'trip_angry', 'gaze_owner', 'stand_watch', 'inspect_table', 'binky'] as const
+export const playableActions = ['idle', 'blink', 'walk', 'run', 'jump', 'sleep', 'daydream', 'eat', 'flee', 'trip_angry', 'gaze_owner', 'stand_watch', 'inspect_table', 'binky'] as const
 export const petActionLabels: Record<typeof petActions[number], string> = {
   idle: '待机', walk: '散步', sleep: '睡觉', eat: '吃东西', fall: '水果掉落', fetch: '捡水果',
   run: '奔跑', jump: '跳跃', daydream: '做白日梦', flee: '受惊逃跑', blink: '眨眼',
-  trip_angry: '绊脚生气', gaze_owner: '面向主人发呆', stand_watch: '站起来眺望', inspect_table: '趴桌边看看'
+  trip_angry: '绊脚生气', gaze_owner: '面向主人发呆', stand_watch: '站起来眺望', inspect_table: '趴桌边看看', binky: '兔子舞'
 }
 export const petScenes = ['garden', 'nursery'] as const
 export type PetScene = typeof petScenes[number]
@@ -68,7 +68,8 @@ export function petStateGeneration(p: Uint8Array) {
   if (p.length < 33 || p[32] > 8) return 0
   const endOfFoods = 33 + 6 * p[32]
   const roomEnd = endOfFoods + 10 + 6 * p[endOfFoods + 9]
-  const tableSupported = p.length === roomEnd + 1 && p[roomEnd] === 7
+  const danceSupported = p.length === roomEnd + 3 && p[roomEnd + 2] === 8
+  const tableSupported = danceSupported || p.length === roomEnd + 1 && p[roomEnd] === 7
   const layoutEnd = tableSupported ? roomEnd : p.length
   const tailLength = layoutEnd - endOfFoods
   if ((tailLength !== 0 && tailLength !== 4 && tailLength !== 6 && tailLength < 10) ||
@@ -87,7 +88,7 @@ export function petStateGeneration(p: Uint8Array) {
   if (tailLength >= 10) {
     const count = p[endOfFoods + 9]
     return count <= 8 && tailLength === 10 + count * 6 && p[endOfFoods + 6] < 12 &&
-      p[endOfFoods + 7] < 8 && p[endOfFoods + 8] <= 100 && validFoodEntries(p, endOfFoods + 10, layoutEnd) ? (tableSupported ? 7 : 6) : 0
+      p[endOfFoods + 7] < 8 && p[endOfFoods + 8] <= 100 && validFoodEntries(p, endOfFoods + 10, layoutEnd) ? (danceSupported ? 8 : tableSupported ? 7 : 6) : 0
   }
   return 5
 }
@@ -95,4 +96,11 @@ export function petStateGeneration(p: Uint8Array) {
 export function isHutchPosition(x: number, y: number) {
   return Number.isInteger(x) && Number.isInteger(y) &&
     x >= hutchBounds.minX && x <= hutchBounds.maxX && y >= hutchBounds.minY && y <= hutchBounds.maxY
+}
+
+export const binkyDuration = 1125
+export const binkyChance = (mood: number) => 4 + Math.floor(mood * mood / 250)
+export function binkyMotion(age: number) {
+  const t = Math.min(687, Math.max(0, age - 125))
+  return { travel: Math.floor(t * 36 / 687), lift: Math.floor(96 * t * (687 - t) / (687 * 687)), facing: age >= 500 ? -1 : 1 }
 }

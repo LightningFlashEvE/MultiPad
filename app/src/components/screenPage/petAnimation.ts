@@ -8,7 +8,7 @@ export const rabbitAtlasUrl = atlasUrl
 function frameFor(action: PetAction, elapsed: number) {
   const blink = action === 'idle' && elapsed >= 1400 && elapsed < 1525
   const name = blink ? 'blink' : action === 'idle' ? 'daydream' : action === 'react' ? 'jump' : action
-  const clip = sprite.clips[name === 'inspect_table' ? 'stand_watch' : name]
+  const clip = sprite.clips[name]
   const total = clip.ticks.reduce((sum, duration) => sum + duration, 0)
   const elapsedTicks = Math.floor(elapsed * sprite.tickRateHz / 1000)
   const loopFrom = 'loopFrom' in clip ? Number(clip.loopFrom) : 0
@@ -16,7 +16,7 @@ function frameFor(action: PetAction, elapsed: number) {
   let tick = clip.loop && elapsedTicks >= total
     ? start + (elapsedTicks - start) % (total - start) : Math.min(elapsedTicks, total - 1)
   for (let i = 0; i < clip.ticks.length; i++) {
-    if (tick < clip.ticks[i]) return clip.first + i
+    if (tick < clip.ticks[i]) return 'poses' in clip ? clip.poses[i] : clip.first + i
     tick -= clip.ticks[i]
   }
   return clip.first

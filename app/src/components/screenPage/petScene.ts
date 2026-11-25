@@ -1,5 +1,5 @@
 export type PetAction = 'idle' | 'walk' | 'sleep' | 'eat' | 'react' | 'run' | 'flee' | 'blink' |
-  'daydream' | 'trip_angry' | 'gaze_owner' | 'stand_watch' | 'inspect_table'
+  'daydream' | 'trip_angry' | 'gaze_owner' | 'stand_watch' | 'inspect_table' | 'binky'
 
 function rect(ctx: CanvasRenderingContext2D, color: string, x: number, y: number, w: number, h: number) {
   ctx.fillStyle = color
@@ -73,7 +73,34 @@ function nurseryOval(ctx: CanvasRenderingContext2D, color: string, cx: number, c
   }
 }
 
-export function drawNursery(ctx: CanvasRenderingContext2D) {
+// The generator uses these five colours as material IDs for the two sky bands, clouds and trees.
+export const windowMaterials = ['#a7d4dd', '#bee1e1', '#f3f6e7', '#adcbbb', '#a7c4ae']
+const windowKeyframes = [
+  [0,  '#233254', '#435376', '#536481', '#34475b', '#293e4d'],
+  [5,  '#49517b', '#c48e97', '#a395ab', '#5b6878', '#4c6266'],
+  [7,  '#f1b59d', '#ffe1af', '#fff0d6', '#9dae91', '#859d86'],
+  [10, ...windowMaterials],
+  [15, '#82b9df', '#c5e7e9', '#f7f5e5', '#96bb99', '#81ab91'],
+  [18, '#d99bae', '#ffcb94', '#f9ddd2', '#959686', '#798b79'],
+  [20, '#57537f', '#b18596', '#92809c', '#60657b', '#505a6c'],
+  [22, '#263959', '#485779', '#596986', '#35495b', '#2e4251'],
+  [24, '#233254', '#435376', '#536481', '#34475b', '#293e4d']
+] as const
+export const windowStars = [[104,27],[119,35],[128,22],[134,50],[148,28],[157,38],[171,25],[177,55]] as const
+
+export function windowPalette(hour: number, minute: number) {
+  const time = hour + minute / 60
+  const hi = windowKeyframes.findIndex(row => row[0] > time)
+  const a = windowKeyframes[hi - 1], b = windowKeyframes[hi]
+  const weight = (time - a[0]) / (b[0] - a[0])
+  return windowMaterials.map((_, i) => {
+    const left = parseInt(String(a[i + 1]).slice(1), 16), right = parseInt(String(b[i + 1]).slice(1), 16)
+    const channels = [16,8,0].map(shift => Math.round(((left >> shift) & 255) * (1 - weight) + ((right >> shift) & 255) * weight))
+    return '#' + channels.map(c => c.toString(16).padStart(2, '0')).join('')
+  })
+}
+
+export function drawNursery(ctx: CanvasRenderingContext2D, hour = 12, minute = 0, materialsOnly = false) {
   const paint = (color: string, x: number, y: number, w: number, h: number) => rect(ctx, color, x, y, w, h)
   const oval = (color: string, x: number, y: number, rx: number, ry: number) => nurseryOval(ctx, color, x, y, rx, ry)
   const honey = '#c99470', maple = '#e1b181', mapleLight = '#f4d5a8'
@@ -102,18 +129,31 @@ export function drawNursery(ctx: CanvasRenderingContext2D) {
   paint('#e5c6a8', 87, 15, 106, 66)
   paint(honey, 90, 12, 100, 65)
   paint(mapleLight, 91, 13, 98, 63)
-  paint('#a7d4dd', 96, 17, 88, 54)
-  paint('#bee1e1', 96, 40, 88, 31)
-  pixelCircle(ctx, '#ffe2a1', 157, 34, 10)
-  pixelCircle(ctx, '#ffedbc', 157, 34, 8)
+  const [sky, horizon, cloud, trees, meadow] = materialsOnly ? windowMaterials : windowPalette(hour, minute)
+  paint(sky, 96, 17, 88, 54)
+  paint(horizon, 96, 40, 88, 31)
+  if (!materialsOnly) {
+    const night = hour < 6 || hour >= 19
+    const t = ((hour * 60 + minute - (night ? 1140 : 360) + 1440) % 1440) / (night ? 660 : 780)
+    const cx = 99 + Math.round(80 * t), cy = 63 - Math.round(144 * t * (1 - t))
+    if (night) {
+      for (const [sx, sy] of windowStars) paint('#fff0c6', sx, sy, 2, 1)
+    }
+    for (let dy = -8; dy <= 8; dy++) for (let dx = -8; dx <= 8; dx++) {
+      const d = dx * dx + dy * dy
+      if (cx + dx < 96 || cx + dx >= 184 || cy + dy < 17 || cy + dy >= 71) continue
+      if (d <= (night ? 42 : 64) && (!night || (dx - 3) ** 2 + (dy + 2) ** 2 > 30))
+        paint(night ? '#ffebc1' : d <= 40 ? '#fff1bf' : '#ffd68e', cx + dx, cy + dy, 1, 1)
+    }
+  }
   for (const [x, y] of [[111, 32], [169, 47]]) {
-    paint('#f3f6e7', x, y, 12, 2)
-    paint('#f3f6e7', x + 3, y - 2, 6, 2)
+    paint(cloud, x, y, 12, 2)
+    paint(cloud, x + 3, y - 2, 6, 2)
   }
   for (const [cx, cy, radius] of [[102, 67, 6], [113, 68, 7], [124, 68, 5], [154, 69, 4], [175, 65, 6]]) {
-    pixelCircle(ctx, '#adcbbb', cx, cy, radius)
+    pixelCircle(ctx, trees, cx, cy, radius)
   }
-  paint('#a7c4ae', 96, 68, 88, 3)
+  paint(meadow, 96, 68, 88, 3)
   paint('#faf0d7', 137, 16, 4, 56)
   paint('#faf0d7', 95, 44, 90, 3)
   paint('#d8b898', 141, 16, 1, 56)
@@ -298,20 +338,7 @@ export function tintNursery(ctx: CanvasRenderingContext2D, hour: number, season:
 
 // Apply the same time and season lighting as the keyboard, leaving the window frame intact.
 export function drawNurseryLight(ctx: CanvasRenderingContext2D, hour: number, season: number) {
-  const night = hour >= 20 || hour < 6
-  if (night) {
-    rect(ctx, '#a7d4dd', 147, 24, 21, 16)
-    rect(ctx, '#bee1e1', 147, 40, 21, 4)
-  }
   tintNursery(ctx, hour, season)
-  if (night) {
-    for (let y = -7; y <= 7; y++) {
-      for (let x = -7; x <= 7; x++) {
-        if (x * x + y * y <= 49 && (x - 3) ** 2 + (y + 3) ** 2 > 36)
-          rect(ctx, '#ffeac4', 157 + x, 34 + y, 1, 1)
-      }
-    }
-  }
 }
 
 export function drawPetEffects(

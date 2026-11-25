@@ -1,5 +1,5 @@
 import type { PetState } from './petDisplay'
-import { defaultHutchPosition, isHutchPosition } from '../../utils/petCatalog'
+import { binkyChance, binkyDuration, binkyMotion, defaultHutchPosition, isHutchPosition } from '../../utils/petCatalog'
 
 export const previewCare = { satiety: 65, sleepiness: 25, mood: 70, affection: 35 }
 type Food = { id: number; x: number; droppedAt: number }
@@ -15,6 +15,7 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
   const rooms: Room[] = [0, 1].map(() => ({ toy: 0, droppedAt: 0, awaitingPlay: false, foods: [] }))
   let food: FoodActivity | undefined
   let play: RoomActivity | undefined
+  let danceOrigin = 0, danceDirection = 1
   let gesture: { action: number; until: number } | undefined
   let timer: number | undefined
   let lastTick = 0
@@ -35,6 +36,12 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     stats.sleepiness = clampStat(stats.sleepiness + sleepiness)
     stats.mood = clampStat(stats.mood + mood)
     stats.affection = clampStat(stats.affection + affection)
+  }
+
+  function startBinky() {
+    danceOrigin = state().x
+    danceDirection = danceOrigin < 82 ? 1 : danceOrigin > 238 ? -1 : state().facing ?? 1
+    gesture = { action: 15, until: time + binkyDuration }
   }
 
   function move(target: number, distance: number) {
@@ -110,16 +117,23 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     if (play?.bedtime && hungry && play.gardenFood && !rooms[1].foods.length && rooms[0].foods.length) switchRoom(0)
     let room = rooms[pet.scene]
     const first = room.foods[0]
-    if (first && time - first.droppedAt >= fallMs && hungry) {
+    if (gesture?.action !== 15 && first && time - first.droppedAt >= fallMs && hungry) {
       if (play?.bedtime) play = undefined
       if (!play && !food) food = { target: first.x - (first.x >= pet.x ? 28 : -28) }
     }
+    pet.actionAgeMs = undefined
+    if (gesture?.action === 15) {
+      const age = time + binkyDuration - gesture.until, motion = binkyMotion(age)
+      pet.x = danceOrigin + danceDirection * motion.travel
+      pet.facing = danceDirection * motion.facing
+      pet.actionAgeMs = age
+    } else if (gesture?.action === 13) pet.actionAgeMs = time + 3875 - gesture.until
     if (gesture && (food || time >= gesture.until)) {
       if (!food && gesture.action === 11) reward(0, 1, -4, 0)
       if (!food && gesture.action === 12) reward(0, 0, 1, 1)
       gesture = undefined
     }
-    if (!play && stats.mood < 90 && stats.sleepiness < 85 && room.awaitingPlay && time - room.droppedAt >= fallMs && !food && !(hungry && first)) {
+    if (!play && gesture?.action !== 15 && stats.mood < 90 && stats.sleepiness < 85 && room.awaitingPlay && time - room.droppedAt >= fallMs && !food && !(hungry && first)) {
       room.awaitingPlay = false
       startActivity(2)
       gesture = undefined
@@ -130,8 +144,9 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     }
     if (!play && !food && !gesture && time >= nextLook && time - lastInput >= 6000) {
       nextLook = time + 12000
-      if (++looks % 2 === 0 && pet.scene === 1) startActivity(3)
-      else gesture = { action: 13, until: time + 2600 }
+      if (Math.random() * 100 < binkyChance(stats.mood)) startBinky()
+      else if (++looks % 2 === 0 && pet.scene === 1) startActivity(3)
+      else gesture = { action: 13, until: time + 3875 }
     }
     if (play) {
       const hutch = play.item === 1
@@ -252,14 +267,17 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
       if (play?.item !== 1) visitHutch(false)
     } else if (command === 3) {
       if (food || (value !== 2 && play && !play.bedtime)) return '兔子正在忙，请稍后再试。'
-      if (value === 14) {
+      if (value === 15) {
+        play = undefined
+        startBinky()
+      } else if (value === 14) {
         if (pet.scene !== 1 || play) return '请在宝宝房空闲时查看玩具桌。'
         startActivity(3)
       } else if (value === 2) {
         if (!play?.bedtime) visitHutch(true)
       } else {
         play = undefined
-        gesture = value === 0 ? undefined : { action: value, until: time + (value === 12 ? 3000 : value === 13 ? 2600 : 2050) }
+        gesture = value === 0 ? undefined : { action: value, until: time + (value === 12 ? 3000 : value === 13 ? 3875 : 2050) }
       }
     }
     lastInput = time

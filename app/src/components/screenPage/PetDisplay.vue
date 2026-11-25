@@ -5,7 +5,7 @@ import { bitePosition, drawRabbit, drawRabbitHeadPat, rabbitAtlasUrl } from './p
 import { patPhase } from './petHeadPat'
 import itemsUrl from '../../assets/pet/items.png'
 import type { HutchPosition, PetState } from './petDisplay'
-import { defaultHutchPosition, hutchBounds, petActions, petSceneLabels, petScenes } from '../../utils/petCatalog'
+import { binkyMotion, defaultHutchPosition, hutchBounds, petActions, petSceneLabels, petScenes } from '../../utils/petCatalog'
 
 const props = defineProps<{ state: PetState; connected: boolean; editableDecoration?: boolean; decorationBusy?: boolean }>()
 const emit = defineEmits<{ moveHutch: [position: HutchPosition] }>()
@@ -106,6 +106,7 @@ onMounted(() => {
   let lastSample: PetState | undefined
   let lastFoods: PetState['foods']
   let lastDrop: number | undefined
+  let syncAge = -1, syncAt = 0
   let sampleAt = 0
   let lastPatState: PetState | undefined
   let lastRemaining = 0, lastPatKind = 0
@@ -132,10 +133,10 @@ onMounted(() => {
     }
     const nursery = petScenes[scene] === 'nursery'
     const liveNurseryLight = nursery && (!props.connected || props.state.minute !== undefined)
-    const lighting = liveNurseryLight ? season * 24 + hour : -1
+    const lighting = liveNurseryLight ? (season * 24 + hour) * 60 + (props.state.minute ?? 0) : -1
     if (lastScene !== scene || lastLighting !== lighting) {
       if (nursery) {
-        drawNursery(context!)
+        drawNursery(context!, liveNurseryLight ? hour : 12, liveNurseryLight ? props.state.minute ?? 0 : 0)
         hutchContext.clearRect(205, 73, hutch.width, hutch.height)
         drawNurseryHutch(hutchContext)
         if (liveNurseryLight) {
@@ -172,10 +173,25 @@ onMounted(() => {
     if (activeToy === 3 && toyPhase === 2) { x = position; direction = -1 }
     if (resting) { x = home.x; direction = -1 }
     if (playingCarrot && toyPhase === 2) { x = 151; direction = 1 }
-    const rabbitY = resting ? home.y : (props.state.rabbitY ?? 139)
-    if (lastAction !== action) {
+    let rabbitY = resting ? home.y : (props.state.rabbitY ?? 139)
+    const actionChanged = lastAction !== action
+    if (actionChanged) {
       lastAction = action
       actionStart = now
+    }
+    const shadowY = rabbitY
+    const wireAge = props.state.actionAgeMs
+    if ((wireAge ?? -1) !== syncAge || actionChanged) {
+      syncAge = wireAge ?? -1
+      syncAt = now
+    }
+    const elapsed = wireAge === undefined ? now - actionStart : wireAge + (touched ? 0 : now - syncAt)
+    if (stateAction === 'binky' && wireAge !== undefined) {
+      const observed = binkyMotion(wireAge), animated = binkyMotion(elapsed)
+      const originalFacing = (props.state.facing ?? 1) * observed.facing
+      x = position + originalFacing * (animated.travel - observed.travel)
+      direction = originalFacing * animated.facing
+      rabbitY -= animated.lift
     }
     display!.drawImage(background, 0, 0)
     if (!nursery) {
@@ -185,15 +201,14 @@ onMounted(() => {
         display!.fillStyle = '#17274688'
         display!.fillRect(0, 0, 320, 172)
       }
-      drawPetEffects(display!, Math.round(x), direction, clip, now - actionStart, false,
+      drawPetEffects(display!, Math.round(x), direction, clip, elapsed, false,
         !activeToy && !props.state.fruit)
     }
     if (nursery && toyPhase !== 2) {
       display!.fillStyle = 'rgba(130, 108, 107, .2)'
       nurseryShadowRadii.forEach((radius, row) =>
-        display!.fillRect(Math.round(x) - radius, rabbitY - 1 + row, radius * 2, 1))
+        display!.fillRect(Math.round(x) - radius, shadowY - 1 + row, radius * 2, 1))
     }
-    const elapsed = now - actionStart
     const deployed = deployedToys?.[scene] ?? (nursery ? 1 : 0)
     const drop = Math.min(1, (toyDrop ?? 100) / 100 + (now - sampleAt) / 650)
     const dy = -Math.round(146 * (1 - drop))

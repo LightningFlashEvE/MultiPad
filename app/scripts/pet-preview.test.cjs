@@ -82,6 +82,27 @@ test('an alert rabbit stays awake and a held stroke freezes its route to the hut
   assert.notEqual(state.x,x)
 })
 
+test('the rabbit kicks forward, turns in the air and lands facing back before fetching a snack', () => {
+  const {world, state, tick} = preview()
+  assert.deepEqual([0, 50, 80, 100].map(catalog.binkyChance), [4, 14, 29, 44])
+  assert.equal(world.use(3, 15), '')
+  const origin = state.x
+  world.use(2, 1)
+  tick(300)
+  assert.equal(state.facing, 1)
+  assert.ok(state.x > origin)
+  tick(400)
+  assert.equal(state.action, 15)
+  assert.equal(state.facing, -1)
+  assert.ok(catalog.binkyMotion(state.actionAgeMs).lift > 0)
+  tick(425)
+  assert.equal(state.x, origin + 36)
+  assert.equal(state.facing, -1)
+  assert.equal(catalog.binkyMotion(1125).lift, 0)
+  tick(100)
+  assert.equal(state.action, 5)
+})
+
 test('the nursery table has a fixed approach and paw contact without a care reward', () => {
   const {world,state,tick} = preview()
   assert.ok(world.use(3,14))

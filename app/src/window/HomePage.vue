@@ -124,6 +124,7 @@ function applyPetReply(reply: { session?: string; payload: Uint8Array }) {
     rabbitY: generation.value >= 4 ? p[decorationOffset + 3] : undefined,
     headPatRemaining: generation.value >= 5 ? p[decorationOffset + 4] * 10 : undefined,
     facing: generation.value >= 6 ? (p[decorationOffset + 7] & 1 ? 1 : -1) : undefined,
+    actionAgeMs: generation.value >= 8 ? p[p.length - 3] + 256 * p[p.length - 2] : undefined,
     headPatPhase: generation.value >= 6 ? p[decorationOffset + 6] : undefined,
     headPatKind: generation.value >= 5 ? p[decorationOffset + 5] : undefined,
     deployedToys: world ? [p[29], p[30]] : undefined, toyDrop: world ? p[31] : undefined,
@@ -968,8 +969,8 @@ const showAppInfo = () => {
               <div class="pet-fields" role="group" aria-label="宠物互动">
                 <button type="button" :disabled="interacting || !!petState.fruit || (petLinked && generation < 3 && !!currentToy)"
                   @click="interactWithPet(3, isSleeping ? 0 : 2)">{{ isSleeping ? '叫醒' : '睡觉' }}</button>
-                <button v-for="action in (['trip_angry', 'gaze_owner', 'stand_watch'] as const)" :key="action"
-                  type="button" :disabled="legacyPet || interacting || !!currentToy || (action === 'stand_watch' && petLinked && generation < 7)"
+                <button v-for="action in (['trip_angry', 'gaze_owner', 'stand_watch', 'binky'] as const)" :key="action"
+                  type="button" :disabled="legacyPet || interacting || !!currentToy || (petLinked && ((action === 'stand_watch' && generation < 7) || (action === 'binky' && generation < 8)))"
                   @click="interactWithPet(3, petActions.indexOf(action))">{{ petActionLabels[action] }}</button>
               </div>
             </section>
