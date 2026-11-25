@@ -315,7 +315,7 @@ test('idle plans allow variable length, isolate invalid actions and wait briefly
   assert.equal(writes().length, 3)
   assert.equal(writes().at(-1), 10)
   f.board.payload = payload(11)
-  offer({behavior:'daydream',durationSeconds:25},{behavior:'blink'})
+  offer({behavior:'daydream',durationSeconds:'25',untilEnergy:'unused',waitMs:1500},{behavior:'blink'})
   assert.equal((await auto()).phase, 'action')
   assert.equal(writes().at(-1), 8 | (25 << 5))
   assert.equal(scheduledDelay, 25_000)
@@ -364,7 +364,7 @@ test('owner inputs coalesce, interrupt stale plans and rearm a single idle round
   const config = new Map()
   class Store { get(k){ return config.get(k) } set(k,v){ config.set(k,v) } }
   const observations = []
-  let timer, pollDevice, stall, expireRequest, deadline, responseSteps, waitingTouch, aborted = false
+  let timer, pollDevice, stall, expireRequest, deadline, responseSteps, responseCalls, waitingTouch, aborted = false
   let now = 10_000
   const ai = loadModule('../electron/controller/petAi.ts', {
     electron:{safeStorage:{isEncryptionAvailable:()=>true,encryptString:s=>Buffer.from(s),decryptString:b=>b.toString()}},
@@ -387,7 +387,7 @@ test('owner inputs coalesce, interrupt stale plans and rearm a single idle round
         aborted=true;reject(Error('aborted'))
       },{once:true}))
       const tool = JSON.parse(options.body).tools[0].function
-      const message = responseSteps ? {tool_calls:[{type:'function',function:{
+      const message = responseCalls ? {tool_calls:responseCalls} : responseSteps ? {tool_calls:[{type:'function',function:{
         name:tool.name, arguments:JSON.stringify({steps:responseSteps.map(behavior=>({behavior}))})
       }}]} : {}
       return new Response(JSON.stringify({choices:[{message}]}))
@@ -479,6 +479,24 @@ test('owner inputs coalesce, interrupt stale plans and rearm a single idle round
   assert.match(ai.getPetAiActivity().message, /模型超时.*眨眼/)
   assert.deepEqual(f.board.requests.filter(r => r.command > 0).map(r => r.value), [10])
   stall = false
+
+  const sequence = steps => ({type:'function',function:{name:'pet_perform_sequence',arguments:JSON.stringify({steps})}})
+  const react = async (...toolCalls) => {
+    f.board.requests.length = 0
+    responseCalls = toolCalls
+    ai.observePetOwnerCommand(session,2,3,payload(6))
+    await runTimer()
+    return f.board.requests.filter(r => r.command > 0).map(r => r.value)
+  }
+  assert.deepEqual(await react(
+    {type:'function',function:{name:'pet_perform_sequence',arguments:'{'}},
+    sequence([{behavior:'eat'},{behavior:'walk',waitMs:2000,durationSeconds:45,untilEnergy:70},{behavior:'blink'}])
+  ), [1])
+  assert.match(ai.getPetAiActivity().message, /最近决定/)
+  assert.deepEqual(await react(sequence([{behavior:'apple'}])), [10])
+  assert.match(ai.getPetAiActivity().message, /模型未给出可执行的动作.*眨眼/)
+  assert.deepEqual(await react(sequence([{behavior:'rest'},{behavior:'walk'}])), [])
+
   ai.observePetOwnerCommand(session,2,3,payload(6))
   ai.observePetAiSession(null)
   assert.equal(timer,undefined)
