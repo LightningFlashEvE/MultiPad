@@ -18,6 +18,8 @@ MultiPad is a programmable desktop keypad with eight keys, three rotary encoders
 
 Select **工作模式** (Work) at the top of the Windows app. You can also hold the large encoder on the keypad for about 1.2 seconds to switch modes. When leaving Pet mode, hold it without turning, then release.
 
+![MultiPad in Work mode on Windows, showing three displays, eight keys, three encoders, and the configuration layer controls](docs/images/work-mode.png)
+
 | Control | What to configure |
 | --- | --- |
 | K1–K8 and the three encoders | Click a key or encoder in the app to assign a shortcut, key sequence with delays, text, file or app launch, media control, or mouse action. Encoder presses and turns can have separate assignments. |
