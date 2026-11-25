@@ -434,6 +434,24 @@ static void empty_snacks_report_stock_and_show_a_temporary_lcd_notice(void) {
     assert(pet_mode_queue_depth() == queued);
 }
 
+static void separate_taps_and_continued_rubs_reward_at_their_own_rate(void) {
+    const uint8_t original = pet_care_get()->affection;
+    scan(true, 0); advance(65); scan(false, 0);
+    advance(120);
+    scan(true, 0); advance(65); scan(false, 0);
+    assert(pet_care_get()->affection == original + 2);
+
+    scan(true, 0); scan(true, 124);
+    assert(pet_care_get()->affection == original + 3);
+    advance(3100);
+    assert(pet_care_get()->affection == original + 3);
+    scan(true, 4);
+    assert(pet_care_get()->affection == original + 4);
+    scan(true, 124);
+    assert(pet_care_get()->affection == original + 4);
+    scan(false, 0);
+}
+
 int main(void) {
     pet_care_init(0); /* In-memory care. Separate NOR tests exercise durable storage. */
     gestures_and_framebuffer();
@@ -517,6 +535,7 @@ int main(void) {
     restore_performance_without_image();
     run_reaches_edge_without_mid_stride_reversal();
     empty_snacks_report_stock_and_show_a_temporary_lcd_notice();
+    separate_taps_and_continued_rubs_reward_at_their_own_rate();
     puts("Pet encoder gesture and performance transition tests passed");
     return 0;
 }

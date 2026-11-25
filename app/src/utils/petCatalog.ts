@@ -168,6 +168,7 @@ export type PetToyId = typeof petRoomItems[number]['id']
 export const petToyIds = petRoomItems.map(item => item.id) as [PetToyId, ...PetToyId[]]
 export const petToyPhases = ['idle', 'approaching', 'using'] as const
 export const petFoodStages = ['falling', 'landed', 'eating'] as const
+export const petRubRewardMs = 3000
 export const petHeadGestures = ['tap', 'cw', 'ccw'] as const
 // 3/4 continue a held clockwise/counterclockwise stroke without granting a second reward.
 export function isHeadPetInput(value: number) {

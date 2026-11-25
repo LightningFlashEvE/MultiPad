@@ -1,5 +1,5 @@
 import type { PetState } from './petDisplay'
-import { isStatValue, petStats, binkyChance, binkyDuration, binkyMotion, defaultHutchPosition, isHutchPosition, petFurniture,
+import { petRubRewardMs, isStatValue, petStats, binkyChance, binkyDuration, binkyMotion, defaultHutchPosition, isHutchPosition, petFurniture,
   petRunBoundary, petRunDurationMs, petRunFacing, petRunPosition,
   petCareGraceMs, petUnattendedDecayMs, petSleepRecoveryMs, petLampCommand, petToggleLampCommand, petLampIsLit, petDaydreamMs, petGazeOwnerMs, petAutoSleepIdleMs, petAutoSleepEnergy, petRecoveredEnergy } from '../../utils/petCatalog'
 
@@ -28,6 +28,7 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
   let lastInput = 0
   let lastOwnerInput = 0
   let unattendedMs = 0
+  let lastPatReward = 0
   let patUntil = 0
   let rubIndex = 2
   let metabolism = 0
@@ -308,7 +309,11 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
         update()
         return ''
       }
-      if (value < 3 && time >= patUntil) reward(0, 0, 0, 1)
+      const newGesture = value < 3
+      if (newGesture || (pet.headPatKind && time < patUntil && time - lastPatReward >= petRubRewardMs)) {
+        reward(0, 0, 0, 1)
+        lastPatReward = time
+      }
       patUntil = time + 1200
       pet.headPatKind = value >= 8 ? (value < 16 ? 1 : 2) : value > 2 ? value - 2 : value
       if (value <= 2) rubIndex = 2
