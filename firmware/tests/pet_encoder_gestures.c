@@ -5,14 +5,16 @@
 #include <stdio.h>
 #include <string.h>
 #include "encoder1.h"
+#include "encoder2.h"
 #include "encoder3.h"
+#include "encoder_user.h"
 #include "pet_care.h"
 #include "pet_mode.h"
 
 static uint32_t now, counter, cursor;
 static bool held;
 static uint8_t macro;
-static unsigned macros, pats;
+static unsigned macros, pats, menu_loads, menu_previews, small_button_edges[2];
 static PetEvent last_pat;
 static uint16_t lcd[172][320], before[172][320];
 
@@ -26,10 +28,14 @@ void encoder1_init(void) {}
 void encoder2_init(void) {}
 void encoder1_scan(void) {}
 void encoder2_scan(void) {}
-void load_menu(uint8_t menu) { (void)menu; }
+void load_menu(uint8_t menu) { (void)menu; menu_loads++; }
 void parse_json_value(uint8_t value) { macro = value; macros++; }
-void oled_42_show_num(uint8_t n, uint8_t mode, uint8_t i) { (void)n; (void)mode; (void)i; }
-void button_readback_record(uint8_t index, bool down) { assert(index == 10 && down == held); }
+void oled_42_show_num(uint8_t n, uint8_t mode, uint8_t i) { (void)n; (void)mode; (void)i; menu_previews++; }
+void button_readback_record(uint8_t index, bool down) {
+    if (index == 10) { assert(down == held); return; }
+    assert(index == 8 || index == 9);
+    small_button_edges[index - 8]++;
+}
 void live_oled_mode_changed(void) {}
 void restore_menu_color(void) {}
 void erase_flash_sector(uint32_t sector) { (void)sector; assert(0); }
@@ -188,6 +194,54 @@ static void dance_and_window(void) {
     assert(sky != lcd[28][124] && frame_colour == lcd[28][137]);
 }
 
+static void small_encoders_keep_work_layers_out_of_pet_mode(void) {
+    const unsigned before = macros;
+    assert(pet_mode_control(1, 1) == 0);
+    set_menu_index(3);
+    encoder1_callback(ENCODER_DOWN);
+    encoder1_callback(ENCODER_UP);
+    encoder2_callback(ENCODER_DOWN);
+    encoder2_callback(ENCODER_UP);
+    assert(macros == before && small_button_edges[0] == 2 && small_button_edges[1] == 2);
+
+    encoder1_callback(ENCODER_DOWN);
+    encoder1_callback(DOWN_ANTICLOCKWISE);
+    encoder1_callback(UP_CLOCKWISE);
+    encoder1_callback(ENCODER_UP);
+    advance(350);
+    encoder_scan_user();
+    assert(get_menu_index() == 3 && !menu_previews && !menu_loads && macros == before);
+
+    assert(pet_mode_control(9, 0) == 0);
+    const uint8_t hour = pet_mode_hour(), season = pet_mode_season();
+    const uint8_t scene = pet_care_get()->scene;
+    encoder1_callback(CLOCKWISE);
+    encoder2_callback(CLOCKWISE);
+    assert(pet_mode_hour() == (hour + 1) % 24 && pet_mode_season() == (season + 1) % 4);
+    encoder2_callback(ENCODER_DOWN);
+    encoder2_callback(UP_CLOCKWISE);
+    encoder2_callback(ENCODER_UP);
+    assert(pet_care_get()->scene != scene && macros == before);
+
+    encoder1_callback(ENCODER_DOWN);
+    assert(pet_mode_control(1, 0) == 0);
+    encoder1_callback(UP_CLOCKWISE);
+    encoder1_callback(ENCODER_UP);
+    assert(get_menu_index() == 3 && macros == before);
+
+    encoder1_callback(ENCODER_DOWN);
+    encoder1_callback(UP_CLOCKWISE);
+    encoder1_callback(ENCODER_UP);
+    assert(get_menu_index() == 4 && menu_previews == 1 && macros == before + 2);
+    assert(pet_mode_control(1, 1) == 0);
+    advance(350);
+    encoder_scan_user();
+    assert(menu_loads == 0);
+    assert(pet_mode_control(1, 0) == 0);
+    encoder_scan_user();
+    assert(menu_loads == 1);
+}
+
 int main(void) {
     pet_care_init(0); /* In-memory care. Separate NOR tests exercise durable storage. */
     gestures_and_framebuffer();
@@ -258,6 +312,7 @@ int main(void) {
     advance(23000);
     assert(pet_mode_action() != PET_SLEEP && pet_mode_timed_remaining() == 0);
     assert(pet_care_get()->energy >= 59 && pet_care_get()->energy <= 60);
-    puts("Encoder 3 head-pat tests passed");
+    small_encoders_keep_work_layers_out_of_pet_mode();
+    puts("Pet encoder gesture tests passed");
     return 0;
 }

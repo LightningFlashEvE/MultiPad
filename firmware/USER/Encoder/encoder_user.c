@@ -34,7 +34,7 @@ void encoder_scan_user(void) {
     encoder1_scan();
     encoder2_scan();
     encoder3_scan();
-    if (menu_sign_p->change_flag && HAL_GetTick() - menu_sign_p->changed_at >= 300) {
+    if (!pet_mode_is_active() && menu_sign_p->change_flag && HAL_GetTick() - menu_sign_p->changed_at >= 300) {
         menu_sign_p->change_flag = 0;
         keyboard_menu_change();
     }
@@ -65,7 +65,7 @@ uint8_t get_menu_index(void) {
 * 防抖函数
 ********************************************************************************/
 void debounce_func() {
-    if(menu_sign_p->menu_change_lock == 0) {
+    if (!pet_mode_is_active() && menu_sign_p->menu_change_lock == 0) {
         menu_sign_p->changed_at = HAL_GetTick();
         menu_sign_p->change_flag = 1;
         // 显示数字
@@ -94,47 +94,49 @@ static void keyboard_menu_change(void) {
  *  4 -> 按下左旋
  *  5 -> 按下右旋
 ********************************************************************************/
+static bool handle_small_pet_encoder(uint8_t event, uint8_t button, bool *pet_pressed) {
+    const bool active = pet_mode_is_active();
+    const bool right = button == 9;
+    if (event == ENCODER_DOWN || event == ENCODER_UP) {
+        button_readback_record(button, event == ENCODER_DOWN);
+        if (event == ENCODER_DOWN) *pet_pressed = active;
+        const bool claimed = *pet_pressed;
+        if (event == ENCODER_UP) *pet_pressed = false;
+        return claimed;
+    }
+    if (event == DOWN_ANTICLOCKWISE || event == UP_CLOCKWISE) {
+        if (right && active && *pet_pressed) pet_mode_cycle_background(event == UP_CLOCKWISE ? 1 : -1);
+        return active || *pet_pressed;
+    }
+    if (active && (event == ANTICLOCKWISE || event == CLOCKWISE)) {
+        pet_mode_adjust_scene(event == CLOCKWISE ? 1 : -1, right);
+        return true;
+    }
+    return *pet_pressed;
+}
+
 // 编码器 1
 void encoder1_callback(uint8_t encoder_value) {
-    if (encoder_value == ENCODER_DOWN || encoder_value == ENCODER_UP) {
-        button_readback_record(8, encoder_value == ENCODER_DOWN);
-    } else if (pet_mode_is_active() && (encoder_value == ANTICLOCKWISE || encoder_value == CLOCKWISE)) {
-        pet_mode_adjust_scene(encoder_value == CLOCKWISE ? 1 : -1, false);
-        return;
-    }
-//    if(menu_config_arr[menu_index + 1] == 0x00) {
-    if(encoder_value == 4) {
-        menu_sign_p->menu_index <= 0 ? menu_sign_p->menu_index = 9 : menu_sign_p->menu_index--;
-        debounce_func();
-        return;
-    } else if(encoder_value == 5) {
-        menu_sign_p->menu_index >= 9 ? menu_sign_p->menu_index = 0 : menu_sign_p->menu_index++;
+    static bool pet_pressed;
+    if (handle_small_pet_encoder(encoder_value, 8, &pet_pressed)) return;
+    if (encoder_value == DOWN_ANTICLOCKWISE) {
+        menu_sign_p->menu_index = menu_sign_p->menu_index == 0 ? 9 : menu_sign_p->menu_index - 1;
         debounce_func();
         return;
     }
-//    }
-//    printf("encoder_value -> %d\n\r", encoder_value + 16);
-    parse_json_value( encoder_value + 16);
+    if (encoder_value == UP_CLOCKWISE) {
+        menu_sign_p->menu_index = menu_sign_p->menu_index == 9 ? 0 : menu_sign_p->menu_index + 1;
+        debounce_func();
+        return;
+    }
+    parse_json_value(encoder_value + 16);
 }
 
 // 编码器 2
 void encoder2_callback(uint8_t encoder_value) {
     static bool pet_pressed;
-    if (encoder_value == ENCODER_DOWN || encoder_value == ENCODER_UP) {
-        button_readback_record(9, encoder_value == ENCODER_DOWN);
-        if (encoder_value == ENCODER_DOWN) pet_pressed = pet_mode_is_active();
-        const bool claimed = pet_pressed;
-        if (encoder_value == ENCODER_UP) pet_pressed = false;
-        if (claimed) return;
-    } else if (pet_pressed && (encoder_value == DOWN_ANTICLOCKWISE || encoder_value == UP_CLOCKWISE)) {
-        pet_mode_cycle_background(encoder_value == UP_CLOCKWISE ? 1 : -1);
-        return;
-    } else if (pet_mode_is_active() && (encoder_value == ANTICLOCKWISE || encoder_value == CLOCKWISE)) {
-        pet_mode_adjust_scene(encoder_value == CLOCKWISE ? 1 : -1, true);
-        return;
-    }
-//    printf("encoder_value -> %d\n\r", (ENCODER_EVENT_NUM * 1) + encoder_value + 16);
-    parse_json_value( (ENCODER_EVENT_NUM * 1) + encoder_value + 16);
+    if (handle_small_pet_encoder(encoder_value, 9, &pet_pressed)) return;
+    parse_json_value(ENCODER_EVENT_NUM + encoder_value + 16);
 }
 
 // 编码器 3
