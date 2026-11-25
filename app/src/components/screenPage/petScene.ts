@@ -232,23 +232,6 @@ export function drawNursery(ctx: CanvasRenderingContext2D, hour = 12, minute = 0
   paint(peach, 60, 75, 8, 3)
   pixelCircle(ctx, cream, 64, 73, 2)
 
-  // A wooden moon-and-stars mobile above the nest.
-  paint('#bfa085', 246, 0, 1, 17)
-  paint(honey, 225, 18, 43, 2)
-  paint(honey, 233, 16, 27, 2)
-  paint(honey, 241, 14, 11, 2)
-  for (const [x, y] of [[227, 34], [247, 42], [265, 31]]) {
-    paint('#c3a58e', x, 20, 1, y - 19)
-    if (x === 247) {
-      pixelCircle(ctx, '#e4b769', x, y, 6)
-      pixelCircle(ctx, '#fae6cc', x + 3, y - 2, 5)
-    } else {
-      paint(x === 227 ? peach : mint, x - 1, y - 3, 3, 8)
-      paint(x === 227 ? peach : mint, x - 4, y, 9, 2)
-      paint(x === 227 ? peach : mint, x - 2, y + 2, 5, 1)
-    }
-  }
-
   // Braided oval play mat; the centre is open for the rabbit to roam.
   oval('#ddba9e', 160, 150, 101, 15)
   oval('#92b8ab', 159, 148, 101, 16)
