@@ -313,9 +313,15 @@ export function createPetMcp(enabled: () => boolean = () => true,
     annotations: { readOnlyHint: true }
   }, () => result(async () => {
     const state = await command(commands.state)
-    const availableNow = rabbitOnly ? { actions: state.availableNow.actions, careNote: state.availableNow.careNote } : state.availableNow
-    return { ...state, availableNow, automaticBehaviors: automaticBehaviors(state, rabbitOnly),
-      ...(rabbitOnly ? { reactionBehaviors: automaticBehaviors({ ...state, headPet: null }, true) } : {}) }
+    const allowedNow = rabbitOnly ? { actions: state.availableNow.actions, careNote: state.availableNow.careNote } : state.availableNow
+    const snapshot = { ...state, availableNow: allowedNow, automaticBehaviors: automaticBehaviors(state, rabbitOnly) }
+    if (!rabbitOnly) return snapshot
+    const future = state.bedtime || state.action === 'sleep' ? state : {
+      ...state, action: 'idle' as const, headPet: null, fruit: null, foods: null, queuedFruit: 0,
+      activeToy: null, activeDecoration: null, awaitingPlay: null, toyDropProgress: 100
+    }
+    return { ...snapshot, reactionBehaviors: automaticBehaviors({ ...state, headPet: null }, true),
+      planningBehaviors: automaticBehaviors({ ...future, availableNow: availableNow(future) }, true) }
   }))
 
   server.registerTool('pet_get_events', {

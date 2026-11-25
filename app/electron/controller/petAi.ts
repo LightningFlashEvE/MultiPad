@@ -24,7 +24,8 @@ const stateSchema = z.object({
   scene: z.enum(petScenes).nullable(), bedtime: z.boolean().nullable(),
   headPet: z.object({ remainingMs: z.number().int().min(0).max(1200) }).nullable(),
   automaticBehaviors: z.array(z.enum(playableActions)),
-  reactionBehaviors: z.array(z.enum(playableActions))
+  reactionBehaviors: z.array(z.enum(playableActions)),
+  planningBehaviors: z.array(z.enum(playableActions))
 })
 type RabbitAction = typeof playableActions[number]
 const completionSchema = z.object({
@@ -48,8 +49,8 @@ interface Provider { endpoint: string; model: string; key: string }
 let settingsStore: Store<{ settings: Settings }> | undefined
 const store = () => settingsStore ??= new Store<{ settings: Settings }>({ name: 'pet-ai' })
 const intervalMs = 60_000
-const slotCount = 6
-const slotMs = intervalMs / slotCount
+const maxIdleActions = 8
+const slotMs = 10_000
 const reactionTimeoutMs = 4_000
 const idleTimeoutMs = 8_000
 const defaultUrl = 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1'
@@ -181,6 +182,7 @@ const rabbitRole = '你扮演 MultiPad 键盘上的垂耳兔。选择符合性�
   '避免连续重复同一个动作。rest 表示保留兔子当前活动。不要输出解释。'
 
 const actionTool = 'pet_perform_sequence'
+const idleStepSchema = z.object({ behavior: z.enum([...playableActions, 'rest']) })
 const decisionStepSchema = z.object({
   behavior: z.enum([...playableActions, 'rest']), waitMs: z.literal(0).default(0)
 }).strict()
@@ -191,15 +193,15 @@ async function decide(provider: Provider, observation: object | string, actions:
   const requestSignal = AbortSignal.any([signal, timeout])
   const host = new URL(provider.endpoint).hostname
   const fastQwen = host === new URL(defaultUrl).hostname && tokenPlanModels.some(model => model === provider.model)
-  const count = planning ? slotCount : 1
+  const limit = planning ? maxIdleActions : 1
   const choices = typeof observation === 'string' ? actions : [...actions, 'rest']
   const tools = [{ type: 'function', function: {
     name: actionTool,
     description: planning
-      ? '返回恰好六步，分别对应本分钟的第 0、10、20、30、40、50 秒。每格选一个动作或 rest 留给兔子自然活动。'
+      ? '选 1–8 个动作，按顺序执行。动作间留出自然停顿，可用 rest。无需计算总时长或填写等待时间。'
       : '立即回应主人，选择一个动作。rest 表示保持当前活动。',
     parameters: { type: 'object', additionalProperties: false, required: ['steps'], properties: {
-      steps: { type: 'array', minItems: count, maxItems: count, items: {
+      steps: { type: 'array', minItems: 1, maxItems: limit, items: {
         type: 'object', additionalProperties: false, required: ['behavior'], properties: {
           behavior: { type: 'string', enum: choices },
           waitMs: { type: 'integer', enum: [0] }
@@ -244,8 +246,17 @@ async function decide(provider: Provider, observation: object | string, actions:
   const calls = parsed.data.choices[0].message.tool_calls ?? []
   if (!calls.length) return {}
   if (calls.length > 1) throw Error('模型一次请求了多个动作，本轮已跳过')
-  const plan = z.object({ steps: z.array(decisionStepSchema).length(count) }).strict()
-    .safeParse(JSON.parse(calls[0].function.arguments))
+  const args: unknown = JSON.parse(calls[0].function.arguments)
+  if (planning) {
+    const plan = z.object({ steps: z.array(z.unknown()).min(1) }).safeParse(args)
+    if (!plan.success) throw Error('模型未返回可编排的动作')
+    const steps = plan.data.steps.slice(0, limit).map(input => {
+      const step = idleStepSchema.safeParse(input)
+      return step.success && choices.includes(step.data.behavior) ? step.data.behavior : 'rest' as const
+    })
+    return { steps }
+  }
+  const plan = z.object({ steps: z.tuple([decisionStepSchema]) }).strict().safeParse(args)
   if (!plan.success || plan.data.steps.some(step => !choices.includes(step.behavior))) {
     throw Error('模型返回了不合适的动作或时间安排，本轮已跳过')
   }
@@ -293,13 +304,14 @@ async function run(kind: 'auto' | 'connection' | 'blink', scheduled?: PlannedSte
       const last = previousAction?.session === pet?.session ? previousAction?.action : undefined
       let action: RabbitAction | undefined = scheduled?.action
       let fallback = false
+      let playBy = scheduled ? scheduled.at + slotMs : undefined
       if (!scheduled) {
-        const automatic = (trigger ? pet?.reactionBehaviors : pet?.automaticBehaviors) ?? []
+        const automatic = (planning ? pet?.planningBehaviors : trigger ? pet?.reactionBehaviors : pet?.automaticBehaviors) ?? []
         const alternatives = automatic.filter(candidate => candidate !== last)
         const actions = kind === 'auto' ? (trigger && alternatives.length ? alternatives : automatic) : ['blink'] as const
         if (kind === 'blink' && !automatic.includes('blink')) throw Error('请等兔子空闲时再测试眨眼')
         setStatus({ phase: 'thinking', message: kind === 'connection' ? '正在测试模型工具调用'
-          : trigger ? 'AI 正在回应' + interactionLabel(trigger.events.at(-1)!) : 'AI 正在编排接下来的一分钟' })
+          : trigger ? 'AI 正在回应' + interactionLabel(trigger.events.at(-1)!) : 'AI 正在编排接下来的动作' })
         const request = kind === 'auto' && pet
           ? { personality: saved.personality || defaultRabbitPersonality,
               observation: { stats: pet.stats, action: pet.action, scene: pet.scene, bedtime: pet.bedtime,
@@ -320,12 +332,15 @@ async function run(kind: 'auto' | 'connection' | 'blink', scheduled?: PlannedSte
         }
         if (pet && planning && result.steps) {
           const session = pet.session
+          const playbackStart = Date.now()
+          playBy = playbackStart + slotMs
+          nextIdleAt = Math.max(roundStart + intervalMs, playbackStart + result.steps.length * slotMs)
           idleSteps = result.steps.flatMap((behavior, index) => index > 0 && behavior !== 'rest'
-            ? [{ action: behavior, at: roundStart + index * slotMs, session }] : [])
+            ? [{ action: behavior, at: playbackStart + index * slotMs, session }] : [])
         }
         if (!action) {
           setStatus({ phase: 'idle', message: result.timedOut ? '模型超时，兔子继续当前活动'
-            : planning && result.steps ? '已编排这一分钟，兔子先自由活动' : 'AI 让兔子保持当前状态' })
+            : planning && result.steps ? '已编排下一轮，兔子先自由活动' : 'AI 让兔子保持当前状态' })
           return
         }
       }
@@ -341,8 +356,16 @@ async function run(kind: 'auto' | 'connection' | 'blink', scheduled?: PlannedSte
           if (!stillEnabled() || pet.session !== trigger.session) return
         }
       }
+      if (playBy) {
+        const session = pet.session
+        while (!pet.automaticBehaviors.length && pet.action !== action && Date.now() + 400 < playBy) {
+          await waitFor(400, undefined, { signal: controller.signal })
+          pet = await readState(client)
+          if (!stillEnabled() || pet.session !== session || !pet.active) return
+        }
+      }
       const label = behaviorLabel(action)
-      if (!pet.automaticBehaviors.includes(action) || (planning && Date.now() >= roundStart + slotMs)) {
+      if (!pet.automaticBehaviors.includes(action) || (playBy !== undefined && Date.now() >= playBy)) {
         setStatus({ phase: 'idle', message: '兔子状态已变化，已跳过' + label })
         return
       }
