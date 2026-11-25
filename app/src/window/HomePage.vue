@@ -62,6 +62,7 @@ type ParamPair = [PetParameter, PetParameter]
 const petParameterIds = ref<[ParamPair, ParamPair]>([['satiety','energy'], ['mood','affection']])
 const petImages = ref(['', ''])
 const performanceValues = ref<number[]>([])
+const performancePreview = ref<{ menu: number; values: number[] }>()
 const performanceUnavailable = ref(false)
 const petDialog = ref<HTMLDialogElement>()
 const petScreen = ref(0)
@@ -657,7 +658,16 @@ const firmwareUpdating = ref(false)
 const hasPerformanceScreens = () => configStore.menuConfig.some(menu => menu.screenConfig[0]?.content?.mode === 'performance')
 const hasDynamicScreens = () => appMode.value === 'pet' || configStore.menuConfig.some(menu => menu.screenConfig.some((screen: ScreenFrame) =>
   screen?.content && screen.content.mode !== 'text'))
-const samplePerformance = async () => { performanceValues.value = await win.myApi.pcPerformance().catch(() => []) }
+let previewRequest = 0
+async function refreshPerformancePreview(menu: number) {
+  const request = ++previewRequest
+  const values = await win.myApi.pcPerformancePreview(menu + 1).catch(() => [])
+  if (request === previewRequest) performancePreview.value = { menu, values }
+}
+const samplePerformance = async () => {
+  performanceValues.value = await win.myApi.pcPerformance().catch(() => [])
+  await refreshPerformancePreview(configStore.curMenu)
+}
 let performanceMenu = 0
 const liveScreens = createLiveScreens(menu => appMode.value === 'work' || !petState.value.active
   ? configStore.menuConfig[menu]?.screenConfig
@@ -677,7 +687,10 @@ const liveScreens = createLiveScreens(menu => appMode.value === 'work' || !petSt
     const result = await win.myApi.livePerformance(enabled ? menu + 1 : 0,
       enabled ? [...performanceValues.value] : undefined)
     if (result === 'ready' || result === 'unsupported') performanceUnavailable.value = result === 'unsupported'
-    if (result === 'ready') performanceMenu = enabled ? menu + 1 : 0
+    if (result === 'ready') {
+      performanceMenu = enabled ? menu + 1 : 0
+      if (configStore.curMenu === menu) await refreshPerformancePreview(menu)
+    }
   }, () => appMode.value === 'pet' && petState.value.active)
 const updateFirmware = async () => {
   if (firmwareUpdating.value || progressShow.value) return
@@ -997,7 +1010,7 @@ const showAppInfo = () => {
             <PetDisplay v-if="appMode === 'pet' && index === 0" :state="petState" :connected="petLinked && petState.active" />
             <img v-else-if="appMode === 'pet' && index && petImages[index - 1]" :src="petImages[index - 1]" alt="" />
             <PerformanceDisplay v-else-if="appMode === 'work' && index === 0 && showingPerformance"
-              :values="performanceValues" compact />
+              :values="performancePreview?.menu === configStore.curMenu ? performancePreview.values : performanceValues" />
             <img v-else-if="appMode === 'work' && screenPreviews[index]" :src="screenPreviews[index]" alt="" />
           </span>
           <span>{{ appMode === 'pet' ? (index ? petContent(index - 1).rows.map(row => row.label).join(' · ') : '宠物设置') : (index ? label : showingPerformance ? '彩屏 · 性能监测' : '彩屏 · 图片') }}</span>
