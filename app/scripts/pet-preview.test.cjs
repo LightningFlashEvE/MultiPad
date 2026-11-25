@@ -150,9 +150,9 @@ test('affection stays level during good care and declines after five minutes of 
   assert.equal(state.stats.affection, 34)
 })
 
-test('unattended stats fall together even during sleep, and a head pat restarts the grace period', () => {
+test('unattended stats fall while awake, and a head pat restarts the grace period', () => {
   const {world,state,tick} = preview(100)
-  world.use(3, 2)
+  state.stats.energy = 100
   tick(catalog.petCareGraceMs - 25)
   const before = {...state.stats}
   tick(catalog.petUnattendedDecayMs)
@@ -166,6 +166,20 @@ test('unattended stats fall together even during sleep, and a head pat restarts 
   assert.equal(state.stats.affection, treated.affection)
 })
 
+test('sleep restores one energy point every two seconds from arrival in the hutch', () => {
+  const {world,state,tick} = preview(100)
+  state.stats.energy = 40
+  assert.equal(world.use(3, 2), '')
+  for (let i = 0; state.action !== 2 && i < 200; i++) tick(25)
+  assert.equal(state.action, 2)
+  assert.equal(state.stats.energy, 40)
+  tick(1975)
+  assert.equal(state.stats.energy, 40)
+  tick(25)
+  assert.equal(state.stats.energy, 41)
+  tick(58_000)
+  assert.equal(state.stats.energy, 70)
+})
 test('an awake rabbit naturally daydreams for fifteen seconds and gazes for eight', () => {
   const {world,state,tick} = preview()
   state.stats.energy = 100

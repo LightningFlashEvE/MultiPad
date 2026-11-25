@@ -264,18 +264,33 @@ bool pet_care_set_stat(uint8_t index, uint8_t value) {
     return !dirty;
 }
 
+static void update_energy(uint32_t elapsed_ms, bool sleeping) {
+    if (was_sleeping != sleeping) {
+        energy_ms = 0;
+        was_sleeping = sleeping;
+    }
+    const uint32_t interval = sleeping ? PET_SLEEP_RECOVERY_MS : 60000;
+    energy_ms += elapsed_ms;
+    while (energy_ms >= interval) {
+        energy_ms -= interval;
+        adjust(&pending_stats.energy, sleeping ? 1 : -1);
+    }
+}
+
 void pet_care_tick(uint32_t elapsed_ms, bool sleeping, unsigned exertion, bool unattended) {
     /* Charge time only while this pet is on screen. Separate fatigue progress
      * avoids attributing a whole minute to a sleep entered on its last tick. */
     if (elapsed_ms > 60000) elapsed_ms = 60000;
     if (unattended) {
         if (bond_ms >= 60000u) dirty = true;
-        metabolism_ms = energy_ms = exercise_ms = bond_ms = 0;
+        metabolism_ms = exercise_ms = bond_ms = 0;
+        if (sleeping) update_energy(elapsed_ms, true);
+        else energy_ms = 0;
         unattended_ms += elapsed_ms;
         if (unattended_ms >= PET_UNATTENDED_DECAY_MS) {
             unattended_ms -= PET_UNATTENDED_DECAY_MS;
             adjust(&pending_stats.satiety, -1);
-            adjust(&pending_stats.energy, -1);
+            if (!sleeping) adjust(&pending_stats.energy, -1);
             adjust(&pending_stats.mood, -1);
             adjust(&pending_stats.affection, -1);
         }
@@ -293,16 +308,7 @@ void pet_care_tick(uint32_t elapsed_ms, bool sleeping, unsigned exertion, bool u
         }
         if (bond_ms / 60000u != saved_minutes) dirty = true;
     }
-    if (was_sleeping != sleeping) {
-        energy_ms = 0;
-        was_sleeping = sleeping;
-    }
-    const uint32_t energy_interval = sleeping ? 20000 : 60000;
-    energy_ms += elapsed_ms;
-    while (energy_ms >= energy_interval) {
-        energy_ms -= energy_interval;
-        adjust(&pending_stats.energy, sleeping ? 1 : -1);
-    }
+    update_energy(elapsed_ms, sleeping);
     exercise_ms += elapsed_ms * exertion;
     if (exercise_ms >= 60000u) {
         const int cost = exercise_ms / 60000u;
