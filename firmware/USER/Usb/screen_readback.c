@@ -7,6 +7,7 @@
 #include "pet_care.h"
 #include "usbd_cdc_if.h"
 #include <string.h>
+#include "performance_labels.inc"
 
 enum {
     REQUEST_SIZE = 17,
@@ -49,13 +50,28 @@ static void clear_performance(void) {
     if (!pet_mode_is_active()) restore_menu_color();
 }
 
+static void draw_performance_glyph(uint16_t x, uint16_t y, uint8_t size, const uint32_t *rows,
+                                   uint16_t foreground, uint16_t background) {
+    static uint8_t pixels[24 * 24 * 2];
+    uint8_t *pixel = pixels;
+    for (uint8_t row = 0; row < size; row++) {
+        for (uint8_t col = 0; col < size; col++) {
+            uint16_t color = (rows[row] & (1u << col)) ? foreground : background;
+            *pixel++ = (uint8_t)(color >> 8);
+            *pixel++ = (uint8_t)color;
+        }
+    }
+    lcd_show_pic_index(x, y, size, size, pixels, 0);
+}
+
 static void show_performance(const uint8_t *metrics, bool first) {
-    static const char *labels[] = {"CPU", "MEM", "DISK"};
+    static const uint8_t label_offsets[] = {0, 3, 5, 8};
     static const uint16_t accents[] = {0x5f18, 0x85df, 0xedf0};
     const uint16_t background = 0x1106, panel = 0x1968, track = 0x324c;
     if (first) {
         lcd_fill(0, 0, 320, 172, background, 0);
-        lcd_show_string(14, 10, (const uint8_t *)"PC PERFORMANCE", 0xf7bf, background, 24, 0, 0);
+        for (uint8_t glyph = 0; glyph < sizeof(performance_labels_24) / sizeof(performance_labels_24[0]); glyph++)
+            draw_performance_glyph(14 + glyph * 24, 10, 24, performance_labels_24[glyph], 0xf7bf, background);
     }
     for (uint8_t i = 0; i < 3; i++) {
         const uint16_t y = 43 + 40 * i;
@@ -63,7 +79,9 @@ static void show_performance(const uint8_t *metrics, bool first) {
         if (first) {
             lcd_fill(12, y - 4, 308, y + 30, panel, 0);
             lcd_fill(12, y - 4, 15, y + 30, accent, 0);
-            lcd_show_string(25, y + 5, (const uint8_t *)labels[i], 0xf7bf, panel, 16, 0, 0);
+            for (uint8_t glyph = label_offsets[i]; glyph < label_offsets[i + 1]; glyph++)
+                draw_performance_glyph(25 + (glyph - label_offsets[i]) * 16, y + 5, 16,
+                                       performance_labels_16[glyph], 0xf7bf, panel);
         } else if (last_metrics[i] == metrics[i]) continue;
 
         uint8_t value[8];
