@@ -1,4 +1,4 @@
-const { app, protocol, BrowserWindow, ipcMain, dialog, shell } = require('electron')
+const { app, protocol, BrowserWindow, ipcMain, dialog, shell, screen } = require('electron')
 // 需在当前文件内开头引入 Node.js 的 'path' 模块
 const path = require('path')
 
@@ -15,7 +15,8 @@ import { startPetMcp } from '../controller/petMcp'
 import { isStatCommand, isStatValue, isHeadPetInput, furniturePositionValid, petFurniture, petFruitIds,
   petBuySnackCommand, petLampCommand, petToggleLampCommand } from '../../src/utils/petCatalog'
 import { getPetAiActivity, observePetAiSession, observePetOwnerCommand, getPetAi, savePetAi, startPetAi, stopPetAi, testPetAi } from '../controller/petAi'
-import type { IpcMainInvokeEvent, WebContents } from 'electron'
+import type { BrowserWindow as ElectronWindow, IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron'
+import type { PetSettingsAction, PetSettingsSnapshot } from '../../src/utils/petSettings'
 
 // A detached Windows launcher can close its logging pipes while MultiPad is open.
 for (const stream of [process.stdout, process.stderr]) {
@@ -129,26 +130,99 @@ ipcMain.handle('pet-action', async (event, command, value) => {
   return reply.state === 'ready' ? { ...reply, payload: Uint8Array.from(reply.payload) } : reply
 })
 let mainContents: WebContents | undefined
-function fromHome(event: IpcMainInvokeEvent) {
+function isFromHome(event: IpcMainInvokeEvent | IpcMainEvent) {
   const frame = event.senderFrame
-  if (event.sender !== mainContents || !frame || frame !== event.sender.mainFrame || new URL(frame.url).hash !== '#/home') {
-    throw Error('请在 MultiPad 主窗口使用宠物设置')
+  return event.sender === mainContents && frame && frame === event.sender.mainFrame && new URL(frame.url).hash === '#/home'
+}
+function fromHome(event: IpcMainInvokeEvent | IpcMainEvent) {
+  if (!isFromHome(event)) throw Error('请在 MultiPad 主窗口使用宠物设置')
+}
+
+let petSettingsWindow: ElectronWindow | undefined
+let petSettingsSnapshot: PetSettingsSnapshot | undefined
+let nextSettingsRequest = 0
+const settingsRequests = new Map<number, (result: boolean) => void>()
+
+function fromPetSettings(event: IpcMainInvokeEvent | IpcMainEvent) {
+  const frame = event.senderFrame
+  return Boolean(petSettingsWindow && !petSettingsWindow.isDestroyed() &&
+    event.sender === petSettingsWindow.webContents && frame && frame === event.sender.mainFrame &&
+    new URL(frame.url).hash === '#/pet-settings')
+}
+
+function publishPetSettings() {
+  if (petSettingsWindow && !petSettingsWindow.isDestroyed() && petSettingsSnapshot)
+    petSettingsWindow.webContents.send('pet-settings-snapshot', petSettingsSnapshot)
+}
+
+ipcMain.handle('pet-settings-open', (event: IpcMainInvokeEvent, snapshot: PetSettingsSnapshot) => {
+  fromHome(event)
+  petSettingsSnapshot = snapshot
+  if (petSettingsWindow && !petSettingsWindow.isDestroyed()) {
+    publishPetSettings()
+    if (petSettingsWindow.isMinimized()) petSettingsWindow.restore()
+    petSettingsWindow.focus()
+    return
   }
+  const homeWindow = BrowserWindow.fromWebContents(event.sender)
+  const area = (homeWindow ? screen.getDisplayMatching(homeWindow.getBounds()) : screen.getPrimaryDisplay()).workAreaSize
+  petSettingsWindow = new CreateWindow().createWindow({ route: '/pet-settings' }, {
+    width: Math.min(920, area.width), height: Math.min(710, area.height),
+    minWidth: Math.min(680, area.width), minHeight: Math.min(500, area.height),
+    modal: false, parent: undefined, title: '宠物设置'
+  })
+  petSettingsWindow.once('closed', () => {
+    petSettingsWindow = undefined
+    petSettingsSnapshot = undefined
+    for (const finish of settingsRequests.values()) finish(false)
+    if (mainContents && !mainContents.isDestroyed()) mainContents.send('pet-settings-closed')
+  })
+})
+ipcMain.on('pet-settings-subscribe', (event: IpcMainEvent) => {
+  if (fromPetSettings(event)) publishPetSettings()
+})
+ipcMain.on('pet-settings-update', (event: IpcMainEvent, snapshot: PetSettingsSnapshot) => {
+  if (!isFromHome(event) || !petSettingsWindow) return
+  petSettingsSnapshot = snapshot
+  publishPetSettings()
+})
+ipcMain.handle('pet-settings-action', (event: IpcMainInvokeEvent, action: PetSettingsAction) => {
+  if (!fromPetSettings(event) || !Array.isArray(action) || !mainContents || mainContents.isDestroyed()) return false
+  const owner = mainContents
+  return new Promise<boolean>(resolve => {
+    const id = ++nextSettingsRequest
+    const finish = (result: boolean) => {
+      clearTimeout(timeout)
+      settingsRequests.delete(id)
+      resolve(result)
+    }
+    const timeout = setTimeout(() => finish(false), 10_000)
+    settingsRequests.set(id, finish)
+    owner.send('pet-settings-command', id, action)
+  })
+})
+ipcMain.on('pet-settings-result', (event: IpcMainEvent, id: number, applied: boolean) => {
+  if (!isFromHome(event)) return
+  settingsRequests.get(id)?.(applied === true)
+})
+
+function fromPetAiSettings(event: IpcMainInvokeEvent) {
+  if (!fromPetSettings(event)) fromHome(event)
 }
 ipcMain.handle('pet-ai-activity-get', (event: IpcMainInvokeEvent) => {
   fromHome(event)
   return getPetAiActivity()
 })
 ipcMain.handle('pet-ai-get', (event: IpcMainInvokeEvent) => {
-  fromHome(event)
+  fromPetAiSettings(event)
   return getPetAi()
 })
 ipcMain.handle('pet-ai-save', (event: IpcMainInvokeEvent, settings: unknown) => {
-  fromHome(event)
+  fromPetAiSettings(event)
   return savePetAi(settings)
 })
 ipcMain.handle('pet-ai-test', (event: IpcMainInvokeEvent, kind: unknown) => {
-  fromHome(event)
+  fromPetAiSettings(event)
   if (kind !== 'connection' && kind !== 'blink') throw Error('无效的测试项目')
   return testPetAi(kind)
 })

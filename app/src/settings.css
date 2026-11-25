@@ -13,16 +13,12 @@
   --settings-radius: 8px;
 }
 
-.settings-window,
-.settings-dialog {
+.settings-window {
   font: 14px/1.45 var(--settings-font);
   color: var(--settings-ink);
   background: var(--settings-surface);
   border: 1px solid var(--settings-line);
   border-radius: 14px;
-}
-
-.settings-window {
   position: relative;
   display: flex;
   flex-direction: column;
@@ -68,7 +64,7 @@
 .settings-button:disabled { opacity: .54; cursor: default; }
 .settings-button:enabled:active { transform: scale(.98); }
 
-:is(.settings-dialog, .settings-window) :is(button, input, textarea, select):focus-visible {
+.settings-window :is(button, input, textarea, select):focus-visible {
   outline: 2px solid #427c6a;
   outline-offset: 2px;
 }
