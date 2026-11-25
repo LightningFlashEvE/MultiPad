@@ -49,6 +49,38 @@ function preview(satiety = 65) {
   return { world, state, tick, sleeping: () => bedtime }
 }
 
+test('a slightly late device sample does not rewind the current animation', () => {
+  const t = catalog.createPetActionClock()
+  assert.equal(t(6, 100, false, 1000), 100)
+  assert.equal(t(6, 100, false, 1240), 340)
+  assert.equal(t(6, 327, false, 1240), 340)
+  assert.equal(t(6, 327, false, 1280), 367)
+  assert.equal(t(6, 350, true, 1285), 367)
+  assert.equal(t(6, 350, true, 1350), 367)
+  assert.equal(t(6, 40, false, 1380), 40)
+})
+
+test('running preview follows one direction and slows to a stop at the edge', () => {
+  const { world, state, tick } = preview()
+  assert.equal(world.use(3, 6), '')
+  tick(500)
+  assert.equal(state.facing, 1)
+  const before = state.x
+  let previous = state.x
+  for (let i = 0; state.action === 6 && i < 100; i++) {
+    tick(25)
+    assert(state.x >= previous && state.x <= catalog.petRunMaxX)
+    previous = state.x
+  }
+  assert(state.x > before)
+  assert.equal(state.x, catalog.petRunMaxX)
+  assert.notEqual(state.action, 6)
+  assert.equal(world.use(3, 6), '')
+  tick(150)
+  assert.equal(state.facing, -1)
+  assert(state.x < catalog.petRunMaxX)
+})
+
 test('head strokes overlay bedtime and late detents of the same press earn no extra reward', () => {
   const { world, state, tick, sleeping } = preview(100)
   world.use(3, 2)

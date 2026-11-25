@@ -1,5 +1,6 @@
 import type { PetState } from './petDisplay'
 import { isStatValue, petStats, binkyChance, binkyDuration, binkyMotion, defaultHutchPosition, isHutchPosition, petFurniture,
+  petRunBoundary, petRunDurationMs, petRunFacing, petRunPosition,
   petCareGraceMs, petUnattendedDecayMs, petSleepRecoveryMs, petLampCommand, petToggleLampCommand, petLampIsLit, petDaydreamMs, petGazeOwnerMs, petAutoSleepIdleMs, petAutoSleepEnergy, petRecoveredEnergy } from '../../utils/petCatalog'
 
 export const previewCare = { satiety: 65, energy: 75, mood: 70, affection: 35 }
@@ -174,6 +175,12 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
       pet.facing = danceDirection * motion.facing
       pet.actionAgeMs = age
     } else if (gesture?.action === 13) pet.actionAgeMs = time + 3875 - gesture.until
+    else if (gesture?.action === 6 && !food) {
+      const facing = pet.facing ?? 1
+      pet.x = petRunPosition(pet.x, facing, dt)
+      pet.actionAgeMs = time + petRunDurationMs - gesture.until
+      if (pet.x === petRunBoundary(facing)) gesture = undefined
+    }
     if (gesture && (food || time >= gesture.until)) {
       if (!food && gesture.action === 11) reward(0, -1, -4, 0)
       gesture = undefined
@@ -346,9 +353,13 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
         startActivity(3)
       } else if (value === 2) {
         if (!play?.bedtime) visitHutch(true)
+      } else if (value === 6) {
+        play = undefined
+        pet.facing = petRunFacing(pet.x, pet.facing ?? 1)
+        gesture = { action: 6, until: time + petRunDurationMs }
       } else {
         play = undefined
-        gesture = value === 0 ? undefined : { action: value, until: time + (value === 8 ? petDaydreamMs : value === 12 ? petGazeOwnerMs : value === 17 ? 3000 : value === 16 ? 2500 : value === 13 ? 3875 : value === 7 ? 500 : value === 6 || value === 9 ? 2300 : 2050) }
+        gesture = value === 0 ? undefined : { action: value, until: time + (value === 8 ? petDaydreamMs : value === 12 ? petGazeOwnerMs : value === 17 ? 3000 : value === 16 ? 2500 : value === 13 ? 3875 : value === 7 ? 500 : value === 9 ? 2300 : 2050) }
       }
     }
     lastOwnerInput = lastInput = time

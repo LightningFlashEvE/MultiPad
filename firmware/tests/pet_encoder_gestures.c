@@ -396,6 +396,22 @@ static void small_encoders_keep_work_layers_out_of_pet_mode(void) {
     assert(menu_loads == 1);
 }
 
+static void run_reaches_edge_without_mid_stride_reversal(void) {
+    assert(pet_mode_control(1, 1) == 0);
+    assert(pet_mode_control(3, PET_RUN) == 0);
+    int last = pet_mode_x();
+    for (unsigned i = 0; i < 2400 && pet_mode_action() == PET_RUN; ++i) {
+        advance(1);
+        assert(pet_mode_x() >= last && (pet_mode_room_flags() & 1));
+        last = pet_mode_x();
+    }
+    assert(last == 274 && pet_mode_action() == PET_IDLE);
+    assert(pet_mode_control(3, PET_RUN) == 0);
+    advance(150);
+    assert(pet_mode_action() == PET_RUN && pet_mode_x() < last && !(pet_mode_room_flags() & 1));
+    assert(pet_mode_control(1, 0) == 0);
+}
+
 int main(void) {
     pet_care_init(0); /* In-memory care. Separate NOR tests exercise durable storage. */
     gestures_and_framebuffer();
@@ -477,6 +493,7 @@ int main(void) {
     small_encoders_keep_work_layers_out_of_pet_mode();
     assert(pet_mode_control(1, 1) == 0);
     restore_performance_without_image();
+    run_reaches_edge_without_mid_stride_reversal();
     puts("Pet encoder gesture and performance transition tests passed");
     return 0;
 }

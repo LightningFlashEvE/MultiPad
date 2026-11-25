@@ -22,6 +22,8 @@ enum {
     GROUND = 139,
     WALK_MIN = 46,
     WALK_MAX = 274,
+    RUN_BRAKE_DISTANCE = 24,
+    RUN_DURATION_MS = 2300,
     DIRTY_MARGIN = 38,
     DIRTY_TOP = 73,
     DIRTY_BOTTOM = 147,
@@ -155,6 +157,8 @@ uint8_t pet_mode_events(uint32_t after, PetEvent *out, bool *overrun, bool *more
 }
 
 static void set_action_from(PetAction next, uint32_t now, uint8_t source) {
+    if (next == PET_RUN &&
+        (direction < 0 ? x - WALK_MIN : WALK_MAX - x) <= RUN_BRAKE_DISTANCE) direction = -direction;
     if (next == PET_BINKY) {
         dance_origin = x;
         dance_direction = x < WALK_MIN + 36 ? 1 : x > WALK_MAX - 36 ? -1 : direction;
@@ -835,10 +839,25 @@ static void update_action(uint32_t now, uint32_t step_ms) {
             if (elapsed >= duration) set_action(PET_IDLE, now);
             return;
         }
-        case PET_RUN:
+        case PET_RUN: {
+            const int16_t boundary = direction < 0 ? WALK_MIN : WALK_MAX;
+            const int16_t distance = direction * (boundary - x);
+            if (elapsed >= RUN_DURATION_MS || distance <= 0) {
+                set_action(PET_IDLE, now);
+                return;
+            }
+            const uint8_t speed = distance >= RUN_BRAKE_DISTANCE ? 110 :
+                30 + 80 * distance / RUN_BRAKE_DISTANCE;
+            const int16_t step = walking_step(step_ms, speed);
+            if (direction * step >= distance) {
+                x = boundary;
+                set_action(PET_IDLE, now);
+            } else x += step;
+            return;
+        }
         case PET_FLEE:
             if (elapsed >= 2300) set_action(PET_IDLE, now);
-            else if (action == PET_RUN || elapsed >= 250) move_in_garden(step_ms, action == PET_RUN ? 110 : 145);
+            else if (elapsed >= 250) move_in_garden(step_ms, 145);
             return;
         case PET_IDLE:
         case PET_WALK:
@@ -848,7 +867,11 @@ static void update_action(uint32_t now, uint32_t step_ms) {
     if (pet_care_get()->energy <= AUTO_SLEEP_ENERGY && (!floor->count || !wants_food()) && now - last_input >= SLEEP_AFTER_MS) {
         visit_hutch(true, SOURCE_AUTOMATIC, now);
     } else if (action == PET_IDLE) {
-        if (elapsed >= 1700) set_action(PET_WALK, now);
+        if (elapsed >= 1700) {
+            if (x <= WALK_MIN) direction = 1;
+            else if (x >= WALK_MAX) direction = -1;
+            set_action(PET_WALK, now);
+        }
     } else {
         if (move_in_garden(step_ms, 37) || elapsed >= 3600) {
             /* A short look toward the owner between walks. Most pauses stay idle. */

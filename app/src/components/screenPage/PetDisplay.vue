@@ -5,7 +5,7 @@ import { bitePosition, drawRabbit, drawRabbitHeadPat, rabbitAtlasUrl } from './p
 import { patPhase } from './petHeadPat'
 import itemsUrl from '../../assets/pet/items.png'
 import type { HutchPosition, PetState } from './petDisplay'
-import { binkyMotion, petActions, petFurniture, petLampIsLit, petSceneLabels, petScenes, petWarehouseGeneration,
+import { binkyMotion, createPetActionClock, petActions, petFurniture, petLampIsLit, petRunDurationMs, petRunPosition, petSceneLabels, petScenes, petWarehouseGeneration,
   type PetFurniture, type PetFurnitureId } from '../../utils/petCatalog'
 
 const props = defineProps<{ state: PetState; connected: boolean; editableDecoration?: boolean; decorationBusy?: boolean;
@@ -122,21 +122,23 @@ onMounted(() => {
   const seasonTints = ['#96b86618', '#ffeb6f17', '#da72372b', '#bdddfd3d']
   const atlas = new Image()
   atlas.src = rabbitAtlasUrl
-  let lastAction = -1
   let lastScene = -1
   let lastLighting = -1
-  let actionStart = 0
+  const actionClock = createPetActionClock()
   let lastSample: PetState | undefined
   let lastFoods: PetState['foods']
   let lastDrop: number | undefined
-  let syncAge = -1, syncAt = 0
   let sampleAt = 0
+  let frameAt = 0
+  let runFacing: number | undefined
   let lastPatState: PetState | undefined
   let lastRemaining = 0, lastPatKind = 0
   let patStarted = 0, patUntil = 0
   let x = 128
   let direction = 1
   function frame(now: number) {
+    const frameDuration = frameAt ? Math.min(now - frameAt, 80) : 16
+    frameAt = now
     const { action, x: position, hour, season, scene, activeToy, toyPhase } = props.state
     const { deployedToys, foods, toyDrop } = props.state
     const remaining = props.state.headPatRemaining ?? 0
@@ -187,34 +189,35 @@ onMounted(() => {
     const touched = now < patUntil && props.state.headPatPhase !== undefined
     const clip: PetAction = touched && stateAction !== 'sleep' ? 'idle' : stateAction === 'fetch' ? 'walk' :
       stateAction === 'fall' || stateAction === 'jump' ? 'react' : stateAction
-    const roaming = clip === 'walk' || clip === 'run' || clip === 'flee'
+    const running = clip === 'run'
+    const roaming = clip === 'walk' || clip === 'flee'
     const playingCarrot = activeToy === 2
     const followingFood = !!foods?.length && (stateAction === 'fetch' || stateAction === 'eat')
-    const target = props.connected || followingFood || activeToy === 3 || (props.state.rabbitY ?? 139) < 139 ? position : inHutch ? home.x : playingCarrot ? 151 : roaming ? 160 + Math.sin(now / 1750) * 94 : x
-    if (props.connected && props.state.facing) direction = props.state.facing
+    const wireAge = props.state.actionAgeMs
+    const elapsed = actionClock(action, wireAge, touched, now)
+    const facing = props.state.facing ?? direction
+    const target = running ? (props.connected
+      ? petRunPosition(position, facing, Math.min(now - sampleAt, 180, petRunDurationMs - (wireAge ?? 0)))
+      : position)
+      : props.connected || followingFood || activeToy === 3 || (props.state.rabbitY ?? 139) < 139 ? position
+        : inHutch ? home.x : playingCarrot ? 151 : roaming ? 160 + Math.sin(now / 1750) * 94 : x
+    if ((props.connected || running) && props.state.facing) direction = props.state.facing
     else if (!touched && Math.abs(target - x) > 1) direction = target > x ? 1 : -1
     const eating = foods?.find(food => food.stage === 2)
     if (eating && stateAction === 'eat') {
       x = position
       direction = eating.x >= x ? 1 : -1
     } else if (touched && props.connected) x = position
-    else if (!touched) x += (target - x) * (inHutch && !props.connected ? .055 : .14)
+    else if (running) {
+      const next = x + (target - x) * (1 - Math.exp(-frameDuration / 58))
+      x = runFacing !== facing ? next : facing > 0 ? Math.max(x, next) : Math.min(x, next)
+    } else if (!touched) x += (target - x) * (inHutch && !props.connected ? .055 : .14)
+    runFacing = running ? facing : undefined
     if (activeToy === 3 && toyPhase === 2) { x = position; direction = -1 }
     if (resting) { x = home.x; direction = -1 }
     if (playingCarrot && toyPhase === 2) { x = 151; direction = 1 }
     let rabbitY = resting ? home.y : (props.state.rabbitY ?? 139)
-    const actionChanged = lastAction !== action
-    if (actionChanged) {
-      lastAction = action
-      actionStart = now
-    }
     const shadowY = rabbitY
-    const wireAge = props.state.actionAgeMs
-    if ((wireAge ?? -1) !== syncAge || actionChanged) {
-      syncAge = wireAge ?? -1
-      syncAt = now
-    }
-    const elapsed = wireAge === undefined ? now - actionStart : wireAge + (touched ? 0 : now - syncAt)
     if (stateAction === 'binky' && wireAge !== undefined) {
       const observed = binkyMotion(wireAge), animated = binkyMotion(elapsed)
       const originalFacing = (props.state.facing ?? 1) * observed.facing

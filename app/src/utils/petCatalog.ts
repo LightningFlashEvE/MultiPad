@@ -2,6 +2,41 @@
 export const petCareGraceMs = 300_000
 export const petUnattendedDecayMs = 120_000
 export const petSleepRecoveryMs = 30_000
+export const petRunDurationMs = 2300
+export const petRunMinX = 46
+export const petRunMaxX = 274
+const petRunBrakeDistance = 24
+export const petRunBoundary = (facing: number) => facing < 0 ? petRunMinX : petRunMaxX
+export function petRunFacing(x: number, facing: number) {
+  return Math.abs(petRunBoundary(facing) - x) <= petRunBrakeDistance ? -facing : facing
+}
+export function petRunPosition(x: number, facing: number, elapsedMs: number) {
+  const boundary = petRunBoundary(facing)
+  const distance = Math.abs(boundary - x)
+  const speed = 30 + 80 * Math.min(1, distance / petRunBrakeDistance)
+  return x + facing * Math.min(distance, Math.max(0, elapsedMs) * speed / 1000)
+}
+
+export function createPetActionClock() {
+  let action: number | undefined
+  let wireAge: number | undefined
+  let sampleAt = 0
+  let renderedAge = 0
+  let previousAt = 0
+  return (nextAction: number, nextWireAge: number | undefined, paused: boolean, now: number) => {
+    const restarted = action !== nextAction || (nextWireAge !== undefined && wireAge !== undefined && nextWireAge < wireAge)
+    if (restarted) renderedAge = nextWireAge ?? 0
+    if (restarted || nextWireAge !== wireAge) sampleAt = now
+    if (nextWireAge !== undefined) {
+      if (paused) sampleAt = now
+      renderedAge = Math.max(renderedAge, nextWireAge + (paused ? 0 : now - sampleAt))
+    } else if (!restarted && !paused) renderedAge += now - previousAt
+    previousAt = now
+    action = nextAction
+    wireAge = nextWireAge
+    return renderedAge
+  }
+}
 export const petDaydreamMs = 15_000
 export const petGazeOwnerMs = 8_000
 export const petAutoSleepIdleMs = 45_000

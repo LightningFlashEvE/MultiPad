@@ -34,6 +34,7 @@ const menuStore = useMenuStore()
 const popBoxRef = ref<HTMLElement | null>(null)
 let liveTimer: ReturnType<typeof setInterval> | undefined
 let petTimer: ReturnType<typeof setInterval> | undefined
+let petMotionTimer: ReturnType<typeof setInterval> | undefined
 let petTask: Promise<void> | undefined
 let petSession: string | undefined
 let requestedMode: 'work' | 'pet' | undefined
@@ -669,6 +670,9 @@ onMounted(async () => {
   if (hasPerformanceScreens()) void samplePerformance()
   refreshPetDevice()
   petTimer = setInterval(refreshPetDevice, 700)
+  petMotionTimer = setInterval(() => {
+    if (petLinked.value && petState.value.active && petState.value.action === 6) refreshPetDevice()
+  }, 120)
   window.addEventListener('focus', refreshPetDevice)
   // 主页面监听
   win.myApi.storeChangeListen((objData) => {
@@ -743,6 +747,7 @@ onUnmounted(() => {
   clearTimeout(workSyncTimer)
   workSyncReady = false
   clearInterval(petTimer)
+  clearInterval(petMotionTimer)
   previewWorld.reset()
   clearInterval(screenPoll)
   clearInterval(buttonPoll)
