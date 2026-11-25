@@ -154,14 +154,17 @@ onMounted(() => {
     const inHutch = nursery && activeToy === 1
     const resting = inHutch && toyPhase === 2
     const stateAction = petActions[action] ?? 'idle'
-    const clip: PetAction = stateAction === 'fetch' ? 'walk' :
+    const touched = now < patUntil && props.state.headPatPhase !== undefined
+    const clip: PetAction = touched && stateAction !== 'sleep' ? 'idle' : stateAction === 'fetch' ? 'walk' :
       stateAction === 'fall' || stateAction === 'jump' ? 'react' : stateAction
     const roaming = clip === 'walk' || clip === 'run' || clip === 'flee'
     const playingCarrot = activeToy === 2
     const followingFood = !!foods?.length && (stateAction === 'fetch' || stateAction === 'eat')
     const target = props.connected || followingFood ? position : inHutch ? home.x : playingCarrot ? 151 : roaming ? 160 + Math.sin(now / 1750) * 94 : x
-    if (Math.abs(target - x) > 1) direction = target > x ? 1 : -1
-    x += (target - x) * (inHutch && !props.connected ? .055 : .14)
+    if (props.connected && props.state.facing) direction = props.state.facing
+    else if (!touched && Math.abs(target - x) > 1) direction = target > x ? 1 : -1
+    if (touched && props.connected) x = position
+    else if (!touched) x += (target - x) * (inHutch && !props.connected ? .055 : .14)
     if (resting) { x = home.x; direction = -1 }
     if (playingCarrot && toyPhase === 2) { x = 151; direction = 1 }
     const rabbitY = resting ? home.y : (props.state.rabbitY ?? 139)
@@ -197,7 +200,8 @@ onMounted(() => {
       drawCarrotToy(display!, playingCarrot && toyPhase === 2, elapsed)
       display!.restore()
     }
-    const phase = now < patUntil ? patPhase(now - patStarted, patUntil - now) : undefined
+    const phase = now < patUntil ? (patKind && props.state.headPatPhase !== undefined && patUntil - now > 200
+      ? props.state.headPatPhase : patPhase(now - patStarted, patUntil - now)) : undefined
     const pose = drawRabbit(display!, atlas, Math.round(x), rabbitY, direction, clip, elapsed, phase)
     if (resting) display!.drawImage(hutch, 21, 63, 40, 4, home.x - 20, home.y - 6, 40, 4)
     if (foods && items.complete && items.naturalWidth) {
@@ -215,7 +219,7 @@ onMounted(() => {
     drawPetEffects(display!, Math.round(x), direction, clip, elapsed, true)
     display!.restore()
     if (phase !== undefined && pose !== undefined)
-      drawRabbitHeadPat(display!, Math.round(x), rabbitY, direction, pose, patKind, phase)
+      drawRabbitHeadPat(display!, Math.round(x), rabbitY, direction, pose, touched && patKind ? 1 : patKind, phase)
     drawSceneClock(display!, hour, props.state.minute ?? 0)
     frameId = requestAnimationFrame(frame)
   }

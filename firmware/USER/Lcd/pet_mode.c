@@ -83,7 +83,10 @@ static bool encoder_down, encoder_rotated, encoder_toggled, encoder_claimed, enc
 static uint32_t encoder_since;
 static bool head_pat_active;
 static uint32_t head_pat_started, head_pat_last;
-static uint8_t head_pat_kind;
+static uint8_t head_pat_kind, rub_index;
+static bool hand_on_encoder;
+static bool wants_food(void) { return pet_care_get()->satiety < 90; }
+static bool wants_play(void) { return pet_care_get()->mood < 90 && pet_care_get()->sleepiness < 85; }
 
 static bool manual_idle;
 static PetEvent events[PET_EVENT_CAPACITY];
@@ -272,7 +275,7 @@ static void start_mode(uint32_t now) {
 static void set_mode(bool enabled, uint8_t source, uint32_t now) {
     if (active == enabled) return;
     if (encoder_down && source != SOURCE_PHYSICAL) encoder_cancelled = true;
-    head_pat_active = false;
+    hand_on_encoder = head_pat_active = false;
     record_event(PET_EVENT_MODE, enabled, source, 0);
     live_oled_mode_changed();
     if (enabled) {
@@ -299,14 +302,21 @@ bool pet_mode_is_bedtime(void) { return bedtime; }
 uint8_t pet_mode_season(void) { return season; }
 uint8_t pet_mode_queue_depth(void) { return active ? current_floor()->count - (fruit != 0) : 0; }
 
-uint8_t pet_mode_toy_drop(void) {
-    const PetFloor *floor = current_floor();
+uint8_t pet_mode_room_drop(uint8_t scene) {
+    const PetFloor *floor = &floors[scene];
     const uint32_t elapsed = HAL_GetTick() - floor->toy_dropped_at;
     return !floor->toy_falling || elapsed >= FALL_MS ? 100 : elapsed * 100 / FALL_MS;
 }
 
-uint8_t pet_mode_foods(PetFloorFood *out) {
-    const PetFloor *floor = current_floor();
+uint8_t pet_mode_toy_drop(void) { return pet_mode_room_drop(pet_care_get()->scene); }
+
+uint8_t pet_mode_room_flags(void) {
+    return (direction > 0 ? 1 : 0) | (floors[PET_GARDEN].awaiting_play ? 2 : 0) |
+           (floors[PET_NURSERY].awaiting_play ? 4 : 0);
+}
+
+uint8_t pet_mode_room_foods(uint8_t scene, PetFloorFood *out) {
+    const PetFloor *floor = &floors[scene];
     uint32_t now = HAL_GetTick();
     for (unsigned i = 0; i < floor->count; i++) {
         const FloorFood *food = floor->foods + i;
@@ -318,10 +328,12 @@ uint8_t pet_mode_foods(PetFloorFood *out) {
     }
     return floor->count;
 }
+uint8_t pet_mode_foods(PetFloorFood *out) { return pet_mode_room_foods(pet_care_get()->scene, out); }
 uint8_t pet_mode_active_toy(void) { return active_toy ? active_toy->id : 0; }
 uint8_t pet_mode_toy_phase(void) { return toy_phase; }
 
 static uint16_t head_pat_remaining(uint32_t now) {
+    if (hand_on_encoder) return HEAD_PAT_MS;
     uint32_t since = now - head_pat_last;
     return head_pat_active && since < HEAD_PAT_MS ? HEAD_PAT_MS - since : 0;
 }
@@ -332,12 +344,24 @@ uint8_t pet_mode_head_pat_ticks(uint8_t *kind) {
     return (remaining + 9) / 10;
 }
 
+uint8_t pet_mode_pat_phase(void) {
+    uint32_t now = HAL_GetTick();
+    uint16_t remaining = head_pat_remaining(now);
+    if (!remaining) return 0;
+    if (head_pat_kind && remaining > 200) return 2 + rub_index;
+    return head_pat_phase(now - head_pat_started, remaining);
+}
+
 static void pat_head(uint8_t kind, uint8_t source, bool reward, uint32_t now) {
     if (!head_pat_remaining(now)) {
         head_pat_started = now;
         if (reward) pet_care_adjust(0, 0, 1, 1);
     }
     head_pat_active = true;
+    if (kind) {
+        if (reward) rub_index = 2;
+        rub_index = (rub_index + (kind == 1 ? 1 : 7)) % 8;
+    }
     head_pat_kind = kind;
     last_input = head_pat_last = now;
     record_event(PET_EVENT_HEAD_PETTED, kind, source, 3);
@@ -353,6 +377,10 @@ bool pet_mode_encoder_button(bool down) {
         encoder_claimed = active;
     } else if (encoder_down) {
         encoder_down = false;
+        if (hand_on_encoder) {
+            hand_on_encoder = false;
+            head_pat_last = now - (HEAD_PAT_MS - 200);
+        }
         if (encoder_claimed && active && !encoder_cancelled && !encoder_rotated) {
             if (now - encoder_since >= ENCODER_HOLD_MS) set_mode(false, SOURCE_PHYSICAL, now);
             else if (now - encoder_since >= 40) pat_head(0, SOURCE_PHYSICAL, true, now);
@@ -365,15 +393,17 @@ bool pet_mode_encoder_rotated(bool clockwise, bool pressed_detent) {
     if (!encoder_down) return active && pressed_detent;
     const bool first_detent = !encoder_rotated;
     encoder_rotated = true;
-    if (encoder_claimed && active && !encoder_cancelled)
+    if (encoder_claimed && active && !encoder_cancelled) {
         pat_head(clockwise ? 1 : 2, SOURCE_PHYSICAL, first_detent, HAL_GetTick());
+        hand_on_encoder = true;
+    }
     return encoder_claimed || encoder_cancelled || encoder_toggled;
 }
 
 static bool queue_fruit(uint8_t requested, uint8_t source, uint32_t now) {
     PetFloor *floor = current_floor();
     if (floor->count == PET_FLOOR_CAPACITY) return false;
-    if (bedtime && hungry()) end_toy(true, source, now);
+    if (bedtime && wants_food()) end_toy(true, source, now);
     /* Choose the closest free landing site to the original toss, keeping fruit distinct. */
     const int preferred = x + (requested % 2 ? 77 : -77);
     int best = 0, shortest = LCD_WIDTH * 2;
@@ -461,7 +491,20 @@ uint8_t pet_mode_control(uint8_t opcode, uint8_t value) {
     }
     switch (opcode) {
         case PAT_HEAD:
+            if (value == 5 || value == 6) {
+                if (!hand_on_encoder && head_pat_remaining(now) && head_pat_kind)
+                    head_pat_last = value == 5 ? now - (HEAD_PAT_MS - 200) : now;
+                return OK;
+            }
+            if (value >= 8 && value < 24) {
+                if (!hand_on_encoder) {
+                    pat_head(value < 16 ? 1 : 2, SOURCE_MCP, false, now);
+                    rub_index = value & 7;
+                }
+                return OK;
+            }
             if (value > 4) return INVALID;
+            if (hand_on_encoder) return BUSY;
             pat_head(value > 2 ? value - 2 : value, SOURCE_MCP, value <= 2, now);
             return OK;
         case FEED:
@@ -501,7 +544,7 @@ uint8_t pet_mode_control(uint8_t opcode, uint8_t value) {
         case PLAY_TOY: {
             const PetToy *toy = find_toy(value);
             if (!toy || value == TOY_RABBIT_HUTCH || pet_care_get()->placed[pet_care_get()->scene] != value) return INVALID;
-            if (current_floor()->toy_falling || (current_floor()->count && hungry()) || active_toy) return BUSY;
+            if (current_floor()->toy_falling || (current_floor()->count && wants_food()) || active_toy) return BUSY;
             start_toy(toy, false, SOURCE_MCP, now);
             return OK;
         }
@@ -562,13 +605,18 @@ static bool move_in_garden(uint32_t step_ms, uint8_t speed) {
 static void update_action(uint32_t now, uint32_t step_ms) {
     const uint32_t elapsed = now - action_since;
     PetFloor *floor = current_floor();
-    if (bedtime && hungry() && !floor->count && return_for_garden_food && floors[PET_GARDEN].count) {
+    if (bedtime && wants_food() && !floor->count && return_for_garden_food && floors[PET_GARDEN].count) {
         change_background(PET_GARDEN, SOURCE_AUTOMATIC);
         floor = current_floor();
     }
-    if (bedtime && hungry() && floor->count && floor->foods[0].stage == FOOD_LANDED)
+    if (bedtime && wants_food() && floor->count && floor->foods[0].stage == FOOD_LANDED)
         end_toy(true, SOURCE_AUTOMATIC, now);
     if (active_toy) {
+        if (bedtime && pet_care_get()->sleepiness <= 5) {
+            end_toy(false, SOURCE_AUTOMATIC, now);
+            last_input = now;
+            return;
+        }
         if (toy_phase == TOY_APPROACHING) {
             approach_travel += abs(walking_step(step_ms, 78));
             if (approach_travel >= approach_distance) {
@@ -587,14 +635,14 @@ static void update_action(uint32_t now, uint32_t step_ms) {
         }
         return;
     }
-    if (!fruit && hungry() && floor->count && floor->foods[0].stage == FOOD_LANDED) {
+    if (!fruit && wants_food() && floor->count && floor->foods[0].stage == FOOD_LANDED) {
         fruit = floor->foods[0].id;
         direction = floor->foods[0].x >= x ? 1 : -1;
         walk_remainder = 0;
         set_action(PET_FETCH, now);
         return;
     }
-    if (!fruit && !floor->toy_falling && floor->awaiting_play && !(floor->count && hungry())) {
+    if (!fruit && !floor->toy_falling && floor->awaiting_play && wants_play() && !(floor->count && wants_food())) {
         const PetToy *toy = find_toy(pet_care_get()->placed[pet_care_get()->scene]);
         if (toy) { start_toy(toy, false, floor->toy_source, now); return; }
     }
@@ -654,14 +702,14 @@ static void update_action(uint32_t now, uint32_t step_ms) {
             break;
     }
 
-    if ((!floor->count || !hungry()) && now - last_input >= SLEEP_AFTER_MS) {
+    if (pet_care_get()->sleepiness >= 25 && (!floor->count || !wants_food()) && now - last_input >= SLEEP_AFTER_MS) {
         visit_hutch(true, SOURCE_AUTOMATIC, now);
     } else if (action == PET_IDLE) {
         if (elapsed >= 1700) set_action(PET_WALK, now);
     } else {
         if (move_in_garden(step_ms, 37) || elapsed >= 3600) {
             /* A short look toward the owner between walks. Most pauses stay idle. */
-            set_action(++walk_stops % 4 == 2 ? PET_GAZE_OWNER : PET_IDLE, now);
+            set_action(++walk_stops % 4 == 2 && pet_care_get()->affection < 90 ? PET_GAZE_OWNER : PET_IDLE, now);
         }
     }
 }
@@ -787,8 +835,9 @@ static void begin_frame(uint32_t now) {
     uint16_t remaining = head_pat_remaining(now);
     if (remaining) {
         next.patting = true;
-        next.pat_kind = head_pat_kind;
-        next.pat_phase = head_pat_phase(now - head_pat_started, remaining);
+        next.pat_kind = head_pat_kind ? 1 : 0;
+        if (action != PET_SLEEP) next.sprite = sprite_frame(RABBIT_IDLE, 0);
+        next.pat_phase = pet_mode_pat_phase();
         if (head_pat_contact[next.pat_phase]) next.sprite = head_pat_touch_pose[next.sprite];
     }
     const int min_y = y < frame.y ? y : frame.y;
@@ -1108,7 +1157,8 @@ void pet_mode_poll(void) {
     last_motion = now;
     pet_care_tick(step_ms, action == PET_SLEEP);
     settle_drops(now);
-    update_action(now, step_ms > 60 ? 60 : step_ms);
+    if (head_pat_remaining(now)) action_since += step_ms;
+    else update_action(now, step_ms > 60 ? 60 : step_ms);
     if (frame.row == frame.bottom && (redraw_scene || now - last_frame >= FRAME_MS)) begin_frame(now);
     if (frame.row < frame.bottom) draw_slice();
 }

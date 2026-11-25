@@ -70,7 +70,7 @@ const test = (kind: 'connection' | 'feed') => run(async () => { current.value = 
 
 <template>
   <section class="pet-ai">
-    <p>AI 根据兔子的状态选择动作。开启后每分钟最多决策一次。</p>
+    <p>AI 每轮读取键盘实况和最近事件，可安排最多六步动作。每步执行前都会重新检查兔子的状态。</p>
     <label>API 地址
       <input v-model.trim="apiUrl" type="url" placeholder="https://api.example.com/v1" maxlength="2048" autocomplete="off">
     </label>

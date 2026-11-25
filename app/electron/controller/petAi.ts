@@ -4,13 +4,13 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { setTimeout as delay } from 'node:timers/promises'
 import { z } from 'zod'
-import { createPetMcp } from './petMcp'
+import { createPetMcp, planSteps } from './petMcp'
 import { petCareGuide } from './petCareGuide'
 import { defaultRabbitPersonality, personalityLimit } from '../../src/utils/petPersonality'
-import { petActionLabels, petActions, playableActions, petScenes, petToyIds, petToyPhases, petRoomItems, petFoodStages, petHeadGestures,
+import { petActions, playableActions, petScenes, petToyIds, petToyPhases, petRoomItems, petFoodStages, petHeadGestures,
   petFruitIds as fruits, petFruitLabels as fruitLabel } from '../../src/utils/petCatalog'
 
-const allowedTools = ['pet_play_action', 'pet_feed', 'pet_use_toy', 'pet_place_toy', 'pet_interact_with_toy', 'pet_interact_with_decoration'] as const
+const allowedTools = ['pet_perform_sequence', 'pet_feed'] as const
 const settingsSchema = z.object({
   apiUrl: z.string().trim().min(1).max(2048),
   model: z.string().trim().min(1).max(200),
@@ -28,18 +28,19 @@ const stateSchema = z.object({
   stats: z.object({ satiety: stat, sleepiness: stat, mood: stat, affection: stat }).nullable(),
   scene: z.enum(petScenes).nullable(), activeToy: z.enum(petToyIds).nullable(),
   activeDecoration: z.literal('rabbit_hutch').nullable(), decorationPhase: z.enum(petToyPhases).nullable(),
-  headPet: z.object({ remainingMs: z.number().int().min(0).max(1200), gesture: z.enum(petHeadGestures).nullable() }).nullable(),
+  headPet: z.object({ remainingMs: z.number().int().min(0).max(1200), gesture: z.enum(petHeadGestures).nullable() }).passthrough().nullable(),
   hutchPosition: z.object({ x: z.number(), y: z.number() }).nullable(),
   toyPhase: z.enum(petToyPhases).nullable(), availableToys: z.array(z.enum(petToyIds)),
   deployedToys: z.object({ garden: z.enum(petToyIds).nullable(), nursery: z.enum(petToyIds).nullable() }).nullable(),
   toyDropProgress: z.number().nullable(),
   foods: z.array(z.object({ fruit: z.enum(fruits), x: z.number(), y: z.number(), stage: z.enum(petFoodStages) })).nullable(),
+  automaticBehaviors: z.array(z.string()).optional(),
   availableNow: z.object({
     actions: z.array(z.enum(playableActions)), feed: z.boolean(), placeToys: z.array(z.enum(petToyIds)),
     interactToys: z.array(z.enum(petToyIds)), useToys: z.array(z.enum(petToyIds)),
     visitDecorations: z.array(z.literal('rabbit_hutch')), careNote: z.string()
-  }).optional()
-})
+  }).passthrough().optional()
+}).passthrough()
 type PetState = z.infer<typeof stateSchema>
 const usingToy = (pet: PetState) => !!pet.activeToy || pet.toyPhase === 'using' || pet.toyPhase === 'approaching'
 const hutchPhase = (pet: PetState) => pet.activeDecoration === 'rabbit_hutch' ? pet.decorationPhase :
@@ -47,16 +48,7 @@ const hutchPhase = (pet: PetState) => pet.activeDecoration === 'rabbit_hutch' ? 
 const asleepInHutch = (pet: PetState) => pet.bedtime && hutchPhase(pet) === 'using' && pet.action === 'sleep'
 const busyWithToy = (pet: PetState) => (usingToy(pet) || !!pet.activeDecoration) && !asleepInHutch(pet)
 const hasFood = (pet: PetState) => pet.foods ? pet.foods.length > 0 : !!(pet.fruit || pet.queuedFruit)
-const canAutoFeed = (pet: PetState) => !hasFood(pet) && pet.stats?.satiety !== 100
-const foodInProgress = (pet: PetState) => hasFood(pet) &&
-  (pet.stats?.satiety !== 100 || !pet.foods || pet.foods.some(food => food.stage === 'eating'))
-
-function toyChoice(pet: PetState) {
-  if (!pet.deployedToys || !pet.scene) return { tool: 'pet_use_toy', toys: pet.availableToys } as const
-  const toy = pet.deployedToys[pet.scene]
-  if (!toy) return { tool: 'pet_place_toy', toys: pet.availableToys } as const
-  return { tool: 'pet_interact_with_toy', toys: pet.toyDropProgress === 100 ? [toy] : [] } as const
-}
+const canAutoFeed = (pet: PetState) => !hasFood(pet) && (pet.stats?.satiety ?? 100) < 90
 const eventsSchema = z.object({
   cursor: z.string(), reset: z.boolean(), overrun: z.boolean(), hasMore: z.boolean(),
   events: z.array(z.object({
@@ -66,7 +58,7 @@ const eventsSchema = z.object({
     item: z.string().nullable().optional(), toy: z.enum(petToyIds).nullable().optional(),
     decoration: z.literal('rabbit_hutch').nullable().optional(), interrupted: z.boolean().optional(),
     gesture: z.enum(petHeadGestures).optional(), encoder: z.number().optional()
-  }))
+  }).passthrough())
 })
 const completionSchema = z.object({
   choices: z.array(z.object({
@@ -143,7 +135,8 @@ function providerFor(settings: Settings): Provider {
 }
 
 async function withPetMcp<T>(task: (client: Client) => Promise<T>) {
-  const server = createPetMcp()
+  const started = revision
+  const server = createPetMcp(() => started === revision)
   const client = new Client({ name: 'multipad-pet-ai', version: '1.0.0' })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
   try {
@@ -165,8 +158,9 @@ async function callPet(client: Client, name: string, args: Record<string, unknow
 }
 
 const rabbitRole = [
-  '你通过动作扮演 MultiPad 键盘上的垂耳兔。主人从屏幕观察你的行为。只用本轮提供的工具表达动作，每轮最多调用一次。适合继续当前行为时返回空工具调用，省略文字。',
-  '四项属性均为 0–100。satiety 越低越饿，sleepiness 越高越困，mood 是当下心情，affection 是对主人的好感。根据四项数值、当前活动和最近发生的事一起判断，避免每轮重复同一动作。',
+  '你通过动作扮演 MultiPad 键盘上的垂耳兔。主人从屏幕观察你的行为。用 pet_perform_sequence 安排一到六步动作，每步可设置 waitMs，例如先眨眼，过 500 毫秒再跳。适合继续当前行为时返回空工具调用，省略文字。',
+  '第一步只从 observation.state.automaticBehaviors 选择；若为空或想维持现状，返回空工具调用。后续步骤可预期前序动作的结果。等待时间计在对应动作之前。',
+  '四项属性均为 0–100。satiety 越低越饿，sleepiness 越高越困，mood 是当下心情，affection 是对主人的好感。饱食度达到90停止自动进食，困意至少25才睡，降至5时可以醒来。心情达到90或困意达到85不主动玩玩具，好感达到90不靠凝视刷好感。根据四项数值、当前活动和最近发生的事一起判断，避免每轮重复同一动作。',
   '饥饿且场内没有水果时可投一份。已有水果时等兔子逐份吃，fruit_eaten 才表示吃完。eat 是空口进食动画。清醒且有兴致时可以走动、跳跃、玩胡萝卜或用 gaze_owner 面向主人。',
   'sleep 会回兔窝持续睡觉，兔窝小憩是短休。熟睡且仍困时可以继续睡，休息充分时可用 idle 醒来。胡萝卜玩具和兔窝装饰相互独立，完成玩耍才有属性收益。',
   '观测取自键盘。physical 表示实体操作，automatic 表示固件行为，mcp 可来自软件、外部客户端或你之前的动作。尊重主人刚投放的食物和玩具。字段为 null 或事件不完整时按已知事实行动。',
@@ -176,38 +170,16 @@ const rabbitRole = [
 
 async function decide(provider: Provider, client: Client, observation: string | object, pet?: PetState, personality?: string) {
   const { tools } = await client.listTools()
-  const sleeping = pet && asleepInHutch(pet)
-  const actions = playableActions.filter(action => {
-    if (pet?.availableNow && !pet.availableNow.actions.includes(action)) return false
-    if (sleeping) return action === 'idle'
-    if (pet?.foods && pet.stats?.satiety === 100 && action === 'eat') return false
-    return !!pet?.stats || petActions.indexOf(action) <= petActions.indexOf('blink')
-  })
-  const choice = pet && !sleeping ? toyChoice(pet) : undefined
-  const now = pet?.availableNow
-  const usableToys = choice?.tool === 'pet_place_toy' ? now?.placeToys :
-    choice?.tool === 'pet_interact_with_toy' ? now?.interactToys : now?.useToys
-  const toys = (choice?.toys ?? []).filter(id => !usableToys || usableToys.includes(id))
-  const offered = tools.filter(tool => (tool.name === 'pet_feed' && (!pet || (canAutoFeed(pet) && now?.feed !== false))) ||
-    (tool.name === 'pet_interact_with_decoration' && pet?.hutchPosition && !sleeping && (!now || now.visitDecorations.includes('rabbit_hutch'))) ||
-    (pet && actions.length && tool.name === 'pet_play_action') || (toys.length && tool.name === choice?.tool)).map(tool => {
-    const { $schema: _schema, ...parameters } = tool.inputSchema
-    let description = tool.description
-    if (tool.name === 'pet_play_action') {
-      parameters.properties = { action: { type: 'string', enum: actions,
-        description: actions.map(id => id + '：' + petCareGuide.actions[id]).join('\n') } }
-    } else if (tool.name === choice?.tool) {
-      parameters.properties = { toy: { type: 'string', enum: toys } }
-      if (toys.includes('carrot_toy')) description += ' ' + petCareGuide.interactions.carrot_toy
-    } else if (tool.name === 'pet_feed' && pet?.stats) {
-      description += ' ' + petCareGuide.food.result
-    } else if (tool.name === 'pet_interact_with_decoration') {
-      description += ' 到窝后约 4.5 秒醒来，小憩完成可降低困意并增加心情、好感。'
-    }
-    return { type: 'function', function: { name: tool.name, description, parameters } }
-  })
+  const selected = tools.find(t => t.name === (pet ? 'pet_perform_sequence' : 'pet_feed'))
+  if (!selected) throw Error('缺少宠物动作工具')
+  const { $schema: _schema, ...parameters } = selected.inputSchema
+  const description = pet?.automaticBehaviors
+    ? selected.description + ' 当前第一步可选：' + (pet.automaticBehaviors.join('、') || '无，维持当前状态')
+    : selected.description
+  const offered = [{type: 'function', function: {name: selected.name, description, parameters}}]
+  const timeout = AbortSignal.timeout(75_000)
   const response = await fetch(provider.endpoint, {
-    method: 'POST', redirect: 'error', signal: AbortSignal.timeout(25_000),
+    method: 'POST', redirect: 'error', signal: timeout,
     headers: { Authorization: 'Bearer ' + provider.key, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: provider.model, stream: false, tool_choice: 'auto',
@@ -218,7 +190,7 @@ async function decide(provider: Provider, client: Client, observation: string | 
       ],
       tools: offered
     })
-  }).catch(() => { throw Error('无法连接模型 API，或请求超时') })
+  }).catch(() => { throw Error(timeout.aborted ? '模型在 75 秒内未回复' : '无法连接模型 API，请检查网络或代理') })
   if (!response.ok) {
     await response.body?.cancel().catch(() => {})
     if (response.status === 401 && new URL(provider.endpoint).hostname === new URL(defaultUrl).hostname) {
@@ -237,28 +209,18 @@ async function decide(provider: Provider, client: Client, observation: string | 
   if (call.name === 'pet_feed') {
     return { name: call.name, fruit: z.object({ fruit: z.enum(fruits) }).strict().parse(args).fruit } as const
   }
-  if (call.name === 'pet_interact_with_decoration') {
-    const { decoration } = z.object({ decoration: z.literal('rabbit_hutch') }).strict().parse(args)
-    return { name: call.name, decoration } as const
-  }
-  if (call.name === 'pet_use_toy' || call.name === 'pet_place_toy' || call.name === 'pet_interact_with_toy') {
-    const { toy } = z.object({ toy: z.enum(petToyIds) }).strict().parse(args)
-    if (!toys.includes(toy)) throw Error('模型选择的玩具不在当前场景中')
-    return { name: call.name, toy } as const
-  }
-  const { action } = z.object({ action: z.enum(playableActions) }).strict().parse(args)
-  if (!actions.includes(action)) throw Error('当前固件不支持所选动作')
-  return { name: call.name, action } as const
+  const plan = z.object({ steps: planSteps, session: z.string().optional() }).strict().parse(args)
+  return { name: 'pet_perform_sequence', steps: plan.steps } as const
 }
 
 const readState = async (client: Client) => stateSchema.parse(await callPet(client, 'pet_get_state'))
 const readEvents = async (client: Client, cursor?: string) =>
   eventsSchema.parse(await callPet(client, 'pet_get_events', cursor ? { cursor } : {}))
 
-let observationCursor: string | undefined
+let previousPlan: { session: string; accepted?: unknown; stoppedBefore?: unknown } | undefined
 async function observeRecentEvents(client: Client, session: string) {
   const prefix = session + ':'
-  let cursor = observationCursor?.startsWith(prefix) ? observationCursor : undefined
+  let cursor: string | undefined
   const recent: z.infer<typeof eventsSchema>['events'] = []
   let partial = false
   try {
@@ -267,16 +229,14 @@ async function observeRecentEvents(client: Client, session: string) {
       const page = await readEvents(client, cursor)
       if (!page.cursor.startsWith(prefix) || page.reset) return { partial: true, events: [] }
       partial ||= page.overrun
-      recent.push(...page.events.filter(e => !(e.source === 'automatic' && e.type === 'action_changed' &&
-        (e.action === 'idle' || e.action === 'walk'))))
+      recent.push(...page.events)
       cursor = page.cursor
       if (!page.hasMore) break
       if (pageIndex === 3) partial = true
     }
-    observationCursor = cursor
-    return { partial: partial || recent.length > 12, events: recent.slice(-12) }
+    return { partial, events: recent }
   } catch {
-    return { partial: true, events: recent.slice(-12) }
+    return { partial: true, events: recent }
   }
 }
 
@@ -325,7 +285,7 @@ async function feedAndObserve(client: Client, fruit: typeof fruits[number], expe
           if (event.type === 'fruit_queued') throw Error()
           if (event.type === 'fruit_landed') {
             status = { phase: 'landed', message: label + '已落地，等待兔子取食', fruit }
-            if (receipt.foods && receipt.stats?.satiety === 100) return
+            if (receipt.foods && (receipt.stats?.satiety ?? 0) >= (receipt.generation >= 6 ? 90 : 100)) return
           }
           if (event.type === 'fruit_eaten') {
             status = { phase: 'eaten', message: '兔子已吃完' + label, fruit, sequence: event.sequence, uptimeMs: event.uptimeMs }
@@ -357,20 +317,13 @@ async function run(kind: 'auto' | 'connection' | 'feed') {
         status = { phase: 'idle', message: '等待键盘进入养宠模式' }
         return
       }
-      if (pet && (kind === 'feed' ? hasFood(pet) : foodInProgress(pet))) {
-        if (kind === 'feed') throw Error('已有水果在场景中，等待兔子取食')
-        status = { phase: 'idle', message: '等待兔子取食场景里的水果' }
-        return
-      }
-      if (pet && busyWithToy(pet)) {
-        if (kind === 'feed') throw Error('请等兔子使用完玩具再测试投喂')
-        status = { phase: 'idle', message: '等待兔子使用完玩具' }
-        return
-      }
+      if (kind === 'feed' && pet && (hasFood(pet) || busyWithToy(pet))) throw Error('请等待当前互动结束后再测试投喂')
       status = { phase: 'thinking', message: kind === 'connection' ? '正在测试模型工具调用' : 'AI 正在选择兔子的动作' }
-      const { session: _session, availableNow, ...scene } = pet ?? { session: '', availableNow: undefined }
+      const { session: _session, ...observedState } = pet ?? {}
       const request = kind === 'auto' && pet
-        ? { ...scene, careNote: availableNow?.careNote, recentActivity: await observeRecentEvents(client, pet.session) }
+        ? { state: observedState, recentActivity: await observeRecentEvents(client, pet.session), guide: petCareGuide,
+            catalog: { actions: playableActions, fruits, roomItems: petRoomItems, scenes: petScenes },
+            previousPlan: previousPlan?.session === pet.session ? { accepted: previousPlan.accepted, stoppedBefore: previousPlan.stoppedBefore } : null }
         : '这是 MultiPad 的投喂测试，请调用 pet_feed，参数 fruit 为 apple。'
       if (!stillEnabled()) return
       const decision = await decide(providerFor(saved), client, request, kind === 'auto' ? pet : undefined, saved.personality)
@@ -385,45 +338,13 @@ async function run(kind: 'auto' | 'connection' | 'feed') {
         status = { phase: 'idle', message: '模型连接正常，已验证工具调用' }
       } else if (pet && decision?.name === 'pet_feed') {
         await feedAndObserve(client, decision.fruit, pet.session, stillEnabled, kind === 'auto')
-      } else if (pet && decision) {
-        const fresh = await readState(client)
-        if (fresh.session !== pet.session || !fresh.active || foodInProgress(fresh) || busyWithToy(fresh) ||
-          fresh.scene !== pet.scene || fresh.bedtime !== pet.bedtime || !stillEnabled()) {
-          status = { phase: 'idle', message: '兔子状态已改变，等待下次决策' }
-          return
-        }
-        if (decision.name === 'pet_interact_with_decoration') {
-          if (!fresh.hutchPosition || (fresh.availableNow && !fresh.availableNow.visitDecorations.includes(decision.decoration)))
-            throw Error('兔窝当前无法互动')
-          const receipt = stateSchema.parse(await callPet(client, decision.name, { decoration: decision.decoration }))
-          status = receipt.session === fresh.session && receipt.activeDecoration === decision.decoration
-            ? { phase: 'action', message: 'AI 让兔子去窝里小憩' }
-            : { phase: 'unconfirmed', message: '键盘未确认兔子开始小憩' }
-          return
-        }
-        if (decision.name !== 'pet_play_action') {
-          const choice = toyChoice(fresh)
-          if (decision.name !== choice.tool || !choice.toys.includes(decision.toy)) throw Error('场景中的玩具已改变')
-          const receipt = stateSchema.parse(await callPet(client, decision.name, { toy: decision.toy }))
-          const placing = decision.name === 'pet_place_toy'
-          const accepted = placing ? receipt.scene && receipt.deployedToys?.[receipt.scene] === decision.toy :
-            receipt.activeToy === decision.toy && usingToy(receipt)
-          status = receipt.session === fresh.session && accepted
-            ? { phase: 'action', message: (placing ? 'AI 放下了' : 'AI 让兔子去使用') + petRoomItems.find(toy => toy.id === decision.toy)!.label }
-            : { phase: 'unconfirmed', message: '键盘未确认本次玩具操作' }
-          return
-        }
-        if (fresh.availableNow && !fresh.availableNow.actions.includes(decision.action)) {
-          status = { phase: 'idle', message: '兔子状态已改变，等待下次决策' }
-          return
-        }
-        const receipt = stateSchema.parse(await callPet(client, 'pet_play_action', { action: decision.action }))
-        const headingToBed = decision.action === 'sleep' && receipt.bedtime && hutchPhase(receipt) === 'approaching'
-        if (receipt.session !== fresh.session || (receipt.action !== decision.action && !headingToBed)) {
-          status = { phase: 'unconfirmed', message: '未能确认兔子已开始所选动作' }
-          return
-        }
-        status = { phase: 'action', message: headingToBed ? 'AI 让兔子回窝睡觉' : 'AI 让兔子' + petActionLabels[decision.action] }
+      } else if (pet && decision?.name === 'pet_perform_sequence') {
+        const outcome = z.object({ accepted: z.array(z.string()), stoppedBefore: z.string().optional() })
+          .parse(await callPet(client, decision.name, { steps: decision.steps, session: pet.session }))
+        previousPlan = { session: pet.session, accepted: outcome.accepted, stoppedBefore: outcome.stoppedBefore }
+        const count = Array.isArray(outcome.accepted) ? outcome.accepted.length : 0
+        status = { phase: count ? 'action' : 'idle', message: '键盘已接收 ' + count + ' 步动作' +
+          (outcome.stoppedBefore ? '，当前状态不适合 ' + outcome.stoppedBefore + '，已停止后续步骤' : '') }
       } else {
         status = { phase: 'idle', message: 'AI 让兔子保持当前状态' }
       }

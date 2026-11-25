@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { onBeforeUnmount } from 'vue'
+import { onMounted, onBeforeUnmount } from 'vue'
 
 const emit = defineEmits<{ pat: [gesture: number]; switchMode: [] }>()
 let press: { id: number; started: number; angle?: number; rotation: number; turned: boolean } | undefined
-let lastTurn = 0
-let lastDirection = 0
+let phase = 2
+let heartbeat: number | undefined
 
 function angle(event: PointerEvent) {
   const r = (event.currentTarget as HTMLElement).getBoundingClientRect()
@@ -19,14 +19,16 @@ function down(event: PointerEvent) {
   button.setPointerCapture(event.pointerId)
 }
 
-function turn(direction: 1 | 2) {
+function turn(direction: 1 | 2, steps = 1) {
   if (!press) return
-  const now = performance.now()
-  if (press.turned && direction === lastDirection && now - lastTurn < 90) return
-  emit('pat', press.turned ? direction + 2 : direction)
+  if (!press.turned) {
+    phase = 2
+    emit('pat', direction)
+    heartbeat = window.setInterval(() => emit('pat', 6), 500)
+  }
+  phase = (phase + (direction === 1 ? steps : -steps) % 8 + 8) % 8
+  if (press.turned || steps > 1) emit('pat', (direction === 1 ? 8 : 16) + phase)
   press.turned = true
-  lastTurn = now
-  lastDirection = direction
 }
 
 function move(event: PointerEvent) {
@@ -36,8 +38,9 @@ function move(event: PointerEvent) {
     const delta = next - press.angle
     press.rotation += Math.atan2(Math.sin(delta), Math.cos(delta))
     if (Math.abs(press.rotation) >= Math.PI / 12) {
-      turn(press.rotation > 0 ? 1 : 2)
-      press.rotation = 0
+      const steps = Math.trunc(press.rotation / (Math.PI / 12))
+      turn(steps > 0 ? 1 : 2, Math.abs(steps))
+      press.rotation -= steps * (Math.PI / 12)
     }
   }
   press.angle = next
@@ -54,14 +57,19 @@ function wheel(event: WheelEvent) {
 function up(event: PointerEvent) {
   if (press?.id !== event.pointerId) return
   const { started, turned } = press
-  press = undefined
+  cancel()
   if (turned) return
   if (performance.now() - started >= 1200) emit('switchMode')
   else emit('pat', 0)
 }
 
-function cancel() { press = undefined }
-onBeforeUnmount(cancel)
+function cancel() {
+  if (press?.turned) emit('pat', 5)
+  window.clearInterval(heartbeat)
+  press = undefined
+}
+onMounted(() => window.addEventListener('blur', cancel))
+onBeforeUnmount(() => { window.removeEventListener('blur', cancel); cancel() })
 </script>
 
 <template>

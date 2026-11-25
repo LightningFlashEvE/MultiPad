@@ -123,6 +123,8 @@ function applyPetReply(reply: { session?: string; payload: Uint8Array }) {
     hutchPosition: generation.value >= 4 ? { x: p[decorationOffset] | p[decorationOffset + 1] << 8, y: p[decorationOffset + 2] } : undefined,
     rabbitY: generation.value >= 4 ? p[decorationOffset + 3] : undefined,
     headPatRemaining: generation.value >= 5 ? p[decorationOffset + 4] * 10 : undefined,
+    facing: generation.value >= 6 ? (p[decorationOffset + 7] & 1 ? 1 : -1) : undefined,
+    headPatPhase: generation.value >= 6 ? p[decorationOffset + 6] : undefined,
     headPatKind: generation.value >= 5 ? p[decorationOffset + 5] : undefined,
     deployedToys: world ? [p[29], p[30]] : undefined, toyDrop: world ? p[31] : undefined,
     foods: world ? Array.from({ length: p[32] }, (_, i) => {
@@ -363,18 +365,22 @@ function triggerItem(item: typeof petItems[number]) {
 let keyActions = Promise.resolve()
 let pendingRub: { session?: string; value: number; time: number } | undefined
 function touchRabbit(gesture: number) {
+  if (petLinked.value && generation.value === 5 && gesture > 4) {
+    if (gesture < 8) return
+    gesture = gesture < 16 ? 3 : 4
+  }
   if (petLinked.value && generation.value < 5) {
     interactionNotice.value = '请升级键盘固件以使用摸头动作。'
     return
   }
   // While USB is busy keep only the most recent direction of a continuous rub.
-  if (gesture > 2 && pendingRub && pendingRub.session === petSession) {
+  if (gesture >= 8 && pendingRub && pendingRub.session === petSession) {
     pendingRub.value = gesture
     pendingRub.time = performance.now()
     return
   }
   const request = { session: petSession, value: gesture, time: performance.now() }
-  pendingRub = gesture > 2 ? request : undefined
+  pendingRub = gesture >= 8 ? request : undefined
   keyActions = keyActions.then(async () => {
     if (pendingRub === request) pendingRub = undefined
     if (appMode.value === 'pet' && petSession === request.session && performance.now() - request.time < 1200)
@@ -814,7 +820,10 @@ async function readDeviceButtons() {
     return
   }
 
+  const knobMask = 1 << 10
+  const knobWasHeld = Boolean(heldButtons.value & knobMask)
   heldButtons.value = result.held
+  if (generation.value >= 6 && appMode.value === 'pet' && (knobWasHeld || (result.held & knobMask))) refreshPetDevice()
   for (let index = 0; index < 11; index++) {
     const bit = 1 << index
     if (!(result.pressed & bit)) continue

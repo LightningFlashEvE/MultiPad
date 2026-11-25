@@ -21,6 +21,7 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
   let time = 0
   let lastInput = 0
   let patUntil = 0
+  let rubIndex = 2
   let metabolism = 0
   let fatigue = 0
   let wasSleeping = false
@@ -86,7 +87,14 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
       metabolism %= 60_000
     }
 
-    const hungry = stats.satiety < 100
+    if (pet.headPatRemaining && dt) {
+      if (gesture) gesture.until += dt
+      if (play) { play.walkStart += dt; if (play.usingAt !== undefined) play.usingAt += dt }
+      if (food?.eatingAt !== undefined) food.eatingAt += dt
+      return
+    }
+    const hungry = stats.satiety < 90
+    if (play?.bedtime && stats.sleepiness <= 5) { play = undefined; lastInput = time }
     if (play?.bedtime && hungry && play.gardenFood && !rooms[1].foods.length && rooms[0].foods.length) switchRoom(0)
     let room = rooms[pet.scene]
     const first = room.foods[0]
@@ -99,12 +107,12 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
       if (!food && gesture.action === 12) reward(0, 0, 1, 1)
       gesture = undefined
     }
-    if (!play && room.awaitingPlay && time - room.droppedAt >= fallMs && !food && !(hungry && first)) {
+    if (!play && stats.mood < 90 && stats.sleepiness < 85 && room.awaitingPlay && time - room.droppedAt >= fallMs && !food && !(hungry && first)) {
       room.awaitingPlay = false
       startActivity(2)
       gesture = undefined
     }
-    if (!play && !food && !gesture && (!first || !hungry) && time - lastInput >= 18_000) {
+    if (!play && !food && !gesture && (!first || !hungry) && stats.sleepiness >= 25 && time - lastInput >= 18_000) {
       visitHutch(true)
       room = rooms[pet.scene]
     }
@@ -179,13 +187,21 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     start()
     update()
     const pet = state()
-    const hungry = pet.stats!.satiety < 100
+    const hungry = pet.stats!.satiety < 90
     const room = rooms[pet.scene]
     if (command === 22) {
-      if (value < 0 || value > 4 || !Number.isInteger(value)) return '无法识别摸头手势。'
+      if (value < 0 || value > 23 || value === 7 || !Number.isInteger(value)) return '无法识别摸头手势。'
+      if (value === 5 || value === 6) {
+        if (time < patUntil && pet.headPatKind) patUntil = time + (value === 5 ? 200 : 1200)
+        update()
+        return ''
+      }
       if (value < 3 && time >= patUntil) reward(0, 0, 1, 1)
       patUntil = time + 1200
-      pet.headPatKind = value > 2 ? value - 2 : value
+      pet.headPatKind = value >= 8 ? (value < 16 ? 1 : 2) : value > 2 ? value - 2 : value
+      if (value <= 2) rubIndex = 2
+      rubIndex = value >= 8 ? value % 8 : (rubIndex + (pet.headPatKind === 1 ? 1 : 7)) % 8
+      pet.headPatPhase = 2 + rubIndex
     } else if (command === 2) {
       if (room.foods.length >= 8) return '场内已有八份零食。'
       const preferred = pet.x + (value % 2 ? 77 : -77)

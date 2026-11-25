@@ -26,14 +26,14 @@ const catalog = loadModule('../src/utils/petCatalog.ts')
 const guide = loadModule('../electron/controller/petCareGuide.ts', { [pathToCatalog]: catalog })
 function payload(generation = 4, fields = {}, foodIds = [], headPet = [0, 0]) {
   const endOfFoods = 33 + foodIds.length * 6
-  const p = Buffer.alloc(endOfFoods + 6)
+  const p = Buffer.alloc(endOfFoods + 10)
   p.set([1,0,78,0,0,0,0,0,0,12,1,0,65,24,68,45,1,0,0])
   p[31] = 100
   p[32] = foodIds.length
   foodIds.forEach((id, i) => p.set([id,41+i*34,0,129,0,1],33+i*6))
   p.set([246,0,142,139,...headPet], endOfFoods)
   for (const [i,v] of Object.entries(fields)) p[Number(i)] = v
-  return p.subarray(0, [0, 12, 19, endOfFoods, endOfFoods + 4, p.length][generation])
+  return p.subarray(0, [0, 12, 19, endOfFoods, endOfFoods + 4, endOfFoods + 6, p.length][generation])
 }
 function eventPage(events) {
   const p = Buffer.alloc(1 + events.length * 12)
@@ -50,7 +50,7 @@ test('serial protocol probes with reads, and transmits each supported owner gest
   const { default: ScreenReadback } = loadModule('../electron/controller/screenReadback.ts', {
     [pathToCatalog]: catalog, '../../src/utils/deviceScreenFormat': { DEVICE_SCREEN_SIZES: [] }
   })
-  for (const generation of [1, 2, 3, 4, 5]) {
+  for (const generation of [1, 2, 3, 4, 5, 6]) {
     const writes = []
     const reader = new ScreenReadback(async request => {
       const requested = request.readUInt32LE(6), offset = request.readUInt32LE(11)
@@ -76,12 +76,12 @@ test('serial protocol probes with reads, and transmits each supported owner gest
     try {
       for (const input of [0,1,2,3,4]) {
         const reply = await reader.readPet({ command: 22, value: input })
-        assert.equal(reply.state, generation === 5 ? 'ready' : 'unsupported')
+        assert.equal(reply.state, generation >= 5 ? 'ready' : 'unsupported')
       }
-      assert.deepEqual(writes.filter(p=>!p.offset).map(p=>p.requested), [5,4,3,2].filter(g=>g>=generation))
+      assert.deepEqual(writes.filter(p=>!p.offset).map(p=>p.requested), [6,5,4,3,2].filter(g=>g>=generation))
       const mutations = writes.filter(p=>p.offset).map(p=>p.offset)
-      assert.deepEqual(mutations, generation === 5 ? [0,1,2,3,4].map(v=>22|(v<<8)) : [])
-      if (generation === 5) assert.equal((await reader.readPet({command:22,value:5})).state, 'unavailable')
+      assert.deepEqual(mutations, generation >= 5 ? [0,1,2,3,4].map(v=>22|(v<<8)) : [])
+      if (generation === 5) assert.equal((await reader.readPet({command:22,value:5})).state, 'unsupported')
     } finally {
       reader.close()
     }
@@ -93,6 +93,7 @@ function fixture(t) {
   const board = { payload: payload(), requests: [], events: [], status: 0 }
   const serial = { pet: async request => {
     board.requests.push(request)
+    if (request.command) board.onWrite?.(request)
     const bytes = 'after' in request ? (request.after ? Buffer.from([0]) : eventPage(board.events)) : board.payload
     return { state: 'ready', session, status: board.status, payload: bytes }
   } }
@@ -121,7 +122,7 @@ test('an MCP client discovers the offline care guide and generation-specific act
     f.board.payload = payload(generation)
     const state = await f.call('pet_get_state'), a = state.availableNow
     assert.equal(state.generation, generation)
-    assert.deepEqual(state.headPet, generation >= 5 ? { remainingMs: 0, gesture: null } : null)
+    assert.deepEqual(state.headPet, generation === 6 ? { remainingMs: 0, gesture: null, phase: 0 } : generation >= 5 ? { remainingMs: 0, gesture: null } : null)
     assert.equal(a.actions.includes('gaze_owner'), generation >= 2)
     assert(!a.actions.includes('fetch'));assert(!a.actions.includes('fall'))
     assert.equal(a.placeToys.includes('carrot_toy'), generation >= 3)
@@ -158,7 +159,25 @@ test('live availability follows floor capacity, satiety, rest, toy drop and work
   assert(failed.isError);assert.equal(failed.structuredContent.error.code,'inactive')
 })
 
-test('model sees its personality, limited recent activity and care state without host credentials', async t => {
+test('sixth-generation state reports both rooms without switching rooms', async t => {
+  const f = fixture(t)
+  await f.start()
+  const current = payload(6, { 16: 1 }, [1])
+  const tail = 39
+  current[tail + 7] = 3
+  current[tail + 8] = 72
+  current[tail + 9] = 1
+  f.board.payload = Buffer.concat([current, Buffer.from([2, 180, 0, 129, 0, 1])])
+  const {structuredContent: state} = await f.client.callTool({name:'pet_get_state', arguments:{}})
+  assert.equal(state.facing, 'right')
+  assert.equal(state.foods[0].fruit, 'apple')
+  assert.deepEqual(state.otherRoom, {scene:'garden', toyDropProgress:72,
+    foods:[{fruit:'banana', x:180, y:129, stage:'landed'}]})
+  assert.deepEqual(state.awaitingPlay, {garden:true,nursery:false})
+  assert.equal(catalog.petStateGeneration(f.board.payload.subarray(0,-1)), 0)
+})
+
+test('model sees its personality, the complete available event window and care state without host credentials', async t => {
   const f=fixture(t)
   const saved=new Map()
   class Store { get(key){return saved.get(key)} set(key,value){saved.set(key,value)} }
@@ -171,7 +190,7 @@ test('model sees its personality, limited recent activity and care state without
     setTimeout(fn,ms){if(ms===1500)timer=fn;return 1},clearTimeout(){},
     async fetch(_url,options){
       modelRequest=JSON.parse(options.body)
-      const message=nextTool?{tool_calls:[{type:'function',function:{name:nextTool,arguments:'{"fruit":"apple"}'}}]}:{}
+      const message=nextTool?{tool_calls:[{type:'function',function:{name:nextTool,arguments: nextTool === 'pet_perform_sequence' ? JSON.stringify({steps:[{behavior:'blink'},{behavior:'jump',waitMs:10}]}) : '{"fruit":"apple"}'}}]}:{}
       return new Response(JSON.stringify({choices:[{message}]}))
     }
   })
@@ -186,7 +205,7 @@ test('model sees its personality, limited recent activity and care state without
     ai.savePetAi({...cfg,enabled:true});timer()
     const end=Date.now()+2500
     while(ai.getPetAi().running&&Date.now()<end)await new Promise(r=>setImmediate(r))
-    assert(!ai.getPetAi().running);assert.equal(ai.getPetAi().status.phase,'idle')
+    assert(!ai.getPetAi().running);assert.equal(ai.getPetAi().status.phase,nextTool === 'pet_perform_sequence' ? 'action' : 'idle')
     return JSON.parse(modelRequest.messages[1].content)
   }
   f.board.events=Array.from({length:14},(_,i)=>i%2===0 ? [8,1,1,10] : [2,12,0,0])
@@ -195,25 +214,36 @@ test('model sees its personality, limited recent activity and care state without
   let message=await auto()
   assert.match(modelRequest.messages[0].content,/垂耳兔/)
   assert.equal(message.personality,cfg.personality)
-  assert.equal(message.observation.generation,5)
-  assert.deepEqual(message.observation.headPet,{remainingMs:980,gesture:'ccw'})
-  assert.deepEqual(message.observation.hutchPosition,{x:246,y:142})
-  assert.equal(message.observation.positionY,139)
-  assert.deepEqual(message.observation.foods,[{fruit:'apple',x:41,y:129,stage:'landed'}])
+  assert.equal(message.observation.state.generation,5)
+  assert.deepEqual(message.observation.state.headPet,{remainingMs:980,gesture:'ccw'})
+  assert.deepEqual(message.observation.state.hutchPosition,{x:246,y:142})
+  assert.equal(message.observation.state.positionY,139)
+  assert.deepEqual(message.observation.state.foods,[{fruit:'apple',x:41,y:129,stage:'landed'}])
   const recent=message.observation.recentActivity
-  assert(recent.partial);assert.equal(recent.events.length,12)
+  assert(!recent.partial);assert.equal(recent.events.length,16)
   assert(recent.events.some(e=>e.source==='physical'&&e.key===1&&e.item==='carrot_toy'&&e.toy==='carrot_toy'))
   assert(recent.events.some(e=>e.source==='automatic'&&e.action==='gaze_owner'))
   assert(recent.events.some(e=>e.type==='head_petted'&&e.source==='physical'&&e.gesture==='tap'&&e.encoder===3))
   assert(recent.events.some(e=>e.type==='head_petted'&&e.source==='mcp'&&e.gesture==='ccw'&&e.encoder===3))
   assert(!modelRequest.tools.some(t=>/head|stroke|pat/.test(t.function.name)))
-  assert.match(message.observation.careNote,/吃饱/)
+  assert.match(message.observation.state.availableNow.careNote,/吃饱/)
   assert(!modelRequest.tools.some(t=>t.function.name==='pet_feed'))
-  for(const token of [cfg.apiKey,'localhost',session,'userData','session'])assert(!JSON.stringify(modelRequest.messages).includes(token))
+  for(const token of [cfg.apiKey,'localhost',session,'userData'])assert(!JSON.stringify(modelRequest.messages).includes(token))
   f.board.payload=payload(1)
   message=await auto()
-  assert.equal(message.observation.stats,null);assert.equal(message.observation.recentActivity.events.length,0)
+  assert.equal(message.observation.state.stats,null);assert.equal(message.observation.recentActivity.events.length,16)
   assert(!modelRequest.tools.some(t=>t.function.name.includes('toy')||t.function.name.includes('decoration')))
-  assert(!modelRequest.tools.find(t=>t.function.name==='pet_play_action').function.parameters.properties.action.enum.includes('trip_angry'))
+  assert(modelRequest.tools.some(t=>t.function.name==='pet_perform_sequence'))
+  assert(!message.observation.state.automaticBehaviors.includes('trip_angry'))
   assert(!f.board.requests.some(r=>r.command>0))
+  nextTool='pet_perform_sequence'
+  f.board.payload=payload(6,{12:95,13:0,14:97,15:100})
+  const snapshot=(await auto()).observation.state
+  for (const behavior of ['sleep','visit_hutch','apple','eat','gaze_owner','place_carrot'])
+    assert(!snapshot.automaticBehaviors.includes(behavior))
+  assert(snapshot.keyBindings && snapshot.availableNow.moveDecorations)
+  assert.deepEqual(f.board.requests.filter(r=>r.command>0).map(r=>r.value),[10,7])
+  f.board.onWrite=()=>{f.board.payload=payload(6,{},[],[120,1,4])}
+  await auto()
+  assert.deepEqual(f.board.requests.filter(r=>r.command>0).map(r=>r.value),[10,7,10])
 })

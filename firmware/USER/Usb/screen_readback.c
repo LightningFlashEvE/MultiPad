@@ -94,6 +94,19 @@ static void write_u16(uint8_t *data, uint16_t value) {
     data[1] = (uint8_t)(value >> 8);
 }
 
+static unsigned write_room_foods(uint8_t *out, uint8_t scene) {
+    PetFloorFood foods[PET_FLOOR_CAPACITY];
+    uint8_t count = pet_mode_room_foods(scene, foods);
+    *out++ = count;
+    for (unsigned i = 0; i < count; i++, out += 6) {
+        out[0] = foods[i].id;
+        write_u16(out + 1, (uint16_t)foods[i].x);
+        write_u16(out + 3, (uint16_t)foods[i].y);
+        out[5] = foods[i].stage;
+    }
+    return 1 + 6 * count;
+}
+
 static void write_u32(uint8_t *data, uint32_t value) {
     write_u16(data, (uint16_t)value);
     write_u16(data + 2, (uint16_t)(value >> 16));
@@ -219,7 +232,7 @@ void screen_readback_poll(void) {
         }
     } else if (screen == PET_STATE || screen == PET_CONTROL) {
         const uint8_t command = (uint8_t)offset, value = (uint8_t)(offset >> 8);
-        const bool decor_supported = requested_generation == 4 || requested_generation == 5;
+        const bool decor_supported = requested_generation >= 4 && requested_generation <= 6;
         const bool move_hutch = screen == PET_CONTROL && decor_supported && command == 14;
         if (length || (move_hutch ? offset >> 25 : offset > UINT16_MAX) || (screen == PET_STATE && offset)) {
             status = STATUS_INVALID;
@@ -227,7 +240,7 @@ void screen_readback_poll(void) {
             if (screen == PET_CONTROL && offset) {
                 if (move_hutch) status = pet_mode_move_hutch((offset >> 8) & 511, offset >> 17);
                 else if (!decor_supported && (command == 14 || command == 15)) status = STATUS_INVALID;
-                else if (requested_generation != 5 && command == 22) status = STATUS_INVALID;
+                else if (command == 22 && (requested_generation < 5 || requested_generation > 6 || (requested_generation == 5 && value > 4))) status = STATUS_INVALID;
                 else if (requested_generation <= 3 && value == 1 && (command == 7 || command == 11 || command == 13))
                     status = pet_mode_control(15, 0); /* Former rabbit_hutch toy now visits the decoration. */
                 else status = pet_mode_control(command, value);
@@ -241,7 +254,7 @@ void screen_readback_poll(void) {
             pixels[10] = pet_mode_season();
             pixels[11] = pet_mode_queue_depth();
             length = screen == PET_STATE ? 11 : 12;
-            if (screen == PET_CONTROL && requested_generation >= 2 && requested_generation <= 5) {
+            if (screen == PET_CONTROL && requested_generation >= 2 && requested_generation <= 6) {
                 const PetCare *care = pet_care_get();
                 pixels[12] = care->satiety;
                 pixels[13] = care->sleepiness;
@@ -258,26 +271,23 @@ void screen_readback_poll(void) {
                     pixels[29] = care->placed[PET_GARDEN];
                     pixels[30] = care->placed[PET_NURSERY];
                     pixels[31] = pet_mode_toy_drop();
-                    PetFloorFood foods[PET_FLOOR_CAPACITY];
-                    const uint8_t count = pet_mode_foods(foods);
-                    pixels[32] = count;
-                    for (unsigned i = 0; i < count; i++) {
-                        uint8_t *entry = pixels + 33 + 6 * i;
-                        entry[0] = foods[i].id;
-                        write_u16(entry + 1, (uint16_t)foods[i].x);
-                        write_u16(entry + 3, (uint16_t)foods[i].y);
-                        entry[5] = foods[i].stage;
-                    }
-                    length = 33 + 6 * count;
+                    length = 32 + write_room_foods(pixels + 32, care->scene);
                     if (decor_supported) {
                         write_u16(pixels + length, care->hutch_x);
                         pixels[length + 2] = care->hutch_y;
                         pixels[length + 3] = pet_mode_y();
                         length += 4;
                     }
-                    if (requested_generation == 5) {
+                    if (requested_generation >= 5) {
                         pixels[length] = pet_mode_head_pat_ticks(pixels + length + 1);
                         length += 2;
+                        if (requested_generation == 6) {
+                            uint8_t other = care->scene == PET_GARDEN ? PET_NURSERY : PET_GARDEN;
+                            pixels[length++] = pet_mode_pat_phase();
+                            pixels[length++] = pet_mode_room_flags();
+                            pixels[length++] = pet_mode_room_drop(other);
+                            length += write_room_foods(pixels + length, other);
+                        }
                     }
                 }
             }

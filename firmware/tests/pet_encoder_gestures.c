@@ -83,8 +83,14 @@ static void gestures_and_framebuffer(void) {
     assert(memcmp(lcd, before, sizeof(lcd)) == 0); /* Entire overlay cleared. */
     scan(true, 0); advance(1500); assert(pet_mode_is_active());
     scan(true, 124); expect_pat(2, 1, 1); expect_reaction(120, 1);
-    advance(110); scan(true, 4); expect_pat(3, 2, 1);
-    advance(1250); encoder3_callback(CLOCKWISE); /* Ordinary direction reported during an owned press. */
+    unsigned phase = pet_mode_pat_phase();
+    int held_x = pet_mode_x();
+    advance(110);
+    assert(pet_mode_pat_phase() == phase && pet_mode_x() == held_x);
+    scan(true, 4);
+    assert(pet_mode_pat_phase() != phase); expect_pat(3, 2, 1);
+    unsigned reversed = pet_mode_pat_phase();
+    advance(1250); assert(pet_mode_pat_phase() == reversed && pet_mode_x() == held_x); encoder3_callback(CLOCKWISE); /* Ordinary direction reported during an owned press. */
     expect_pat(4, 1, 1); expect_reaction(120, 1);
     scan(false, 0); expect_pat(4, 1, 1);
     assert(care->affection == 37 && macros == 0 && pet_mode_is_active());
@@ -106,13 +112,13 @@ static void concurrent_activities(void) {
     assert(pet_mode_is_bedtime() && pet_mode_action() == PET_SLEEP);
     advance(1350); assert(pet_mode_control(22, 4) == 0); expect_pat(6, 2, 2);
     assert(pet_care_get()->mood == mood + 1 && pet_care_get()->satiety == satiety);
-    assert(pet_mode_control(22, 5) == 3); expect_pat(6, 2, 2);
+    assert(pet_mode_control(22, 5) == 0); expect_pat(6, 2, 2);
     assert(pet_mode_control(2, 1) == 0);
     for (unsigned i = 0; i < 5000 && pet_mode_action() != PET_EAT; i++) advance(1);
     assert(pet_mode_action() == PET_EAT && pet_mode_fruit() == 1);
     scan(true, 4); scan(false, 0); expect_pat(7, 2, 1);
     assert(pet_mode_action() == PET_EAT && pet_mode_fruit() == 1);
-    advance(1000); assert(pet_care_get()->satiety == satiety + 12);
+    advance(1200); assert(pet_care_get()->satiety == satiety + 12);
     assert(pet_mode_control(7, 2) == 0);
     for (unsigned i = 0; i < 5000 && pet_mode_toy_phase() != 2; i++) advance(1);
     assert(pet_mode_active_toy() == 2 && pet_mode_toy_phase() == 2);

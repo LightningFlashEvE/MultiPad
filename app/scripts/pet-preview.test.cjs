@@ -61,6 +61,27 @@ test('head strokes overlay bedtime and late detents of the same press earn no ex
   assert.equal(state.stats.satiety, 100)
 })
 
+test('an alert rabbit stays awake and a held stroke freezes its route to the hutch', () => {
+  const {world, state, tick, sleeping} = preview()
+  state.stats.sleepiness = 0
+  tick(21000)
+  assert(!sleeping())
+  state.stats.sleepiness = 26
+  world.use(3,2)
+  tick(275)
+  world.use(22,1)
+  const x = state.x
+  const phase = state.headPatPhase
+  tick(450)
+  assert.equal(state.x,x)
+  assert.equal(state.headPatPhase,phase)
+  world.use(22,12)
+  assert.equal(state.headPatPhase,6)
+  world.use(22,5)
+  tick(550)
+  assert.notEqual(state.x,x)
+})
+
 test('each snack lands independently and surplus food waits until the rabbit is hungry', () => {
   const { world, state, tick } = preview()
   for (const id of [1, 1, 2, 3]) world.use(2, id)
@@ -73,10 +94,15 @@ test('each snack lands independently and surplus food waits until the rabbit is 
   assert.equal(state.stats.affection, 41)
   assert.equal(state.foods.length, 1)
   assert.equal(state.foods[0].stage, 1)
-  // It naps in the nursery, then returns to the garden for the fourth snack.
+  // Near-full rabbits leave surplus food on the ground.
+  state.stats.sleepiness = 0
   tick(60000)
   assert.equal(state.scene, 0)
-  assert.equal(state.stats.satiety, 100)
+  assert.equal(state.stats.satiety, 99)
+  assert.equal(state.stats.affection, 41)
+  assert.equal(state.foods.length, 1)
+  state.stats.satiety = 89
+  tick(4000)
   assert.equal(state.stats.affection, 43)
   assert.equal(state.foods.length, 0)
 })
@@ -92,6 +118,9 @@ test('a full rabbit stays asleep with food nearby and wakes when hungry', () => 
   assert.ok(sleeping())
   assert.equal(state.foods[0].stage, 1)
   tick(60000)
+  assert.equal(state.foods.length, 1)
+  state.stats.satiety = 89
+  tick(4000)
   assert.equal(state.foods.length, 0)
   assert.equal(state.stats.satiety, 100)
   assert.ok(!sleeping())

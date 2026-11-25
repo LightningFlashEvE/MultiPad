@@ -157,7 +157,7 @@ export default class ScreenReadback {
       if (this.petGeneration === undefined) {
         // Older boards answer an unknown generation with the 12-byte layout.
         // Try each known generation with reads before sending any mutation.
-        let requested = 5
+        let requested = 6
         let probe = await this.petExchange(PET_CONTROL, requested, 0)
         while (probe.state === 'ready' && probe.status === STATUS_OK && probe.payload.length === 12 && requested > 2) {
           probe = await this.petExchange(PET_CONTROL, --requested, 0)
@@ -169,7 +169,7 @@ export default class ScreenReadback {
         if (!request.command) return probe
       }
       const { command, value } = request
-      if ((this.petGeneration < 5 && command === 22) || (this.petGeneration < 4 && command >= 14) ||
+      if ((this.petGeneration < 6 && command === 22 && value > 4) || (this.petGeneration < 5 && command === 22) || (this.petGeneration < 4 && command >= 14) ||
           (this.petGeneration < 3 && (command >= 8 || (command === 7 && value > 1)))) {
         return { state: 'unsupported' }
       }

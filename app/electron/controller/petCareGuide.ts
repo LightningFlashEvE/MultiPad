@@ -1,7 +1,7 @@
 import { hutchBounds, petFruitLabels, petScenes } from '../../src/utils/petCatalog'
 
 export const petServerInstructions = '你控制的是实体键盘上的宠物兔。先读 pet_get_care_guide 了解动作和属性，再读 pet_get_state。' +
-  '依据 availableNow 选择当前可执行的操作。按钮和兔子的自主行为也会改变状态。工作模式是否切换由主人决定。' +
+  '自主活动时按 automaticBehaviors 选择行为，用 pet_perform_sequence 编排顺序与等待。availableNow 记录设备当前支持的操作。按钮和兔子的自主行为也会改变状态。工作模式是否切换由主人决定。' +
   '在取食、靠近玩具或回窝时可以等待。为确认一次操作，事先读取 pet_get_events 至 hasMore=false 并保存 cursor，' +
   '再执行一次操作，用该游标读取后续事件。没有收到写入回执时先确认状态或事件，避免重复投喂或收回刚放好的玩具。'
 
@@ -34,7 +34,7 @@ export const petCareGuide = {
     headPet: '第 5 代起，主人轻按大旋钮或按住后转过一格可以摸兔子的头，桌面的大旋钮也能模拟。' +
       '每次轻按和每个有效转格产生 head_petted，gesture 依次用 tap、cw（顺时针）、ccw（逆时针）表示。' +
       '一次抚摸的心情和好感各 +1，最高 100。1.2 秒内继续摸会延长动画。一次按住只奖励一次，停顿后继续转仍属同一次。' +
-      '抚摸期间兔子继续原先的睡眠、进食或玩耍。headPet.remainingMs 表示剩余动画时长。',
+      '第六代会暂停当前动作，手随转格移动，停转即停，松手后继续活动。headPet.remainingMs 表示剩余动画时长。',
     carrot_toy: '第 3 代起两个场景各有一个玩具位。pet_place_toy 幂等放置，落地后兔子有空就去玩，玩完留在原处。' +
       'pet_interact_with_toy 可再玩一次，pet_use_toy 会切换放下或收回。走到玩具旁后玩约 2.4 秒，' +
       '自然结束时困意 +2、心情 +6、好感 +2。玩具期间的 eat 动作没有吃下水果。',
@@ -45,7 +45,7 @@ export const petCareGuide = {
   },
   scenes: {
     ids: petScenes, garden: '花园', nursery: '宝宝房',
-    scope: 'foods 与 toyDropProgress 描述当前场景。deployedToys 记录每个场景的玩具。' +
+    scope: 'foods 与 toyDropProgress 描述当前场景。deployedToys 记录两个场景的玩具。第六代还通过 otherRoom 提供另一场景的食物和玩具落地进度，awaitingPlay 表示是否等待自动互动。' +
       '第 3 代起切换场景会打断当前互动，留下该场景的水果和玩具。切换到宝宝房时花园地上的水果仍可能存在。'
   },
   compatibility: {
@@ -53,10 +53,11 @@ export const petCareGuide = {
     2: '增加四项属性、trip_angry、gaze_owner 和场景；宝宝房兔窝通过 pet_use_toy 短暂互动。',
     3: '增加多份地面食物、玩具放置和重玩、回窝长睡、跟随时间与按键绑定。此代兔窝仍占用宝宝房玩具位。',
     4: '兔窝成为独立可移动装饰。使用 activeDecoration、decorationPhase 和 hutchPosition 读取回窝状态。',
+    6: '摸头期间兔子停在原地，转动决定手的位置和速度；饱食度达到90时留食，困意至少25才主动睡，降到5时结束长睡。',
     5: '可通过 headPet 和 head_petted 观察主人摸头。事件 source 为 physical 时来自键盘旋钮，mcp 表示软件操作。'
   },
   observation: {
-    inputs: { actions: 'pet_play_action(action)', feed: 'pet_feed(fruit)', useToys: 'pet_use_toy(toy)',
+    inputs: { sequence: 'pet_perform_sequence(steps)，每步包含 behavior 和 waitMs。automaticBehaviors 列出当前符合需求的行为。', actions: 'pet_play_action(action)', feed: 'pet_feed(fruit)', useToys: 'pet_use_toy(toy)',
       placeToys: 'pet_place_toy(toy)', interactToys: 'pet_interact_with_toy(toy)',
       visitDecorations: 'pet_interact_with_decoration(decoration)', moveDecorations: 'pet_move_decoration(decoration,x,y)',
       scenes: 'pet_set_scene(scene)', setHour: 'pet_set_time(hour)', setSeason: 'pet_set_season(season)', setMode: 'pet_set_mode(enabled)' },

@@ -58,6 +58,13 @@ function decodeState(payload: Buffer, session?: string) {
   const visitingHutch = generation >= 4 && payload[17] === 1
   const endOfFoods = generation >= 3 ? 33 + 6 * payload[32] : 0
   const phase = extended ? petToyPhases[payload[18]] : null
+  const readFoods = (offset: number) => Array.from({ length: payload[offset] }, (_, index) => {
+    const i = offset + 1 + index * 6
+    return { fruit: fruits[payload[i] - 1], x: payload.readUInt16LE(i + 1),
+      y: payload.readInt16LE(i + 3), stage: petFoodStages[payload[i + 5]] }
+  })
+  const other = scene === 'garden' ? 'nursery' : 'garden'
+  const flags = payload[endOfFoods + 7]
   return {
     session,
     generation,
@@ -78,7 +85,11 @@ function decodeState(payload: Buffer, session?: string) {
     activeDecoration: visitingHutch ? 'rabbit_hutch' : null,
     decorationPhase: generation >= 4 ? (visitingHutch ? phase : 'idle') : null,
     hutchPosition: generation >= 4 ? { x: payload.readUInt16LE(endOfFoods), y: payload[endOfFoods + 2] } : null,
+    facing: generation >= 6 ? (flags & 1 ? 'right' : 'left') : null,
+    otherRoom: generation >= 6 ? { scene: other, foods: readFoods(endOfFoods + 9), toyDropProgress: payload[endOfFoods + 8] } : null,
+    awaitingPlay: generation >= 6 ? { garden: Boolean(flags & 2), nursery: Boolean(flags & 4) } : null,
     headPet: generation >= 5 ? { remainingMs: payload[endOfFoods + 4] * 10,
+      ...(generation >= 6 ? { phase: payload[endOfFoods + 6] } : {}),
       gesture: payload[endOfFoods + 4] ? petHeadGestures[payload[endOfFoods + 5]] : null } : null,
     availableToys: toysForScene(scene, generation).map(toy => toy.id),
     keyBindings: generation >= 3 ? Array.from(payload.subarray(19, 27), slot =>
@@ -87,15 +98,15 @@ function decodeState(payload: Buffer, session?: string) {
     bedtime: generation >= 3 ? Boolean(payload[27] & 2) : null,
     deployedToys: generation >= 3 ? { garden: toyForWireId(payload[29]), nursery: toyForWireId(payload[30]) } : null,
     toyDropProgress: generation >= 3 ? payload[31] : null,
-    foods: generation >= 3 ? Array.from({ length: payload[32] }, (_, index) => {
-      const i = 33 + index * 6
-      return { fruit: fruits[payload[i] - 1], x: payload.readUInt16LE(i + 1),
-        y: payload.readInt16LE(i + 3), stage: petFoodStages[payload[i + 5]] }
-    }) : null
+    foods: generation >= 3 ? readFoods(32) : null
   }
 }
 
 type State = ReturnType<typeof decodeState>
+
+function leavesFoodOnGround(state: State) {
+  return (state.stats?.satiety ?? 0) >= (state.generation >= 6 ? 90 : 100)
+}
 
 function careNote(state: State) {
   if (!state.active) return '键盘在工作模式，等待主人进入养宠模式。'
@@ -104,7 +115,7 @@ function careNote(state: State) {
     ? '兔子正在窝里长睡。可以继续休息，或用 idle 叫醒。'
     : '兔子正在走回窝里睡觉。等到 using，再看困意。'
   if (state.activeToy || state.activeDecoration) return '兔子正在靠近或使用道具。等 finished 事件，就能判断互动是否自然结束。'
-  if (state.generation >= 3 && state.stats?.satiety === 100) return '兔子吃饱了。已经落地的食物会留到下次饿时再吃。'
+  if (state.generation >= 3 && leavesFoodOnGround(state)) return '兔子吃饱了。已经落地的食物会留到下次饿时再吃。'
   if (state.foods?.length || state.queuedFruit) return '已有水果，接下来会落地或取食。'
   if (state.toyDropProgress !== null && state.toyDropProgress < 100) return '玩具正在落下，等到进度 100 后兔子可以靠近。'
   return '可以选一个动作，也可以让兔子继续当前活动。'
@@ -130,7 +141,7 @@ function availableNow(state: State) {
     foodSlots: active ? foodSlots : 0,
     useToys: active && !legacyBusy ? availableToys : [],
     placeToys: active && floor ? availableToys.filter(toy => !deployed || toy === deployed) : [],
-    interactToys: active && deployed && !occupied && state.toyDropProgress === 100 && (!state.foods?.length || full)
+    interactToys: active && deployed && !occupied && state.toyDropProgress === 100 && (!state.foods?.length || leavesFoodOnGround(state))
       ? [deployed] : [],
     visitDecorations: active && generation >= 4 && !fruit ? ['rabbit_hutch'] : [],
     moveDecorations: active && generation >= 4 ? ['rabbit_hutch'] : [],
@@ -140,8 +151,8 @@ function availableNow(state: State) {
   }
 }
 
-async function command(command: number, value = 0) {
-  const { payload, session } = await requestDevice({ command, value })
+async function command(command: number, value = 0, expectedSession?: string) {
+  const { payload, session } = await requestDevice({ command, value }, expectedSession)
   const state = decodeState(payload, session)
   return { ...state, availableNow: availableNow(state) }
 }
@@ -206,8 +217,70 @@ async function result(run: () => Promise<Record<string, unknown>>) {
   }
 }
 
-export function createPetMcp() {
+const behaviors = [...playableActions, ...fruits, ...petScenes, 'place_carrot', 'play_carrot', 'visit_hutch'] as const
+export const planSteps = z.array(z.object({
+  behavior: z.enum(behaviors),
+  waitMs: z.number().int().min(0).max(8000).default(0).describe('执行此步之前等待的毫秒数')
+}).strict()).min(1).max(6)
+
+function automaticBehaviors(s: Awaited<ReturnType<typeof command>>) {
+  if (!s.active || s.headPet?.remainingMs || s.fruit || s.foods?.some(f => f.stage === 'eating')) return []
+  const a = s.availableNow, stats = s.stats
+  if ((s.activeDecoration || s.activeToy) && !(s.bedtime && s.action === 'sleep')) return []
+  const canEat = !!stats && stats.satiety < 90
+  const canSleep = !!stats && stats.sleepiness >= 25
+  const canPlay = !!stats && stats.mood < 90 && stats.sleepiness < 85
+  if (canEat && (s.foods?.length || s.queuedFruit)) return []
+  return behaviors.filter(b => {
+    if (s.bedtime && s.action === 'sleep') return b === 'idle' && (stats?.sleepiness ?? 0) <= 5
+    if (fruits.some(f => f === b)) return canEat && a.feed && !s.foods?.length && !s.queuedFruit
+    if (b === 'place_carrot') return canPlay && a.placeToys.includes('carrot_toy') && s.scene && !s.deployedToys?.[s.scene]
+    if (b === 'play_carrot') return canPlay && a.interactToys.includes('carrot_toy')
+    if (b === 'visit_hutch') return canSleep && a.visitDecorations.length > 0
+    if (b === 'garden' || b === 'nursery') return s.scene !== b && a.scenes.includes(b)
+    if (b === 'eat' && !canEat || b === 'sleep' && !canSleep || b === 'gaze_owner' && (stats?.affection ?? 100) >= 90) return false
+    return a.actions.some(action => action === b)
+  })
+}
+
+function behaviorCommand(b: typeof behaviors[number]): [number, number] {
+  const fruit = fruits.findIndex(f => f === b)
+  if (fruit >= 0) return [commands.feed, fruit + 1]
+  if (b === 'place_carrot' || b === 'play_carrot') return [b === 'place_carrot' ? commands.placeToy : commands.interactToy, 2]
+  if (b === 'visit_hutch') return [commands.visitHutch, 0]
+  if (b === 'garden' || b === 'nursery') return [commands.scene, petScenes.indexOf(b)]
+  return [commands.action, petActions.findIndex(action => action === b)]
+}
+
+let planRunning = false
+export function createPetMcp(enabled: () => boolean = () => true) {
   const server = new McpServer({ name: 'multipad-pet', version: '1.4.0' }, { instructions: petServerInstructions })
+  server.registerTool('pet_perform_sequence', {
+    description: '按顺序安排 1–6 步身体动作、投喂（水果名）、场景、玩具或回窝。waitMs 是每步发出前的等待。每步读取真机，需求已满足、被摸头、设备忙或会话改变即停止。accepted 是已接收的步骤，实际完成看事件。',
+    inputSchema: { steps: planSteps, session: z.string().optional().describe('使用这次观察到的设备会话') }
+  }, ({steps, session}, extra) => result(async () => {
+    if (planRunning) throw Error('上一段动作尚未结束')
+    planRunning = true
+    const accepted: string[] = []
+    try {
+      let state = await command(commands.state)
+      const expected = session ?? state.session
+      for (const step of steps) {
+        if (step.waitMs) await new Promise(resolve => setTimeout(resolve, step.waitMs))
+        state = await command(commands.state)
+        if (!enabled() || extra.signal.aborted || state.session !== expected || !automaticBehaviors(state).includes(step.behavior))
+          return { accepted, stoppedBefore: step.behavior, state }
+        const [opcode, value] = behaviorCommand(step.behavior)
+        try {
+          state = await command(opcode, value, expected)
+        } catch (error) {
+          return { accepted, stoppedBefore: step.behavior, reason: error instanceof Error ? error.message : '设备未确认此步' }
+        }
+        accepted.push(step.behavior)
+      }
+      return { accepted, state }
+    } finally { planRunning = false }
+  }))
   server.registerTool('pet_get_care_guide', {
     description: '查阅固件照料手册，包括属性方向、各种动作的时长和效果、投喂、玩具、兔窝、场景和事件。无需连接键盘。',
     annotations: { readOnlyHint: true }
@@ -216,7 +289,10 @@ export function createPetMcp() {
     description: '读取键盘实况。availableNow 给出此刻可选的动作、道具和操作，generation 表示固件能力。' +
       '结合动作、属性、食物阶段、玩具和装饰互动进度决定行动或等待。旧固件缺少的扩展字段为 null。',
     annotations: { readOnlyHint: true }
-  }, () => result(() => command(commands.state)))
+  }, () => result(async () => {
+    const state = await command(commands.state)
+    return { ...state, automaticBehaviors: automaticBehaviors(state) }
+  }))
 
   server.registerTool('pet_set_mode', {
     description: '进入桌宠模式，或者退出并恢复当前层的彩屏画面。',
