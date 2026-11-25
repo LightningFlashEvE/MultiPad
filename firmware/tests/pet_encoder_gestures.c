@@ -196,7 +196,7 @@ int main(void) {
     }
     pet_care_adjust(100, 100, 0, 0);
     bool saw_lookout = false, saw_table = false;
-    for (unsigned i = 0; i < 1200 && !(saw_lookout && saw_table); i++) {
+    for (unsigned i = 0; i < 2400 && !(saw_lookout && saw_table); i++) {
         advance(75);
         saw_lookout |= pet_mode_action() == PET_STAND_WATCH;
         saw_table |= pet_mode_action() == PET_INSPECT_TABLE;
@@ -212,6 +212,19 @@ int main(void) {
     advance(4500);
     assert(pet_care_get()->satiety == 12);
     assert(pet_mode_queue_depth() == 0);
+    assert(pet_mode_control(1, 0) == 0 && pet_mode_control(1, 1) == 0);
+    for (unsigned i = 0; i < 7000 && pet_mode_action() != PET_DAYDREAM; ++i) advance(1);
+    assert(pet_mode_action() == PET_DAYDREAM);
+    const int daydream_x = pet_mode_x();
+    advance(14999);
+    assert(pet_mode_action() == PET_DAYDREAM && pet_mode_x() == daydream_x);
+    advance(1);
+    assert(pet_mode_action() == PET_IDLE);
+    assert(pet_mode_control(3, PET_GAZE_OWNER) == 0);
+    advance(7999);
+    assert(pet_mode_action() == PET_GAZE_OWNER);
+    advance(1);
+    assert(pet_mode_action() == PET_IDLE);
     puts("Encoder 3 head-pat tests passed");
     return 0;
 }

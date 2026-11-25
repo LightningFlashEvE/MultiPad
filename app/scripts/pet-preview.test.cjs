@@ -123,15 +123,56 @@ test('continuous running spends both energy and fullness before the base minute 
 })
 
 test('good care takes ten minutes and poor care takes five minutes to change affection', () => {
-  const {state, tick} = preview(100)
+  const {world, state, tick} = preview(100)
   state.stats.energy = 100
-  tick(599975)
+  tick(240000)
+  world.changeScene(0) // Owner activity keeps the normal care rules active.
+  tick(240000)
+  world.changeScene(0)
+  tick(119975)
   assert.equal(state.stats.affection, 35)
   tick(25)
   assert.equal(state.stats.affection, 36)
   state.stats.mood = 30
-  tick(300000)
+  tick(240000)
+  world.changeScene(0)
+  tick(60000)
   assert.equal(state.stats.affection, 35)
+})
+
+test('unattended stats fall together even during sleep, and a head pat restarts the grace period', () => {
+  const {world,state,tick} = preview(100)
+  world.use(3, 2)
+  tick(catalog.petCareGraceMs - 25)
+  const before = {...state.stats}
+  tick(catalog.petUnattendedDecayMs)
+  for (const key of Object.keys(before)) assert.equal(state.stats[key], before[key] - 1)
+  world.use(22, 0)
+  const treated = {...state.stats}
+  tick(25)
+  assert.deepEqual(state.stats, treated)
+  tick(120_000)
+  assert.equal(state.stats.mood, treated.mood)
+  assert.equal(state.stats.affection, treated.affection)
+})
+
+test('an awake rabbit naturally daydreams for fifteen seconds and gazes for eight', () => {
+  const {world,state,tick} = preview()
+  state.stats.energy = 100
+  tick(6000)
+  assert.equal(state.action, 8)
+  const x = state.x
+  tick(catalog.petDaydreamMs - 25)
+  assert.equal(state.action, 8)
+  assert.equal(state.x, x)
+  tick(25)
+  assert.notEqual(state.action, 8)
+  world.changeScene(1)
+  assert.equal(world.use(3, 12), '')
+  tick(catalog.petGazeOwnerMs - 25)
+  assert.equal(state.action, 12)
+  tick(25)
+  assert.notEqual(state.action, 12)
 })
 
 test('each grooming action stays in place and completes without an interaction reward', () => {

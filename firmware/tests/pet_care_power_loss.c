@@ -73,7 +73,7 @@ static void stats(unsigned satiety, unsigned energy, unsigned mood, unsigned aff
 
 static void tick(unsigned ms, bool sleeping) {
     now += ms;
-    pet_care_tick(ms, sleeping, 0);
+    pet_care_tick(ms, sleeping, 0, false);
 }
 
 static void actual_changes_survive_unplug(void) {
@@ -203,19 +203,36 @@ static void sector_rotation_survives_unplug(void) {
 
 static void exercise_charges_both_stats(void) {
     new_flash();
-    pet_care_tick(20000, false, 1);
-    pet_care_tick(19999, false, 2);
+    pet_care_tick(20000, false, 1, false);
+    pet_care_tick(19999, false, 2, false);
     stats(65, 75, 70, 35);
-    pet_care_tick(1, false, 2);
+    pet_care_tick(1, false, 2, false);
     stats(64, 74, 70, 35);
     assert(flash[9] == 26); /* Old V3 readers still see the corresponding fatigue. */
     pet_care_init(W25Q128);
     stats(64, 74, 70, 35);
-    pet_care_tick(20000, true, 0);
+    pet_care_tick(20000, true, 0, false);
     stats(64, 75, 70, 35);
 }
 
+static void unattended_care_declines_slowly(void) {
+    new_flash();
+    pet_care_tick(60000, true, 2, true);
+    pet_care_tick(59999, true, 2, true);
+    stats(65, 75, 70, 35);
+    pet_care_tick(1, true, 2, true);
+    stats(64, 74, 69, 34);
+    pet_care_tick(60000, true, 0, true);
+    pet_care_tick(1, false, 0, false); /* The owner returned, clearing partial neglect time. */
+    pet_care_tick(60000, true, 0, true);
+    stats(64, 74, 69, 34);
+    pet_care_tick(60000, true, 0, true);
+    pet_care_init(W25Q128);
+    stats(63, 73, 68, 33);
+}
+
 int main(void) {
+    unattended_care_declines_slowly();
     exercise_charges_both_stats();
     actual_changes_survive_unplug();
     long_term_affection();

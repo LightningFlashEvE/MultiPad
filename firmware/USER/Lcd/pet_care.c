@@ -15,7 +15,7 @@ static PetCare care;
 /* Pending changes can accumulate while a failed page program is retried.
  * A completed meal is also reflected in live stats so it has immediate feedback. */
 static struct { uint8_t satiety, energy, mood, affection; } pending_stats;
-static uint32_t sequence, metabolism_ms, energy_ms, exercise_ms, retry_at;
+static uint32_t sequence, metabolism_ms, energy_ms, exercise_ms, unattended_ms, retry_at;
 static uint16_t next_slot;
 static uint32_t bond_ms;
 static bool dirty, journal_available, retry_pending, was_sleeping;
@@ -53,7 +53,7 @@ static bool valid(const uint8_t *record, unsigned bytes) {
 
 void pet_care_init(uint16_t flash_id) {
     care = initial_care;
-    sequence = metabolism_ms = energy_ms = exercise_ms = bond_ms = next_slot = 0;
+    sequence = metabolism_ms = energy_ms = exercise_ms = unattended_ms = bond_ms = next_slot = 0;
     dirty = retry_pending = was_sleeping = false;
     switch (flash_id) {
         case W25Q16: case W25Q32: case W25Q64: case W25Q128: case W25Q256:
@@ -202,10 +202,25 @@ bool pet_care_set_stat(uint8_t index, uint8_t value) {
     return !dirty;
 }
 
-void pet_care_tick(uint32_t elapsed_ms, bool sleeping, unsigned exertion) {
+void pet_care_tick(uint32_t elapsed_ms, bool sleeping, unsigned exertion, bool unattended) {
     /* Charge time only while this pet is on screen. Separate fatigue progress
      * avoids attributing a whole minute to a sleep entered on its last tick. */
     if (elapsed_ms > 60000) elapsed_ms = 60000;
+    if (unattended) {
+        if (bond_ms >= 60000u) dirty = true;
+        metabolism_ms = energy_ms = exercise_ms = bond_ms = 0;
+        unattended_ms += elapsed_ms;
+        if (unattended_ms >= PET_UNATTENDED_DECAY_MS) {
+            unattended_ms -= PET_UNATTENDED_DECAY_MS;
+            adjust(&pending_stats.satiety, -1);
+            adjust(&pending_stats.energy, -1);
+            adjust(&pending_stats.mood, -1);
+            adjust(&pending_stats.affection, -1);
+        }
+        pet_care_save();
+        return;
+    }
+    unattended_ms = 0;
     int previous = bond_direction();
     if (previous) {
         unsigned saved_minutes = bond_ms / 60000u;

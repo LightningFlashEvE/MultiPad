@@ -1,4 +1,10 @@
 // The array positions are action and scene IDs on the USB wire. Append new IDs.
+export const petCareGraceMs = 300_000
+export const petUnattendedDecayMs = 120_000
+export const petDaydreamMs = 15_000
+export const petGazeOwnerMs = 8_000
+export const petAutoSleepIdleMs = 45_000
+
 export const petActions = ['idle', 'walk', 'sleep', 'eat', 'fall', 'fetch', 'run', 'jump', 'daydream', 'flee', 'blink', 'trip_angry', 'gaze_owner', 'stand_watch', 'inspect_table', 'binky', 'groom_fur', 'groom_ear'] as const
 export const playableActions = ['idle', 'blink', 'walk', 'run', 'jump', 'sleep', 'daydream', 'eat', 'flee', 'trip_angry', 'gaze_owner', 'stand_watch', 'inspect_table', 'binky', 'groom_fur', 'groom_ear'] as const
 export const petActionLabels: Record<typeof petActions[number], string> = {

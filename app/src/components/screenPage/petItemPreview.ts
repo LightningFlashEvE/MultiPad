@@ -1,5 +1,6 @@
 import type { PetState } from './petDisplay'
-import { isStatValue, petStats, binkyChance, binkyDuration, binkyMotion, defaultHutchPosition, isHutchPosition } from '../../utils/petCatalog'
+import { isStatValue, petStats, binkyChance, binkyDuration, binkyMotion, defaultHutchPosition, isHutchPosition,
+  petCareGraceMs, petUnattendedDecayMs, petDaydreamMs, petGazeOwnerMs, petAutoSleepIdleMs } from '../../utils/petCatalog'
 
 export const previewCare = { satiety: 65, energy: 75, mood: 70, affection: 35 }
 type Food = { id: number; x: number; droppedAt: number }
@@ -20,10 +21,12 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
   let timer: number | undefined
   let lastTick = 0
   let leavingTable = false
-  let nextLook = 10000
+  let nextLook = 6000
   let looks = 0
   let time = 0
   let lastInput = 0
+  let lastOwnerInput = 0
+  let unattendedMs = 0
   let patUntil = 0
   let rubIndex = 2
   let metabolism = 0
@@ -87,14 +90,7 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     startActivity(1, bedtime, gardenFood)
   }
 
-  function update() {
-    const now = Date.now()
-    const dt = Math.max(0, Math.min(now - lastTick, 60_000))
-    lastTick = now
-    time += dt
-    const pet = state()
-    const stats = pet.stats ??= { ...previewCare }
-    pet.headPatRemaining = Math.max(0, patUntil - time)
+  function updateCare(pet: PetState, stats: typeof previewCare, dt: number) {
     const bond = bondDirection(stats)
     if (bond) {
       bondMs += dt
@@ -121,6 +117,28 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     if (metabolism >= 60_000) {
       reward(-1, 0, stats.satiety < 25 || stats.energy < 15 ? -1 : 0, 0)
       metabolism %= 60_000
+    }
+  }
+
+  function update() {
+    const now = Date.now()
+    const dt = Math.max(0, Math.min(now - lastTick, 60_000))
+    lastTick = now
+    time += dt
+    const pet = state()
+    const stats = pet.stats ??= { ...previewCare }
+    pet.headPatRemaining = Math.max(0, patUntil - time)
+    const unattended = time - lastOwnerInput >= petCareGraceMs
+    if (unattended) {
+      metabolism = energyMs = exerciseMs = bondMs = 0
+      unattendedMs += dt
+      if (unattendedMs >= petUnattendedDecayMs) {
+        unattendedMs -= petUnattendedDecayMs
+        reward(-1, -1, -1, -1)
+      }
+    } else {
+      unattendedMs = 0
+      updateCare(pet, stats, dt)
     }
 
     if (pet.headPatRemaining && dt) {
@@ -156,7 +174,7 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     } else if (gesture?.action === 13) pet.actionAgeMs = time + 3875 - gesture.until
     if (gesture && (food || time >= gesture.until)) {
       if (!food && gesture.action === 11) reward(0, -1, -4, 0)
-      if (!food && gesture.action === 12) reward(0, 0, 1, 1)
+      if (!food && gesture.action === 12 && !unattended) reward(0, 0, 1, 1)
       gesture = undefined
     }
     if (!play && gesture?.action !== 15 && stats.mood < 90 && stats.energy > 15 && room.awaitingPlay && time - room.droppedAt >= fallMs && !food && !(hungry && first)) {
@@ -164,18 +182,19 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
       startActivity(2)
       gesture = undefined
     }
-    if (!play && !food && !gesture && (!first || !hungry) && stats.energy <= 75 && time - lastInput >= 18_000) {
+    if (!play && !food && !gesture && (!first || !hungry) && stats.energy <= 75 && time - lastInput >= petAutoSleepIdleMs) {
       visitHutch(true)
       room = rooms[pet.scene]
     }
     if (!play && !food && !gesture && time >= nextLook && time - lastInput >= 6000) {
       nextLook = time + 12000
-      if (stats.energy > 15 && Math.random() * 100 < binkyChance(stats.mood)) startBinky()
+      looks++
+      if (looks % 2 === 1) gesture = { action: 8, until: time + petDaydreamMs }
+      else if (stats.energy > 15 && Math.random() * 100 < binkyChance(stats.mood)) startBinky()
       else {
-        looks++
         if (looks % 5 === 2) gesture = { action: 16, until: time + 2500 }
         else if (looks % 5 === 0) gesture = { action: 17, until: time + 3000 }
-        else if (looks % 2 === 0 && pet.scene === 1) startActivity(3)
+        else if (looks % 4 === 0 && pet.scene === 1) startActivity(3)
         else gesture = { action: 13, until: time + 3875 }
       }
     }
@@ -230,7 +249,7 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
   function start() {
     if (timer !== undefined) return
     lastTick = Date.now()
-    lastInput = time
+    lastOwnerInput = lastInput = time
     timer = window.setInterval(update, 60)
     update()
   }
@@ -244,7 +263,7 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
   function changeScene(scene: number) {
     start()
     switchRoom(scene)
-    lastInput = time
+    lastOwnerInput = lastInput = time
     update()
   }
 
@@ -314,10 +333,10 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
         if (!play?.bedtime) visitHutch(true)
       } else {
         play = undefined
-        gesture = value === 0 ? undefined : { action: value, until: time + (value === 12 || value === 17 ? 3000 : value === 16 ? 2500 : value === 13 ? 3875 : value === 7 ? 500 : value === 6 || value === 9 ? 2300 : 2050) }
+        gesture = value === 0 ? undefined : { action: value, until: time + (value === 8 ? petDaydreamMs : value === 12 ? petGazeOwnerMs : value === 17 ? 3000 : value === 16 ? 2500 : value === 13 ? 3875 : value === 7 ? 500 : value === 6 || value === 9 ? 2300 : 2050) }
       }
     }
-    lastInput = time
+    lastOwnerInput = lastInput = time
     update()
     return ''
   }
@@ -326,9 +345,9 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     play = undefined
     food = undefined
     gesture = undefined
-    metabolism = energyMs = exerciseMs = bondMs = time = 0
+    metabolism = energyMs = exerciseMs = bondMs = unattendedMs = lastOwnerInput = time = 0
     wasSleeping = false
-    nextLook = 10000
+    nextLook = 6000
     looks = 0
     leavingTable = false
     for (const room of rooms) { room.toy = 0; room.awaitingPlay = false; room.foods.length = 0 }

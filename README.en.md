@@ -58,7 +58,7 @@ In Pet mode, click the color display, then **属性数值** (Stat values). Enter
 
 ![Stat editor with the current reading, numeric input and Save button for each attribute](docs/images/pet-stats.png)
 
-Stats continue to change during Pet mode. With sustained good care, affection rises. When the rabbit stays hungry, unhappy or overtired, affection decreases. Powering the keyboard off pauses the simulation and preserves saved stats.
+Stats continue to change during Pet mode. With sustained good care, affection rises. When the rabbit stays hungry, unhappy or overtired, affection decreases. Powering the keyboard off pauses the simulation and preserves saved stats. After five minutes without owner interaction, each stat drops by one point every two minutes until the next interaction. The rabbit naturally daydreams between walks for about 15 seconds and can gaze at its owner for about eight seconds.
 
 ## Optional AI control
 

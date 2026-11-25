@@ -11,7 +11,9 @@
 enum {
     SLICE_ROWS = 4,
     FRAME_MS = 48,
-    SLEEP_AFTER_MS = 18000,
+    SLEEP_AFTER_MS = 45000,
+    DAYDREAM_MS = 15000,
+    GAZE_OWNER_MS = 8000,
     ENCODER_HOLD_MS = 1200,
     HEAD_PAT_MS = 1200,
     GROUND = 139,
@@ -52,7 +54,7 @@ static PetAction action;
 static int16_t dance_origin;
 static int8_t dance_direction;
 static uint32_t dance_random = 0x41c64e6d;
-static uint32_t action_since, last_input, last_frame, last_motion, frames;
+static uint32_t action_since, last_input, last_owner_input, last_frame, last_motion, frames;
 static int16_t x, y, last_x, approach_x, approach_y;
 static uint16_t approach_travel, approach_distance;
 static int8_t direction;
@@ -88,6 +90,7 @@ static bool head_pat_active;
 static uint32_t head_pat_started, head_pat_last;
 static uint8_t head_pat_kind, rub_index;
 static bool hand_on_encoder;
+static bool unattended(uint32_t now) { return now - last_owner_input >= PET_CARE_GRACE_MS; }
 static bool wants_food(void) { return pet_care_get()->satiety < 90; }
 static bool wants_play(void) { return pet_care_get()->mood < 90 && pet_care_get()->energy > 15; }
 
@@ -233,7 +236,7 @@ static void place_toy(uint8_t id, uint8_t source, uint32_t now) {
     }
     pet_care_set_toy(scene, id);
     floor->awaiting_play = floor->toy_falling = id != 0;
-    floor->toy_dropped_at = last_input = now;
+    floor->toy_dropped_at = last_owner_input = last_input = now;
     floor->toy_source = source;
     if (id) record_event(PET_EVENT_TOY_PLACED, id, source, scene);
 }
@@ -277,8 +280,8 @@ static void start_mode(uint32_t now) {
     y = GROUND;
     direction = 1;
     frames = walk_remainder = 0;
-    last_input = last_frame = last_motion = now;
-    fruit = keys_seen = 0;
+    last_owner_input = last_input = last_frame = last_motion = now;
+    fruit = keys_seen = walk_stops = 0;
     redraw_scene = true;
     set_action(PET_WALK, now);
     frame = (PetFrame){0};
@@ -391,7 +394,7 @@ static void pat_head(uint8_t kind, uint8_t source, bool reward, uint32_t now) {
         rub_index = (rub_index + (kind == 1 ? 1 : 7)) % 8;
     }
     head_pat_kind = kind;
-    last_input = head_pat_last = now;
+    last_owner_input = last_input = head_pat_last = now;
     record_event(PET_EVENT_HEAD_PETTED, kind, source, 3);
 }
 
@@ -443,7 +446,7 @@ static bool queue_fruit(uint8_t requested, uint8_t source, uint32_t now) {
         if (free && dist < shortest) { best = candidate; shortest = dist; }
     }
     floor->foods[floor->count++] = (FloorFood){now, best, requested, FOOD_FALLING, source};
-    last_input = now;
+    last_owner_input = last_input = now;
     record_event(PET_EVENT_FRUIT_QUEUED, requested, source, pet_mode_queue_depth());
     return true;
 }
@@ -456,6 +459,7 @@ static uint8_t trigger_key(uint8_t key, uint8_t source, uint32_t now) {
     if (item == ITEM_HUTCH) {
         if (fruit) return BUSY;
         visit_hutch(false, source, now);
+        last_owner_input = now;
         return OK;
     }
     return deploy_toy(TOY_CARROT, false, source, now);
@@ -490,15 +494,17 @@ static void set_time(uint16_t minutes, uint8_t source) {
 void pet_mode_cycle_background(int8_t step) {
     if (!active) return;
     change_background((pet_care_get()->scene + PET_SCENE_COUNT + step) % PET_SCENE_COUNT, SOURCE_PHYSICAL);
-    last_input = HAL_GetTick();
+    last_owner_input = last_input = HAL_GetTick();
 }
 
 void pet_mode_adjust_scene(int8_t direction_step, bool change_season) {
     if (!active) return;
     if (change_season) {
         set_scene_value((season + 4 + direction_step) % 4, true, SOURCE_PHYSICAL);
+        last_owner_input = HAL_GetTick();
     } else if (!pet_care_get()->follow_time) {
         set_time(((hour + 24 + direction_step) % 24) * 60, SOURCE_PHYSICAL);
+        last_owner_input = HAL_GetTick();
     }
 }
 
@@ -573,7 +579,7 @@ uint8_t pet_mode_control(uint8_t opcode, uint8_t value) {
             if (value >= PET_SCENE_COUNT) return INVALID;
             if (value == pet_care_get()->scene) return OK;
             change_background(value, SOURCE_MCP);
-            last_input = now;
+            last_owner_input = last_input = now;
             return OK;
         case DEPLOY_TOY:
         case PLACE_IF_EMPTY:
@@ -584,12 +590,14 @@ uint8_t pet_mode_control(uint8_t opcode, uint8_t value) {
             if (!toy || value == TOY_RABBIT_HUTCH || pet_care_get()->placed[pet_care_get()->scene] != value) return INVALID;
             if (current_floor()->toy_falling || (current_floor()->count && wants_food()) || active_toy) return BUSY;
             start_toy(toy, false, SOURCE_MCP, now);
+            last_owner_input = now;
             return OK;
         }
         case VISIT_HUTCH:
             if (value) return INVALID;
             if (fruit) return BUSY;
             visit_hutch(false, SOURCE_MCP, now);
+            last_owner_input = now;
             return OK;
         case TRIGGER_KEY:
             return value < PET_KEY_COUNT ? trigger_key(value, SOURCE_MCP, now) : INVALID;
@@ -726,9 +734,9 @@ static void update_action(uint32_t now, uint32_t step_ms) {
             return;
         case PET_TRIP_ANGRY:
         case PET_GAZE_OWNER:
-            if (elapsed >= (action == PET_TRIP_ANGRY ? 2050u : 3000u)) {
+            if (elapsed >= (action == PET_TRIP_ANGRY ? 2050u : GAZE_OWNER_MS)) {
                 if (action == PET_TRIP_ANGRY) pet_care_adjust(0, -1, -4, 0);
-                else pet_care_adjust(0, 0, 1, action_source == SOURCE_MCP ? 1 : 0);
+                else if (!unattended(now)) pet_care_adjust(0, 0, 1, action_source == SOURCE_MCP ? 1 : 0);
                 set_action(PET_IDLE, now);
             }
             return;
@@ -748,7 +756,7 @@ static void update_action(uint32_t now, uint32_t step_ms) {
         case PET_JUMP:
         case PET_BLINK:
         case PET_DAYDREAM: {
-            const uint32_t duration = action == PET_JUMP ? 500u : action == PET_BLINK ? 125u : 1750u;
+            const uint32_t duration = action == PET_JUMP ? 500u : action == PET_BLINK ? 125u : DAYDREAM_MS;
             if (elapsed >= duration) set_action(PET_IDLE, now);
             return;
         }
@@ -770,13 +778,17 @@ static void update_action(uint32_t now, uint32_t step_ms) {
         if (move_in_garden(step_ms, 37) || elapsed >= 3600) {
             /* A short look toward the owner between walks. Most pauses stay idle. */
             walk_stops++;
+            if (walk_stops % 2 == 1) {
+                set_action(PET_DAYDREAM, now);
+                return;
+            }
             dance_random = dance_random * 1664525u + 1013904223u;
             unsigned dance_chance = 4 + pet_care_get()->mood * pet_care_get()->mood / 250;
             if (pet_care_get()->energy > 15 && (dance_random >> 16) % 100 < dance_chance) {
                 set_action(PET_BINKY, now);
                 return;
             }
-            if (walk_stops % 6 == 3 && pet_care_get()->scene == PET_NURSERY)
+            if (walk_stops % 8 == 6 && pet_care_get()->scene == PET_NURSERY)
                 start_toy(find_toy(NURSERY_TABLE), false, SOURCE_AUTOMATIC, now);
             else if (walk_stops % 5 == 0) set_action(PET_GROOM_EAR, now);
             else if (walk_stops % 5 == 2) set_action(PET_GROOM_FUR, now);
@@ -1275,7 +1287,7 @@ void pet_mode_poll(void) {
         if (action == PET_WALK || action == PET_FETCH) exertion = 1;
         if (action == PET_RUN || action == PET_FLEE || action == PET_JUMP || action == PET_BINKY) exertion = 2;
     }
-    pet_care_tick(step_ms, action == PET_SLEEP, exertion);
+    pet_care_tick(step_ms, action == PET_SLEEP, exertion, unattended(now));
     settle_drops(now);
     if (head_pat_remaining(now)) action_since += step_ms;
     else update_action(now, step_ms > 60 ? 60 : step_ms);
