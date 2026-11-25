@@ -58,11 +58,11 @@ In Pet mode, click the color display, then **属性数值** (Stat values). Enter
 
 ![Stat editor with the current reading, numeric input and Save button for each attribute](docs/images/pet-stats.png)
 
-Stats continue to change during Pet mode. With sustained good care, affection rises. When the rabbit stays hungry, unhappy or overtired, affection decreases. Powering the keyboard off pauses the simulation and preserves saved stats.
+Stats continue to change during Pet mode. With sustained good care, affection rises. When the rabbit stays hungry, unhappy or overtired, affection decreases. Powering the keyboard off pauses the simulation and preserves saved stats. After five minutes without owner interaction, each stat drops by one point every two minutes until the next interaction. The rabbit naturally daydreams between walks for about 15 seconds and can gaze at its owner for about eight seconds.
 
 ## Optional AI control
 
-Open **AI 控制** (AI control) in pet settings. Enter the base URL, model name and key for an OpenAI-compatible API that supports tool calls. The included Alibaba Cloud Beijing Token Plan endpoint requires a Token Plan key. Choose a Token Plan model or enter a custom model name. Head strokes, feeding, and toy placement trigger an immediate decision and cancel the remaining idle plan. A continuous stroke produces one response, executed after you let go. During quiet periods the model plans six 10-second slots every minute, each with an action or free activity. The app checks the keyboard before each action. The owner controls food, toys and scene changes. [MCP tools and events, in Chinese](docs/pet-mcp.md)
+Open **AI 控制** (AI control) in pet settings. Enter the base URL, model name and key for an OpenAI-compatible API that supports tool calls. The included Alibaba Cloud Beijing Token Plan endpoint requires a Token Plan key. Choose a Token Plan model or enter a custom model name. Head strokes, feeding, and toy placement trigger an immediate decision and cancel the remaining idle plan. A continuous stroke produces one response, executed after you let go. During quiet periods the model plans a variable-length sequence about once a minute. Longer sequences can finish before the next round. The app checks the keyboard before each action, waits briefly when the rabbit is busy, and skips individual ineligible actions. The owner controls food, toys and scene changes. [MCP tools and events, in Chinese](docs/pet-mcp.md)
 
 ## Build from source
 

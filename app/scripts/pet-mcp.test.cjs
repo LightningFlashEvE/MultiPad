@@ -26,7 +26,7 @@ const catalog = loadModule('../src/utils/petCatalog.ts')
 const guide = loadModule('../electron/controller/petCareGuide.ts', { [pathToCatalog]: catalog })
 function payload(generation = 4, fields = {}, foodIds = [], headPet = [0, 0]) {
   const endOfFoods = 33 + foodIds.length * 6
-  const p = Buffer.alloc(endOfFoods + 10 + (generation >= 8 ? 3 : Number(generation === 7)))
+  const p = Buffer.alloc(endOfFoods + 10 + (generation >= 11 ? 5 : generation >= 8 ? 3 : Number(generation === 7)))
   p.set([1,0,78,0,0,0,0,0,0,12,1,0,65,24,68,45,1,0,0])
   p[31] = 100
   p[32] = foodIds.length
@@ -34,7 +34,7 @@ function payload(generation = 4, fields = {}, foodIds = [], headPet = [0, 0]) {
   p.set([246,0,142,139,...headPet], endOfFoods)
   if (generation >= 7) p[p.length - 1] = generation
   for (const [i,v] of Object.entries(fields)) p[Number(i)] = v
-  return p.subarray(0, [0, 12, 19, endOfFoods, endOfFoods + 4, endOfFoods + 6, endOfFoods + 10, endOfFoods + 11, p.length, p.length, p.length][generation])
+  return p.subarray(0, [0, 12, 19, endOfFoods, endOfFoods + 4, endOfFoods + 6, endOfFoods + 10, endOfFoods + 11, p.length, p.length, p.length, p.length][generation])
 }
 function eventPage(events, after = 0) {
   const p = Buffer.alloc(1 + events.length * 12)
@@ -51,7 +51,7 @@ test('serial protocol probes with reads, and transmits each supported owner gest
   const { default: ScreenReadback } = loadModule('../electron/controller/screenReadback.ts', {
     [pathToCatalog]: catalog, '../../src/utils/deviceScreenFormat': { DEVICE_SCREEN_SIZES: [] }
   })
-  for (const generation of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+  for (const generation of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]) {
     const writes = []
     const reader = new ScreenReadback(async request => {
       const requested = request.readUInt32LE(6), offset = request.readUInt32LE(11)
@@ -79,14 +79,17 @@ test('serial protocol probes with reads, and transmits each supported owner gest
         const reply = await reader.readPet({ command: 22, value: input })
         assert.equal(reply.state, generation >= 5 ? 'ready' : 'unsupported')
       }
-      assert.deepEqual(writes.filter(p=>!p.offset).map(p=>p.requested), [10,9,8,7,6,5,4,3,2].filter(g=>g>=generation))
+      assert.deepEqual(writes.filter(p=>!p.offset).map(p=>p.requested), [11,10,9,8,7,6,5,4,3,2].filter(g=>g>=generation))
       const mutations = writes.filter(p=>p.offset).map(p=>p.offset)
       assert.deepEqual(mutations, generation >= 5 ? [0,1,2,3,4].map(v=>22|(v<<8)) : [])
       for (const value of [16, 17])
         assert.equal((await reader.readPet({command:3,value})).state, generation >= 9 ? 'ready' : 'unsupported')
       for (const cmd of [23, 24, 25, 26])
-        assert.equal((await reader.readPet({command:cmd, value:75})).state, generation === 10 ? 'ready' : 'unsupported')
-      if (generation === 10) assert.equal((await reader.readPet({command:23,value:101})).state, 'unavailable')
+        assert.equal((await reader.readPet({command:cmd, value:75})).state, generation >= 10 ? 'ready' : 'unsupported')
+      if (generation >= 10) assert.equal((await reader.readPet({command:23,value:101})).state, 'unavailable')
+      const timing = 2 | (180 << 5) | (68 << 14)
+      assert.equal((await reader.readPet({command:27, value:timing})).state, generation === 11 ? 'ready' : 'unsupported')
+      if (generation === 11) assert.equal(writes.at(-1).offset, 27 | (timing << 8))
       if (generation === 5) assert.equal((await reader.readPet({command:22,value:5})).state, 'unsupported')
     } finally {
       reader.close()
@@ -184,14 +187,15 @@ test('sixth-generation state reports both rooms without switching rooms', async 
   assert.equal(catalog.petStateGeneration(f.board.payload.subarray(0,-1)), 0)
 })
 
-test('built-in AI makes one immediate decision from eligible actions and checks it against live state', async t => {
+test('idle plans allow variable length, isolate invalid actions and wait briefly for the rabbit', async t => {
   const f = fixture(t)
   const saved = new Map()
   class Store { get(key) { return saved.get(key) } set(key, value) { saved.set(key, value) } }
-  let timer, scheduledDelay, modelRequest, reply, beforeResponse, calls = 0, now = 10_000
+  let timer, scheduledDelay, modelRequest, reply, beforeResponse, calls = 0, now = 10_000, whenWaiting
   const ai = loadModule('../electron/controller/petAi.ts', {
     electron: {safeStorage:{isEncryptionAvailable:()=>true,encryptString:s=>Buffer.from(s),decryptString:b=>b.toString()}},
     'electron-store': Store, './petMcp': f.mcp, [pathToCatalog]: catalog,
+    'node:timers/promises': { setTimeout: async ms => { now += ms; whenWaiting?.() } },
     '../../src/utils/petPersonality': loadModule('../src/utils/petPersonality.ts')
   }, {
     Date: {now: () => now},
@@ -211,7 +215,7 @@ test('built-in AI makes one immediate decision from eligible actions and checks 
   ai.startPetAi(value => activity.push(value))
   ai.savePetAi(cfg)
   const offer = (...steps) => { reply = {tool_calls:[{type:'function',function:{name:'pet_perform_sequence',arguments:JSON.stringify({steps})}}]} }
-  const plan = (...actions) => offer(...Array.from({length:6}, (_, index) => ({behavior:actions[index] ?? 'rest'})))
+  const plan = (...actions) => offer(...(actions.length ? actions : ['rest']).map(behavior => ({behavior})))
   const actions = () => modelRequest.tools[0].function.parameters.properties.steps.items.properties.behavior.enum
   const writes = () => f.board.requests.filter(r => r.command > 0).map(r => r.value)
   const step = async () => {
@@ -230,7 +234,7 @@ test('built-in AI makes one immediate decision from eligible actions and checks 
   f.board.payload = payload(5, {12:100}, [1], [98,2])
   plan()
   assert.equal((await auto()).phase, 'idle')
-  assert.deepEqual(actions(), ['rest'])
+  assert(actions().includes('rest') && actions().includes('blink'))
 
   f.board.payload = payload(6, {12:67, 13:80, 14:55})
   await auto()
@@ -239,13 +243,13 @@ test('built-in AI makes one immediate decision from eligible actions and checks 
   assert.equal(modelInput.personality, cfg.personality)
   assert.equal(modelInput.observation.stats.energy, 20)
   assert.equal(modelRequest.enable_thinking, false)
-  assert.equal(modelRequest.tools[0].function.parameters.properties.steps.maxItems, 6)
+  assert.equal(modelRequest.tools[0].function.parameters.properties.steps.maxItems, 8)
   for (const token of [cfg.apiKey, session, 'recentActivity', 'hutchPosition'])
     assert(!JSON.stringify(modelRequest.messages).includes(token))
   assert(!f.board.requests.some(r => 'after' in r))
 
   f.board.payload = payload(9, {12:95, 13:0, 14:40, 15:100})
-  plan('blink', 'rest', 'walk', 'rest', 'rest', 'jump')
+  plan('blink', 'eat', 'walk', 'rest', 'rest', 'jump')
   const requestCount = f.board.requests.length
   assert.equal((await auto()).phase, 'action')
   const roundStart = now
@@ -254,11 +258,14 @@ test('built-in AI makes one immediate decision from eligible actions and checks 
   assert(!actions().some(action => ['sleep','eat','flee','gaze_owner','trip_angry','binky'].includes(action)))
   assert(activity.some(a => a.step?.label === '眨眼' && a.session === session))
   assert.equal(ai.getPetAiActivity().nextDecisionAt, roundStart + 60_000)
-  assert.equal(scheduledDelay, 20_000)
-  assert.equal((await step()).phase, 'action')
-  assert.equal(now, roundStart + 20_000)
-  assert.equal(scheduledDelay, 30_000)
+  assert.equal(scheduledDelay, 20_000) // Invalid eat is skipped, not rejected as a whole plan.
   f.board.payload = payload(6, {}, [], [120,1])
+  whenWaiting = () => { f.board.payload = payload(6) }
+  assert.equal((await step()).phase, 'action')
+  whenWaiting = undefined
+  assert.equal(now, roundStart + 20_400)
+  assert.equal(scheduledDelay, 29_600)
+  f.board.payload = payload(6, {13:90})
   assert.match((await step()).message, /状态已变化.*跳跃/)
   assert.equal(now, roundStart + 50_000)
   assert.equal(scheduledDelay, 10_000)
@@ -270,10 +277,11 @@ test('built-in AI makes one immediate decision from eligible actions and checks 
   assert.equal(calls, modelCalls + 1)
 
   f.board.payload = payload(6)
-  offer({behavior:'jump'})
-  assert.equal((await auto()).phase, 'error')
+  plan('rest','rest','rest','rest','rest','rest','rest','rest')
+  await auto()
+  assert.equal(scheduledDelay, 80_000)
   plan('jump')
-  beforeResponse = () => { f.board.payload = payload(6, {}, [], [120,1]) }
+  beforeResponse = () => { f.board.payload = payload(6, {13:90}) }
   assert.match((await auto()).message, /状态已变化.*跳跃/)
   assert.equal(writes().length, 2)
   beforeResponse = undefined
@@ -284,6 +292,11 @@ test('built-in AI makes one immediate decision from eligible actions and checks 
   assert.deepEqual(actions(), ['blink'])
   assert.equal(writes().length, 3)
   assert.equal(writes().at(-1), 10)
+  f.board.payload = payload(11)
+  offer({behavior:'daydream',durationSeconds:25},{behavior:'blink'})
+  assert.equal((await auto()).phase, 'action')
+  assert.equal(writes().at(-1), 8 | (25 << 5))
+  assert.equal(scheduledDelay, 25_000)
   ai.observePetAiSession(null)
   assert.equal(timer, undefined)
   ai.observePetAiSession(session)
@@ -293,6 +306,20 @@ test('built-in AI makes one immediate decision from eligible actions and checks 
   while (ai.getPetAi().running) await new Promise(resolve => setImmediate(resolve))
   assert.equal(timer, undefined)
   assert.equal(ai.getPetAiActivity().message, '等待键盘进入养宠模式')
+})
+
+test('MCP passes action duration and optional sleep energy to supported firmware', async t => {
+  const f = fixture(t)
+  await f.start()
+  f.board.payload = payload(11, {13:71})
+  const reply = await f.client.callTool({name:'pet_perform_sequence',arguments:{
+    steps:[{behavior:'sleep',durationSeconds:180,untilEnergy:68}]
+  }})
+  assert.deepEqual(reply.structuredContent?.accepted, ['sleep'])
+  assert(f.board.requests.some(r=>r.command===27 && r.value===(2 | (180 << 5) | (68 << 14))))
+  assert.equal(reply.structuredContent.state.timedRemainingSeconds,0)
+  const invalid = await f.client.callTool({name:'pet_play_action',arguments:{action:'groom_fur',durationSeconds:8,untilEnergy:70}})
+  assert(invalid.isError)
 })
 
 test('rabbit MCP exposes only reads and body sequences, and rejects a mixed plan before any write', async t => {

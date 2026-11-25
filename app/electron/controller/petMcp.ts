@@ -8,7 +8,7 @@ import SerialConnect from './serialPort'
 import { petCareGuide, petServerInstructions } from './petCareGuide'
 import type { PetRequest } from './screenReadback'
 import { invertPetEnergy, petActions, playableActions, petScenes, petRoomItems, petToyIds, petToyPhases, petFruitIds as fruits,
-  petItems, toysForScene, petStateGeneration, petFoodStages, petHeadGestures, petDecorations, hutchBounds } from '../../src/utils/petCatalog'
+  petItems, toysForScene, petStateGeneration, petFoodStages, petHeadGestures, petDecorations, hutchBounds, timedPetActions, petMaxDurationSeconds, petTimedActionCommand, petAutoSleepEnergy, petRecoveredEnergy } from '../../src/utils/petCatalog'
 
 const seasons = ['spring', 'summer', 'autumn', 'winter'] as const
 const sources = ['automatic', 'physical', 'mcp'] as const
@@ -87,6 +87,7 @@ function decodeState(payload: Buffer, session?: string) {
     activeDecoration: visitingTable ? 'nursery_table' : visitingHutch ? 'rabbit_hutch' : null,
     decorationPhase: generation >= 4 ? (visitingTable || visitingHutch ? phase : 'idle') : null,
     hutchPosition: generation >= 4 ? { x: payload.readUInt16LE(endOfFoods), y: payload[endOfFoods + 2] } : null,
+    timedRemainingSeconds: generation >= 11 ? payload.readUInt16LE(payload.length - 5) : null,
     actionAgeMs: generation >= 8 ? payload.readUInt16LE(payload.length - 3) : null,
     facing: generation >= 6 ? (flags & 1 ? 'right' : 'left') : null,
     otherRoom: generation >= 6 ? { scene: other, foods: readFoods(endOfFoods + 9), toyDropProgress: payload[endOfFoods + 8] } : null,
@@ -225,9 +226,18 @@ async function result(run: () => Promise<Record<string, unknown>>) {
 }
 
 const behaviors = [...playableActions, ...fruits, ...petScenes, 'place_carrot', 'play_carrot', 'visit_hutch'] as const
+export const actionTiming = {
+  durationSeconds: z.number().int().min(1).max(petMaxDurationSeconds).optional(),
+  untilEnergy: z.number().int().min(40).max(90).optional()
+}
+export function validActionTiming(behavior: string, durationSeconds?: number, untilEnergy?: number) {
+  return (durationSeconds === undefined || timedPetActions.some(action => action === behavior)) &&
+    (untilEnergy === undefined || behavior === 'sleep' && durationSeconds !== undefined)
+}
 const rabbitStep = z.object({
   behavior: z.enum(playableActions),
-  waitMs: z.number().int().min(0).max(8000).default(0).describe('执行此步之前等待的毫秒数')
+  waitMs: z.number().int().min(0).max(8000).default(0).describe('执行此步之前等待的毫秒数'),
+  ...actionTiming
 }).strict()
 export const rabbitSteps = z.array(rabbitStep).min(1).max(6)
 const planSteps = z.array(rabbitStep.extend({ behavior: z.enum(behaviors) })).min(1).max(6)
@@ -237,16 +247,16 @@ function automaticBehaviors(s: Awaited<ReturnType<typeof command>>, rabbitOnly =
   const a = s.availableNow, stats = s.stats
   if ((s.activeDecoration || s.activeToy) && !(s.bedtime && s.action === 'sleep')) return []
   const canEat = !!stats && stats.satiety < 90
-  const canSleep = !!stats && stats.energy <= 75
+  const canSleep = !!stats && stats.energy <= (s.generation >= 11 ? petAutoSleepEnergy : 75)
   const canPlay = !!stats && stats.mood < 90 && stats.energy > 15
   if (canEat && (s.foods?.length || s.queuedFruit)) return []
   if (rabbitOnly) {
-    if (s.action === 'sleep') return stats && stats.energy >= 95 && a.actions.includes('idle') ? ['idle'] : []
+    if (s.action === 'sleep') return stats && stats.energy >= (s.generation >= 11 ? petRecoveredEnergy : 95) && !s.timedRemainingSeconds && a.actions.includes('idle') ? ['idle'] : []
     const toyPending = s.scene && (s.awaitingPlay?.[s.scene] || (s.deployedToys?.[s.scene] && s.toyDropProgress !== null && s.toyDropProgress < 100))
     if (s.bedtime || toyPending || (s.action !== 'idle' && s.action !== 'walk')) return []
   }
   return (rabbitOnly ? playableActions : behaviors).filter(b => {
-    if (s.bedtime && s.action === 'sleep') return b === 'idle' && (stats?.energy ?? 0) >= 95
+    if (s.bedtime && s.action === 'sleep') return b === 'idle' && (stats?.energy ?? 0) >= (s.generation >= 11 ? petRecoveredEnergy : 95) && !s.timedRemainingSeconds
     if (fruits.some(f => f === b)) return canEat && a.feed && !s.foods?.length && !s.queuedFruit
     if (b === 'place_carrot') return canPlay && a.placeToys.includes('carrot_toy') && s.scene && !s.deployedToys?.[s.scene]
     if (b === 'play_carrot') return canPlay && a.interactToys.includes('carrot_toy')
@@ -255,7 +265,7 @@ function automaticBehaviors(s: Awaited<ReturnType<typeof command>>, rabbitOnly =
     if (rabbitOnly) {
       if (stats && stats.energy <= 25) return b === 'sleep' && a.actions.includes(b)
       if (b === 'idle' || b === 'eat' || b === 'flee' || b === 'trip_angry' || b === s.action) return false
-      if (b === 'sleep' && (!stats || stats.energy > 45)) return false
+      if (b === 'sleep' && (!stats || stats.energy > (s.generation >= 11 ? petAutoSleepEnergy : 45))) return false
       if ((b === 'run' || b === 'jump' || b === 'binky') && (!stats || stats.energy < 45 || stats.satiety < 35)) return false
       if (b === 'binky' && (stats?.mood ?? 0) < 60) return false
     }
@@ -265,7 +275,10 @@ function automaticBehaviors(s: Awaited<ReturnType<typeof command>>, rabbitOnly =
   })
 }
 
-function behaviorCommand(b: typeof behaviors[number]): [number, number] {
+function behaviorCommand(b: typeof behaviors[number], durationSeconds?: number, untilEnergy?: number): [number, number] {
+  if (!validActionTiming(b, durationSeconds, untilEnergy)) throw Error('该动作不支持指定时长或精神目标')
+  if (durationSeconds !== undefined) return [petTimedActionCommand,
+    petActions.findIndex(action => action === b) | (durationSeconds << 5) | ((untilEnergy ?? 0) << 14)]
   const fruit = fruits.findIndex(f => f === b)
   if (fruit >= 0) return [commands.feed, fruit + 1]
   if (b === 'place_carrot' || b === 'play_carrot') return [b === 'place_carrot' ? commands.placeToy : commands.interactToy, 2]
@@ -283,6 +296,7 @@ export function createPetMcp(enabled: () => boolean = () => true,
     description: rabbitOnly ? '编排 1–6 步兔子自身动作。每步先等待 waitMs 毫秒，再按键盘实况确认能否执行。' : '按顺序安排 1–6 步身体动作、投喂（水果名）、场景、玩具或回窝。waitMs 是每步发出前的等待。每步读取真机，需求已满足、被摸头、设备忙或会话改变即停止。accepted 是已接收的步骤，实际完成看事件。',
     inputSchema: { steps: rabbitOnly ? rabbitSteps : planSteps, session: z.string().optional().describe('使用这次观察到的设备会话') }
   }, ({steps, session}, extra) => result(async () => {
+    if (steps.some(step => !validActionTiming(step.behavior, step.durationSeconds, step.untilEnergy))) throw Error('动作时长或精神目标不适用')
     if (planRunning) throw Error('上一段动作尚未结束')
     planRunning = true
     const accepted: string[] = []
@@ -295,7 +309,7 @@ export function createPetMcp(enabled: () => boolean = () => true,
         state = await command(commands.state)
         if (!enabled() || extra.signal.aborted || state.session !== expected || !automaticBehaviors(state, rabbitOnly).includes(step.behavior))
           return { accepted, stoppedBefore: step.behavior, state }
-        const [opcode, value] = behaviorCommand(step.behavior)
+        const [opcode, value] = behaviorCommand(step.behavior, step.durationSeconds, step.untilEnergy)
         try {
           state = await command(opcode, value, expected)
         } catch (error) {
@@ -313,9 +327,15 @@ export function createPetMcp(enabled: () => boolean = () => true,
     annotations: { readOnlyHint: true }
   }, () => result(async () => {
     const state = await command(commands.state)
-    const availableNow = rabbitOnly ? { actions: state.availableNow.actions, careNote: state.availableNow.careNote } : state.availableNow
-    return { ...state, availableNow, automaticBehaviors: automaticBehaviors(state, rabbitOnly),
-      ...(rabbitOnly ? { reactionBehaviors: automaticBehaviors({ ...state, headPet: null }, true) } : {}) }
+    const allowedNow = rabbitOnly ? { actions: state.availableNow.actions, careNote: state.availableNow.careNote } : state.availableNow
+    const snapshot = { ...state, availableNow: allowedNow, automaticBehaviors: automaticBehaviors(state, rabbitOnly) }
+    if (!rabbitOnly) return snapshot
+    const future = state.bedtime || state.action === 'sleep' ? state : {
+      ...state, action: 'idle' as const, headPet: null, fruit: null, foods: null, queuedFruit: 0,
+      activeToy: null, activeDecoration: null, awaitingPlay: null, toyDropProgress: 100
+    }
+    return { ...snapshot, foodPending: Boolean(state.fruit || state.queuedFruit || state.foods?.length), reactionBehaviors: automaticBehaviors({ ...state, headPet: null }, true),
+      planningBehaviors: automaticBehaviors({ ...future, availableNow: availableNow(future) }, true) }
   }))
 
   server.registerTool('pet_get_events', {
@@ -339,8 +359,11 @@ export function createPetMcp(enabled: () => boolean = () => true,
 
   server.registerTool('pet_play_action', {
     description: '播放指定动作。sleep 会去宝宝房的兔窝睡觉；在途时 action 仍为 walk，bedtime 为 true。idle 可叫醒兔子，投喂水果请用 pet_feed。',
-    inputSchema: { action: z.enum(playableActions) }
-  }, ({ action }) => result(() => command(commands.action, petActions.indexOf(action))))
+    inputSchema: { action: z.enum(playableActions), ...actionTiming }
+  }, ({ action, durationSeconds, untilEnergy }) => result(() => {
+    const [opcode, value] = behaviorCommand(action, durationSeconds, untilEnergy)
+    return command(opcode, value)
+  }))
 
   server.registerTool('pet_feed', {
     description: '投下一份水果。最多同时保留八份。兔子饱了会把水果留在地上，只有 fruit_eaten 事件表示吃完。',

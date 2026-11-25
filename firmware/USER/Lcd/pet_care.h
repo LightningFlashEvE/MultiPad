@@ -7,6 +7,7 @@
 enum { PET_GARDEN, PET_NURSERY, PET_SCENE_COUNT };
 
 enum { PET_KEY_COUNT = 8, ITEM_HUTCH = 9, ITEM_CARROT = 10 };
+enum { PET_CARE_GRACE_MS = 300000, PET_UNATTENDED_DECAY_MS = 120000 };
 /* The 81 x 74 sprite starts at (anchor_x - 41, anchor_y - 69). */
 enum { HUTCH_X_MIN = 41, HUTCH_X_MAX = 280, HUTCH_Y_MIN = 69, HUTCH_Y_MAX = 167 };
 
@@ -29,7 +30,7 @@ void pet_care_bind(uint8_t key, uint8_t item);
 void pet_care_set_toy(uint8_t scene, uint8_t toy);
 bool pet_care_move_hutch(uint16_t x, uint16_t y);
 void pet_care_follow_clock(bool follow);
-void pet_care_tick(uint32_t elapsed_ms, bool sleeping, unsigned exertion);
+void pet_care_tick(uint32_t elapsed_ms, bool sleeping, unsigned exertion, bool unattended);
 void pet_care_save(void);
 
 #endif
