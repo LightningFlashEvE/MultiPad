@@ -19,7 +19,7 @@ export const petCareGuide = {
   actions: {
     idle: '待机，长睡时可叫醒。约 1.7 秒后可能自行散步。',
     blink: '眨眼，约 0.125 秒。', walk: '散步，到边界或约 3.6 秒后会自行停下。',
-    run: '奔跑，约 2.3 秒。', jump: '跳一下，约 0.5 秒。', daydream: '自然发呆，约 ' + petDaydreamMs / 1000 + ' 秒。',
+    run: '奔跑，最多约 2.3 秒，接近场景边缘会减速停下。', jump: '跳一下，约 0.5 秒。', daydream: '自然发呆，约 ' + petDaydreamMs / 1000 + ' 秒。',
     flee: '受惊逃跑，约 2.3 秒。', eat: '仅播放约 2.1 秒的进食动作，没有水果和饱食度收益。',
     stand_watch: '用后腿撑起身体，直立观察约 3 秒，再落回四足。',
     groom_fur: '原地回头舔理身侧的毛约 2.5 秒。',

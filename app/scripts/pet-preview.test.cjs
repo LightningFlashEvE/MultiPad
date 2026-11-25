@@ -157,6 +157,8 @@ test('continuous running spends both energy and fullness before the base minute 
   const {world,state,tick} = preview()
   const {energy,satiety} = state.stats
   for(let i=0;i<15;i++){
+    state.x = catalog.petRunMinX
+    state.facing = 1
     world.use(3,6)
     tick(2000)
   }
