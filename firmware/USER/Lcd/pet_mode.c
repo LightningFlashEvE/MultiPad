@@ -1375,7 +1375,7 @@ void pet_mode_poll(void) {
         if (action == PET_WALK || action == PET_FETCH) exertion = 1;
         if (action == PET_RUN || action == PET_FLEE || action == PET_JUMP || action == PET_BINKY) exertion = 2;
     }
-    pet_care_tick(step_ms, action == PET_SLEEP, exertion, unattended(now));
+    pet_care_tick(step_ms, action == PET_SLEEP && bedtime, exertion, unattended(now));
     settle_drops(now);
     if (head_pat_remaining(now)) action_since += step_ms;
     else update_action(now, step_ms > 60 ? 60 : step_ms);

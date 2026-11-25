@@ -105,7 +105,7 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
         reward(0, 0, 0, -1)
       }
     }
-    updateEnergy(pet.action === 2, dt)
+    updateEnergy(pet.action === 2 && !!play?.bedtime, dt)
     if (!pet.headPatRemaining) {
       if (pet.action === 1 || pet.action === 5) exerciseMs += dt
       if ([6, 7, 9, 15].includes(pet.action)) exerciseMs += 2 * dt
@@ -129,7 +129,7 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     pet.headPatRemaining = Math.max(0, patUntil - time)
     const unattended = time - lastOwnerInput >= petCareGraceMs
     if (unattended) {
-      const sleeping = pet.action === 2
+      const sleeping = pet.action === 2 && !!play?.bedtime
       metabolism = exerciseMs = bondMs = 0
       if (sleeping) updateEnergy(true, dt)
       else energyMs = 0
