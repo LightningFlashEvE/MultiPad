@@ -107,6 +107,11 @@ static const RabbitClip rabbit_clips[] = {
     [RABBIT_GROOM_EAR] = {81, 11, 48, 0, 0, rabbit_ticks_groom_ear, rabbit_poses_groom_ear},
 };
 
+static const uint8_t scene_darkness_by_hour[] = {
+    56, 56, 56, 56, 56, 56, 37, 19, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 14, 28,
+    42, 56, 56, 56,
+};
+
 static const uint8_t window_materials[] = {
     56, 57, 58, 59, 60,
 };

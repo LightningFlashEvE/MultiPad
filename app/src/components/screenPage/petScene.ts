@@ -33,12 +33,41 @@ function tree(ctx: CanvasRenderingContext2D, x: number, y: number, color: string
   rect(ctx, '#83a37a', x - 9, y - 8, 2, 4)
 }
 
-export function drawGarden(ctx: CanvasRenderingContext2D) {
-  rect(ctx, '#f6c19e', 0, 0, 320, 172)
-  rect(ctx, '#efac99', 0, 0, 320, 23)
-  rect(ctx, '#f3b49b', 0, 23, 320, 21)
-  rect(ctx, '#f9cda4', 0, 66, 320, 33)
-  pixelCircle(ctx, '#ffe7b1', 237, 54, 21)
+export const sceneDarknessByHour = [
+  56, 56, 56, 56, 56, 56, 37, 19, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 14, 28, 42, 56, 56, 56
+] as const
+
+export function sceneDarkness(hour: number, minute: number) {
+  return Math.floor((sceneDarknessByHour[hour] * (60 - minute) + sceneDarknessByHour[(hour + 1) % 24] * minute) / 60)
+}
+
+function shadeScene(ctx: CanvasRenderingContext2D, color: string, darkness: number) {
+  if (!darkness) return
+  ctx.save()
+  ctx.globalAlpha = darkness / 100
+  rect(ctx, color, 0, 0, 320, 172)
+  ctx.restore()
+}
+
+export function drawGarden(ctx: CanvasRenderingContext2D, hour?: number, minute = 0) {
+  const palette = hour === undefined ? undefined : windowPalette(hour, minute)
+  rect(ctx, palette?.[1] ?? '#f6c19e', 0, 0, 320, 172)
+  rect(ctx, palette?.[0] ?? '#efac99', 0, 0, 320, 23)
+  rect(ctx, palette?.[0] ?? '#f3b49b', 0, 23, 320, 21)
+  rect(ctx, palette?.[1] ?? '#f9cda4', 0, 66, 320, 33)
+  if (hour === undefined) pixelCircle(ctx, '#ffe7b1', 237, 54, 21)
+  else if (hour >= 6 && hour < 19) {
+    const progress = (hour * 60 + minute - 360) / 780
+    pixelCircle(ctx, '#ffe7b1', 37 + Math.round(240 * progress), 63 - Math.round(144 * progress * (1 - progress)), 15)
+  } else {
+    for (const [x, y] of [[27, 47], [51, 32], [85, 49], [128, 35], [162, 65], [184, 46], [266, 60], [292, 35]])
+      rect(ctx, '#edddc8', x, y, 2, 2)
+    for (let y = 32; y <= 54; y++) for (let x = 225; x <= 247; x++) {
+      if ((x - 236) ** 2 + (y - 43) ** 2 <= 121 && (x - 242) ** 2 + (y - 40) ** 2 > 100)
+        rect(ctx, '#f4e6d1', x, y, 1, 1)
+    }
+  }
   for (const [x, y, width] of [[23, 38, 40], [99, 60, 45], [279, 28, 27]]) {
     rect(ctx, '#ffdbb2', x, y, width, 3)
     rect(ctx, '#ffdbb2', x + 8, y - 3, width - 19, 3)
@@ -63,6 +92,7 @@ export function drawGarden(ctx: CanvasRenderingContext2D) {
     rect(ctx, '#ffd39e', x - 2, y - 2, 6, 3)
     rect(ctx, '#f7a78a', x, y - 3, 2, 4)
   }
+  if (hour !== undefined) shadeScene(ctx, '#262446', sceneDarkness(hour, minute))
 }
 
 // Draw an ellipse as horizontal pixel spans so the LCD asset and canvas use the same grid.
@@ -312,29 +342,28 @@ export function drawSceneClock(ctx: CanvasRenderingContext2D, hour: number, minu
   rect(ctx, color, 31, 18, 2, 2)
 }
 
-export function tintNursery(ctx: CanvasRenderingContext2D, hour: number, season: number, lampLit = false) {
+export function tintNursery(ctx: CanvasRenderingContext2D, hour: number, minute: number, season: number, lampLit = false) {
   const seasonal = ['', '#ffdb82', '#dd975e', '#b6d7f1'][season]
   if (seasonal) rect(ctx, seasonal + '20', 0, 0, 320, 172)
   if (lampLit) rect(ctx, '#ffdb9a20', 0, 0, 320, 172)
-  else if (hour >= 20 || hour < 6) rect(ctx, '#3f486a80', 0, 0, 320, 172)
-  else if (hour === 6 || hour === 19) rect(ctx, '#3f486a40', 0, 0, 320, 172)
+  else shadeScene(ctx, '#3f486a', sceneDarkness(hour, minute))
 }
 
 // Apply the same time and season lighting as the keyboard, leaving the window frame intact.
-export function drawNurseryLight(ctx: CanvasRenderingContext2D, hour: number, season: number, lampLit: boolean) {
-  if (!lampLit) { tintNursery(ctx, hour, season); return }
+export function drawNurseryLight(ctx: CanvasRenderingContext2D, hour: number, minute: number, season: number, lampLit: boolean) {
+  if (!lampLit) { tintNursery(ctx, hour, minute, season); return }
   ctx.save()
   ctx.beginPath()
   ctx.rect(0, 0, 320, 172)
   ctx.rect(96, 17, 88, 54)
   ctx.clip('evenodd')
-  tintNursery(ctx, hour, season, true)
+  tintNursery(ctx, hour, minute, season, true)
   ctx.restore()
   ctx.save()
   ctx.beginPath()
   ctx.rect(96, 17, 88, 54)
   ctx.clip()
-  tintNursery(ctx, hour, season)
+  tintNursery(ctx, hour, minute, season)
   ctx.restore()
 }
 
