@@ -74,13 +74,6 @@ static void scan(bool down, unsigned count) { held = down; counter = count; enco
 
 static uint8_t send_performance(uint8_t menu) {
     uint8_t request[17] = {0xaa, 0xbb, 0xc1, 0x53, 1, 0, 50, 60, 70, 0, 0xf9, menu};
-    uint16_t crc = 0xffff;
-    for (unsigned i = 0; i < 15; i++) {
-        crc ^= (uint16_t)request[i] << 8;
-        for (unsigned j = 0; j < 8; j++) crc = (uint16_t)((crc << 1) ^ ((crc & 0x8000) ? 0x1021u : 0));
-    }
-    request[15] = (uint8_t)crc;
-    request[16] = (uint8_t)(crc >> 8);
     assert(screen_readback_receive(request, sizeof(request)));
     usb_status = 0xff;
     screen_readback_poll();
