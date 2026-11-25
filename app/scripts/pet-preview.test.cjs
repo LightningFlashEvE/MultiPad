@@ -103,6 +103,14 @@ test('the rabbit kicks forward, turns in the air and lands facing back before fe
   assert.equal(state.action, 5)
 })
 
+test('manual edits set only the chosen stat and reject invalid input', () => {
+  const {world, state} = preview()
+  for (const [opcode, value] of [[23,0], [24,100], [25,52], [26,83]]) assert.equal(world.use(opcode, value), '')
+  assert.ok(world.use(25, 101))
+  assert.ok(world.use(25, 3.5))
+  assert.deepEqual(state.stats, {satiety:0, sleepiness:100, mood:52, affection:83})
+})
+
 test('good care takes ten minutes and poor care takes five minutes to change affection', () => {
   const {state, tick} = preview(100)
   state.stats.sleepiness = 0

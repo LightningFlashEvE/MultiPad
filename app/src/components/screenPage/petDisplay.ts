@@ -1,12 +1,7 @@
-import { petActionLabels, petActions } from '../../utils/petCatalog'
+import { petActionLabels, petActions, petStats } from '../../utils/petCatalog'
 import type { PetOledRow } from './screenContent'
 
-export const petStats = [
-  { id: 'satiety', label: '饱食度' },
-  { id: 'sleepiness', label: '困意' },
-  { id: 'mood', label: '心情值' },
-  { id: 'affection', label: '好感度' }
-] as const
+export { petStats } from '../../utils/petCatalog'
 
 export const petParameters = [
   ...petStats,

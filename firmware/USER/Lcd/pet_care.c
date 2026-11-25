@@ -178,6 +178,16 @@ void pet_care_adjust(int satiety, int sleepiness, int mood, int affection) {
     pet_care_save();
 }
 
+bool pet_care_set_stat(uint8_t index, uint8_t value) {
+    uint8_t *fields[] = {&pending_stats.satiety, &pending_stats.sleepiness, &pending_stats.mood, &pending_stats.affection};
+    if (!journal_available || index >= sizeof(fields) / sizeof(fields[0]) || value > 100) return false;
+    int previous = bond_direction();
+    adjust(fields[index], (int)value - *fields[index]);
+    reset_bond_if_changed(previous);
+    pet_care_save();
+    return !dirty;
+}
+
 void pet_care_tick(uint32_t elapsed_ms, bool sleeping) {
     /* Charge time only while this pet is on screen. Separate fatigue progress
      * avoids attributing a whole minute to a sleep entered on its last tick. */
