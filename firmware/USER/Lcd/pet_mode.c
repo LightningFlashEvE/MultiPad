@@ -2,6 +2,7 @@
 #include "pet_care.h"
 #include "live_oled.h"
 #include "lcd_user.h"
+#include "screen_readback.h"
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -305,7 +306,7 @@ static void set_mode(bool enabled, uint8_t source, uint32_t now) {
         fruit = 0;
         active = false;
         pet_care_save();
-        restore_menu_color();
+        screen_readback_restore_work_color();
     }
 }
 

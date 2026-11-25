@@ -208,11 +208,20 @@ function refreshPetDevice() {
     const actualMode = status.payload[0] ? 'pet' : 'work'
     if (requestedMode && actualMode !== requestedMode) {
       const target = requestedMode
+      if (target === 'work' && hasPerformanceScreens()) {
+        const device = await win.myApi.liveOled()
+        if (device.state === 'ready' && device.code === 0 && device.menu > 0 && device.menu <= 10) {
+          if (performanceValues.value.length !== 3) await samplePerformance()
+          await updatePerformanceColor(device.menu)
+        }
+        if (requestedMode !== target) return
+      }
       const result = await win.myApi.petAction(1, target === 'pet' ? 1 : 0)
       if (result.state === 'ready' && result.status === 0 && hasPetPayload(result.payload)) {
         if (requestedMode === target) requestedMode = undefined
         applyPetReply(result)
         if (target === 'pet') await syncClock()
+        else refreshDeviceScreens()
       }
       return
     }
@@ -496,7 +505,7 @@ onMounted(async () => {
   buttonPoll = setInterval(refreshDeviceButtons, 45)
   liveScreens.tick()
   liveTimer = setInterval(() => {
-    if (appMode.value === 'work' && hasPerformanceScreens()) void samplePerformance()
+    if (hasPerformanceScreens()) void samplePerformance()
     if (workSyncTimer === undefined && pendingWorkLayers.value.length) void syncWorkConfig()
     else liveScreens.tick()
   }, 1500)
@@ -669,6 +678,19 @@ const samplePerformance = async () => {
   await refreshPerformancePreview(configStore.curMenu)
 }
 let performanceMenu = 0
+async function updatePerformanceColor(deviceMenu: number) {
+  const menu = deviceMenu - 1
+  const enabled = configStore.menuConfig[menu]?.screenConfig[0]?.content?.mode === 'performance'
+  if (enabled && performanceValues.value.length !== 3) return
+  if (!enabled && !performanceMenu) return
+  const result = await win.myApi.livePerformance(enabled ? deviceMenu : 0,
+    enabled ? [...performanceValues.value] : undefined)
+  if (result === 'ready' || result === 'unsupported') performanceUnavailable.value = result === 'unsupported'
+  if (result === 'ready') {
+    performanceMenu = enabled ? deviceMenu : 0
+    if (configStore.curMenu === menu) await refreshPerformancePreview(menu)
+  }
+}
 const liveScreens = createLiveScreens(menu => appMode.value === 'work' || !petState.value.active
   ? configStore.menuConfig[menu]?.screenConfig
   : [{ baseData: '', buffData: [] }, ...[0, 1].map(index => ({ baseData: '', buffData: [], content: petContent(index) }))],
@@ -680,18 +702,7 @@ const liveScreens = createLiveScreens(menu => appMode.value === 'work' || !petSt
       petSession = undefined
     }
   },
-  async menu => {
-    const enabled = appMode.value === 'work' && configStore.menuConfig[menu]?.screenConfig[0]?.content?.mode === 'performance'
-    if (enabled && performanceValues.value.length !== 3) return
-    if (!enabled && !performanceMenu) return
-    const result = await win.myApi.livePerformance(enabled ? menu + 1 : 0,
-      enabled ? [...performanceValues.value] : undefined)
-    if (result === 'ready' || result === 'unsupported') performanceUnavailable.value = result === 'unsupported'
-    if (result === 'ready') {
-      performanceMenu = enabled ? menu + 1 : 0
-      if (configStore.curMenu === menu) await refreshPerformancePreview(menu)
-    }
-  }, () => appMode.value === 'pet' && petState.value.active)
+  updatePerformanceColor, () => appMode.value === 'pet' && petState.value.active)
 const updateFirmware = async () => {
   if (firmwareUpdating.value || progressShow.value) return
   firmwareUpdating.value = true
@@ -886,7 +897,7 @@ async function readDeviceScreens() {
 }
 
 function refreshDeviceScreens() {
-  if (!conState.value || appMode.value === 'pet' || progressShow.value || firmwareUpdating.value || screenReadTask) return
+  if (!conState.value || appMode.value === 'pet' || petState.value.active || progressShow.value || firmwareUpdating.value || screenReadTask) return
   screenReadTask = readDeviceScreens().finally(() => { screenReadTask = undefined })
 }
 

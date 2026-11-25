@@ -27,6 +27,7 @@ enum {
     STATUS_EMPTY,
     STATUS_STALE,
     STATUS_INVALID,
+    PERFORMANCE_TIMEOUT_MS = 7000,
 };
 
 static const uint8_t request_magic[] = {0xaa, 0xbb, 0xc1, 0x53};
@@ -41,10 +42,12 @@ static uint32_t generation;
 static uint16_t held_buttons;
 static uint16_t pressed_buttons;
 static uint8_t performance_menu;
+static uint8_t performance_sample_menu;
 static uint32_t performance_updated;
 static uint8_t last_metrics[3];
 
 static void clear_performance(void) {
+    performance_sample_menu = 0;
     if (!performance_menu) return;
     performance_menu = 0;
     if (!pet_mode_is_active()) restore_menu_color();
@@ -92,7 +95,17 @@ static void show_performance(const uint8_t *metrics, bool first) {
         if (metrics[i] > 0 && metrics[i] <= 100)
             lcd_fill(82, y + 10, 82 + 153 * metrics[i] / 100, y + 19, accent, 0);
     }
-    memcpy(last_metrics, metrics, sizeof(last_metrics));
+}
+
+void screen_readback_restore_work_color(void) {
+    if (performance_sample_menu && performance_sample_menu == active_menu && !pixels_dirty &&
+        HAL_GetTick() - performance_updated < PERFORMANCE_TIMEOUT_MS) {
+        show_performance(last_metrics, true);
+        performance_menu = active_menu;
+        return;
+    }
+    performance_menu = performance_sample_menu = 0;
+    restore_menu_color();
 }
 
 void button_readback_record(uint8_t index, bool down) {
@@ -160,7 +173,7 @@ bool screen_readback_receive(const uint8_t *data, uint32_t length) {
 
 void screen_readback_applied(uint8_t menu) {
     active_menu = menu;
-    performance_menu = 0;
+    performance_menu = performance_sample_menu = 0;
     pixels_dirty = false;
     generation++;
 }
@@ -185,8 +198,9 @@ static void send_response(void) {
 }
 
 void screen_readback_poll(void) {
-    if (performance_menu && (pet_mode_is_active() || HAL_GetTick() - performance_updated >= 7000))
-        clear_performance();
+    const bool pet_active = pet_mode_is_active();
+    if (pet_active) performance_menu = 0;
+    if (performance_sample_menu && HAL_GetTick() - performance_updated >= PERFORMANCE_TIMEOUT_MS) clear_performance();
     if ((!request_pending && !response_size) || !CDC_TransmitReady_FS()) return;
     if (response_size) {
         send_response();
@@ -208,15 +222,19 @@ void screen_readback_poll(void) {
             status = STATUS_INVALID;
         } else if (!offset) {
             clear_performance();
-        } else if (offset != active_menu || pixels_dirty || pet_mode_is_active()) {
+        } else if (offset != active_menu || pixels_dirty) {
             status = STATUS_STALE;
         } else if ((metrics[0] > 100 && metrics[0] != 255) ||
                    (metrics[1] > 100 && metrics[1] != 255) ||
                    (metrics[2] > 100 && metrics[2] != 255)) {
             status = STATUS_INVALID;
         } else {
-            show_performance(metrics, !performance_menu);
-            performance_menu = (uint8_t)offset;
+            if (!pet_active) {
+                show_performance(metrics, !performance_menu);
+                performance_menu = (uint8_t)offset;
+            }
+            memcpy(last_metrics, metrics, sizeof(last_metrics));
+            performance_sample_menu = (uint8_t)offset;
             performance_updated = HAL_GetTick();
         }
     } else if (screen == BUTTON_STATE) {
