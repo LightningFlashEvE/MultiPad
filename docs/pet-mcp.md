@@ -28,7 +28,7 @@ $env:MULTIPAD_PET_MCP_TOKEN = [guid]::NewGuid().ToString('N')
 | `pet_get_care_guide` | 空 | 读取属性、动作和互动的规则，了解不同固件支持的能力及事件含义 |
 | `pet_get_state` | 空 | 返回模式、动作、位置、水果、排队数、时刻、季节、四项属性、背景和玩具互动进度 |
 | `pet_set_mode` | `enabled` | 进入桌宠模式，或退出并恢复当前层彩屏 |
-| `pet_play_action` | `action` | `trip_angry` 绊脚生气、`gaze_owner` 面向主人发呆，以及原有的 `idle`、`blink`、`walk`、`run`、`jump`、`sleep`、`daydream`、`eat`、`flee` |
+| `pet_play_action` | `action`，可选 `durationSeconds`、`untilEnergy` | `trip_angry` 绊脚生气、`gaze_owner` 面向主人发呆，以及原有的 `idle`、`blink`、`walk`、`run`、`jump`、`sleep`、`daydream`、`eat`、`flee` |
 | `pet_feed` | `fruit` | `apple`、`banana`、`orange`、`grape`、`strawberry`、`pear`、`cherry`、`watermelon` |
 | `pet_set_time` | `hour` | 设置场景的整点，范围 0–23 |
 | `pet_set_season` | `season` | `spring`、`summer`、`autumn`、`winter` |
@@ -75,7 +75,7 @@ $env:MULTIPAD_PET_MCP_TOKEN = [guid]::NewGuid().ToString('N')
 第 11 代固件可为 `sleep`、`daydream`、`gaze_owner`、`groom_fur` 和 `groom_ear` 填写 `durationSeconds`（1–300）。计时从动作真正开始算，睡觉走回兔窝的时间不计入。摸头期间动作暂停。定时睡觉还可填写 `untilEnergy`（40–90），到时或达到目标就醒，无需补满。旧固件仍接收不带时间的动作。
 
 ```json
-{"steps":[{"behavior":"sleep","durationSeconds":180,"untilEnergy":65},{"behavior":"daydream","durationSeconds":25}]}
+{"steps":[{"behavior":"sleep","durationSeconds":120,"untilEnergy":43},{"behavior":"daydream","durationSeconds":25}]}
 ```
 
 | 模型收到的字段 | 含义 |
@@ -94,7 +94,7 @@ $env:MULTIPAD_PET_MCP_TOKEN = [guid]::NewGuid().ToString('N')
 
 第五代固件支持观察主人摸头。在养宠模式下，轻按并松开大旋钮会轻拍兔子，按住后转动则会顺着旋转方向抚摸。桌面大旋钮可以模拟这两类操作。每次轻按或转过一格，键盘产生 `head_petted`，`encoder` 为 3，`gesture` 为 `tap`、`cw` 或 `ccw`。`source` 为 `physical` 表示实体旋钮，为 `mcp` 表示软件模拟。MCP 客户端可在 `pet_get_state.headPet` 读取方向与剩余毫秒数；一轮摸头结束后 `remainingMs` 为 0、`gesture` 为 `null`。旧固件的 `headPet` 为 `null`。
 
-新一轮摸头会让心情与好感各增加 1，1200 毫秒内再次触摸会延长动画。保持按住时，无论转过几格或中途停顿多久，整次只奖励一次。第六代固件的 headPet.phase 记录当前画格。手随旋钮推进或后退，停转时定格，兔子暂停移动，松手后恢复活动。饱食度达到 90 停止自动进食，精神值不高于 75 才自动睡，恢复到 95 自动醒。心情达到 90 或精神值不高于 15 会暂停自动玩玩具，好感达到 90 停止自动发起面向主人的动作。
+新一轮摸头会让心情与好感各增加 1，1200 毫秒内再次触摸会延长动画。保持按住时，无论转过几格或中途停顿多久，整次只奖励一次。第六代固件的 headPet.phase 记录当前画格。手随旋钮推进或后退，停转时定格，兔子暂停移动，松手后恢复活动。饱食度达到 90 停止自动进食，第 6–10 代固件的自主长睡在精神值不高于 75 时启动，恢复到 95 醒来。心情达到 90 或精神值不高于 15 会暂停自动玩玩具，好感达到 90 停止自动发起面向主人的动作。
 
 第一次调用 `pet_get_events` 可以省略游标。后续沿用上次返回的 `cursor`。`hasMore` 为真时，可以用新游标继续读取下一页。每页最多 16 条，键盘保留最近 64 条。连接发生变化时 `reset` 为真。游标早于缓存时 `overrun` 为真，返回当前能读到的最早一页。
 
