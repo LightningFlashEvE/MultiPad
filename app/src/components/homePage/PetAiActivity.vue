@@ -11,6 +11,8 @@ interface Activity {
   message: string
   step?: { label: string; index: number; total: number; next?: string }
   lastDecision?: string
+  source?: string
+  queue?: { next: string; remaining: number }
   nextDecisionAt?: number
 }
 
@@ -46,12 +48,13 @@ const display = computed(() => {
   if (!a || standby) return { text: standby, tone: 'muted' }
 
   const step = a.step
-  if (step) return { text: step.label, tone: 'active', stage: a.phase === 'action' ? '键盘已接收' : '准备执行',
-    progress: step.index + '/' + step.total, next: step.next }
-  const tone = a.phase === 'error' || a.phase === 'unconfirmed' ? 'error' : a.phase === 'thinking' ? 'thinking' : 'idle'
+  const tone = a.phase === 'error' ? 'error' : a.phase === 'thinking' ? 'thinking' : a.phase === 'action' ? 'active' : 'idle'
   const seconds = a.nextDecisionAt ? Math.max(0, Math.ceil((a.nextDecisionAt - now.value) / 1000)) : undefined
-  return { text: a.lastDecision ?? a.message, tone, stage: a.lastDecision ? '上次决定' : undefined,
-    countdown: seconds === undefined ? undefined : seconds ? seconds + ' 秒后决策' : '即将决策' }
+  const counter = a.queue ? '待执行 ' + a.queue.remaining + ' 步'
+    : seconds === undefined ? undefined : seconds ? seconds + ' 秒后编排' : '即将决策'
+  if (step) return { text: step.label, tone: 'active', stage: '键盘已接收', counter, next: a.queue?.next }
+  return { text: a.lastDecision ?? a.message, tone, stage: a.source ?? (a.lastDecision ? '上次决定' : undefined),
+    counter, next: a.queue?.next }
 })
 </script>
 
@@ -59,7 +62,7 @@ const display = computed(() => {
   <div class="ai-activity" :data-tone="display.tone" :title="[activity?.enabled && props.session === activity?.session ? activity?.message : display.text, display.next && '接下来 · ' + display.next].filter(Boolean).join('　')">
     <div class="caption">
       <strong>AI 决策</strong><span>{{ display.stage }}</span>
-      <span class="counter" aria-hidden="true">{{ display.progress || display.countdown }}</span>
+      <span class="counter" aria-hidden="true">{{ display.counter }}</span>
     </div>
     <div class="decision" role="status" aria-atomic="true">
       <b>{{ display.text }}</b><span v-if="display.next">接下来 · {{ display.next }}</span>

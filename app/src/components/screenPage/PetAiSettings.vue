@@ -11,7 +11,8 @@ interface AiState {
   enabled: boolean
   hasKey: boolean
   running: boolean
-  status: { phase: string; message: string; sequence?: number }
+  status: { phase: string; message: string }
+  activity: { queue?: { next: string; remaining: number } }
 }
 const api = (window as any).myApi
 const current = ref<AiState>()
@@ -75,7 +76,7 @@ const test = (kind: 'connection' | 'blink') => run(async () => { current.value =
 
 <template>
   <section class="pet-ai">
-    <p class="wide intro">摸头、投喂或放玩具会立即触发决策。空闲时大约每分钟编排一轮，动作按顺序执行。较长的一轮结束后再编排，新的互动会接管当前编排。</p>
+    <p class="wide intro">摸头、投喂或放玩具会优先触发 AI 回应。空闲时大约每分钟编排一轮，长动作可以继续执行。模型超时或返回无效动作时，兔子会按当前状态做出本地回应或继续活动。</p>
     <label>API 地址
       <input v-model.trim="apiUrl" class="settings-field" type="url" placeholder="https://api.example.com/v1" maxlength="2048" autocomplete="off">
     </label>
@@ -109,6 +110,7 @@ const test = (kind: 'connection' | 'blink') => run(async () => { current.value =
     <p v-if="!deviceReady" class="wide">测试眨眼需要键盘已连接并进入养宠模式。</p>
     <p v-if="current?.status" class="status wide" role="status" :data-phase="current.status.phase">
       {{ current.status.message }}
+      <span v-if="current.activity.queue" class="queue">接下来 · {{ current.activity.queue.next }}（待执行 {{ current.activity.queue.remaining }} 步）</span>
     </p>
     <p v-if="error" class="wide" role="alert">{{ error }}</p>
   </section>
@@ -126,6 +128,7 @@ const test = (kind: 'connection' | 'blink') => run(async () => { current.value =
 .actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .activation input { accent-color:var(--settings-accent); }
 .status { padding:8px; border-radius:6px; background:var(--settings-group); }
+.queue { display:block; margin-top:4px; }
 .status[data-phase=error], .status[data-phase=unconfirmed], [role=alert] { color: #8b312f; }
 @media(max-width:480px) { .pet-ai { grid-template-columns:1fr; padding:11px; } }
 </style>

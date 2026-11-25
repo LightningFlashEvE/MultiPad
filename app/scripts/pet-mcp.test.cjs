@@ -297,13 +297,15 @@ test('idle plans allow variable length, isolate invalid actions and wait briefly
   assert(!actions().some(action => ['sleep','eat','flee','gaze_owner','trip_angry','binky'].includes(action)))
   assert(activity.some(a => a.step?.label === '眨眼' && a.session === session))
   assert.equal(ai.getPetAiActivity().nextDecisionAt, roundStart + 60_000)
+  assert.deepEqual(ai.getPetAiActivity().queue, { next: '散步', remaining: 2 })
   assert.equal(scheduledDelay, 20_000) // Invalid eat is skipped, not rejected as a whole plan.
-  f.board.payload = payload(6, {}, [], [120,1])
+  f.board.payload = payload(6, {1:8})
   whenWaiting = () => { f.board.payload = payload(6) }
   assert.equal((await step()).phase, 'action')
   whenWaiting = undefined
   assert.equal(now, roundStart + 20_400)
   assert.equal(scheduledDelay, 29_600)
+  assert.deepEqual(ai.getPetAiActivity().queue, { next: '跳跃', remaining: 1 })
   f.board.payload = payload(6, {13:90})
   assert.match((await step()).message, /状态已变化.*跳跃/)
   assert.equal(now, roundStart + 50_000)
@@ -336,6 +338,16 @@ test('idle plans allow variable length, isolate invalid actions and wait briefly
   assert.equal((await auto()).phase, 'action')
   assert.equal(writes().at(-1), 8 | (25 << 5))
   assert.equal(scheduledDelay, 25_000)
+
+  const beforeFallback = writes().length
+  reply = {}
+  assert.match((await auto()).message, /模型未给出可执行的动作.*本地活动.*舔毛/)
+  assert.equal(writes().length, beforeFallback + 1)
+  f.board.payload = payload(11, {13:80})
+  offer({behavior:'run'},{behavior:'eat'})
+  assert.match((await auto()).message, /本地活动.*睡觉/)
+  assert.equal(writes().at(-1), 2 | (catalog.petMaxDurationSeconds << 5) | (catalog.petRecoveredEnergy << 14))
+
   ai.observePetAiSession(null)
   assert.equal(timer, undefined)
   ai.observePetAiSession(session)
@@ -464,7 +476,7 @@ test('owner inputs coalesce, interrupt stale plans and rearm a single idle round
   await done()
   assert.equal(f.board.requests.filter(r=>r.command>0).length,1)
   f.board.requests.length = 0
-  responseSteps = undefined
+  responseSteps = ['rest']
 
   // Automatic actions, our MCP feed, toy placement, fruit landing and toy recall do not wake AI.
   const quiet = timer
@@ -495,6 +507,7 @@ test('owner inputs coalesce, interrupt stale plans and rearm a single idle round
   assert.deepEqual(latest(),[{type:'toy_placed',toy:'carrot_toy'}])
 
   const beforePending = observations.length
+  responseSteps = undefined
   f.board.payload = payload(6, {12:58}, [1])
   ai.observePetOwnerCommand(session,2,1,f.board.payload)
   await runTimer()
