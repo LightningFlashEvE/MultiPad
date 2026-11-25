@@ -240,6 +240,11 @@ function automaticBehaviors(s: Awaited<ReturnType<typeof command>>, rabbitOnly =
   const canSleep = !!stats && stats.energy <= 75
   const canPlay = !!stats && stats.mood < 90 && stats.energy > 15
   if (canEat && (s.foods?.length || s.queuedFruit)) return []
+  if (rabbitOnly) {
+    if (s.action === 'sleep') return stats && stats.energy >= 95 && a.actions.includes('idle') ? ['idle'] : []
+    const toyPending = s.scene && (s.awaitingPlay?.[s.scene] || (s.deployedToys?.[s.scene] && s.toyDropProgress !== null && s.toyDropProgress < 100))
+    if (s.bedtime || toyPending || (s.action !== 'idle' && s.action !== 'walk')) return []
+  }
   return (rabbitOnly ? playableActions : behaviors).filter(b => {
     if (s.bedtime && s.action === 'sleep') return b === 'idle' && (stats?.energy ?? 0) >= 95
     if (fruits.some(f => f === b)) return canEat && a.feed && !s.foods?.length && !s.queuedFruit
@@ -247,6 +252,13 @@ function automaticBehaviors(s: Awaited<ReturnType<typeof command>>, rabbitOnly =
     if (b === 'play_carrot') return canPlay && a.interactToys.includes('carrot_toy')
     if (b === 'visit_hutch') return canSleep && a.visitDecorations.length > 0
     if (b === 'garden' || b === 'nursery') return s.scene !== b && a.scenes.includes(b)
+    if (rabbitOnly) {
+      if (stats && stats.energy <= 25) return b === 'sleep' && a.actions.includes(b)
+      if (b === 'idle' || b === 'eat' || b === 'flee' || b === 'trip_angry' || b === s.action) return false
+      if (b === 'sleep' && (!stats || stats.energy > 45)) return false
+      if ((b === 'run' || b === 'jump' || b === 'binky') && (!stats || stats.energy < 45 || stats.satiety < 35)) return false
+      if (b === 'binky' && (stats?.mood ?? 0) < 60) return false
+    }
     if (stats && stats.energy <= 15 && (b === 'run' || b === 'jump' || b === 'binky' || b === 'flee')) return false
     if (b === 'eat' && !canEat || b === 'sleep' && !canSleep || b === 'gaze_owner' && (stats?.affection ?? 100) >= 90) return false
     return a.actions.some(action => action === b)
@@ -275,10 +287,11 @@ export function createPetMcp(enabled: () => boolean = () => true,
     planRunning = true
     const accepted: string[] = []
     try {
-      let state = await command(commands.state)
-      const expected = session ?? state.session
+      let state: Awaited<ReturnType<typeof command>> | undefined
+      const expected = session ?? (await command(commands.state)).session
       for (const step of steps) {
         if (step.waitMs) await delay(step.waitMs, undefined, { signal: extra.signal })
+        if (!enabled() || extra.signal.aborted) return { accepted, stoppedBefore: step.behavior }
         state = await command(commands.state)
         if (!enabled() || extra.signal.aborted || state.session !== expected || !automaticBehaviors(state, rabbitOnly).includes(step.behavior))
           return { accepted, stoppedBefore: step.behavior, state }
@@ -301,7 +314,8 @@ export function createPetMcp(enabled: () => boolean = () => true,
   }, () => result(async () => {
     const state = await command(commands.state)
     const availableNow = rabbitOnly ? { actions: state.availableNow.actions, careNote: state.availableNow.careNote } : state.availableNow
-    return { ...state, availableNow, automaticBehaviors: automaticBehaviors(state, rabbitOnly) }
+    return { ...state, availableNow, automaticBehaviors: automaticBehaviors(state, rabbitOnly),
+      ...(rabbitOnly ? { reactionBehaviors: automaticBehaviors({ ...state, headPet: null }, true) } : {}) }
   }))
 
   server.registerTool('pet_get_events', {

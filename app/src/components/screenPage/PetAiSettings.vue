@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { defaultRabbitPersonality, personalityLimit } from '../../utils/petPersonality'
+import { defaultRabbitPersonality, personalityLimit, tokenPlanModels } from '../../utils/petPersonality'
 
 defineProps<{ deviceReady: boolean }>()
 
@@ -16,6 +16,11 @@ interface AiState {
 const api = (window as any).myApi
 const current = ref<AiState>()
 const model = ref('')
+const modelChoice = computed(() => tokenPlanModels.find(option => option === model.value) ?? 'custom')
+function chooseModel(event: Event) {
+  const selection = (event.target as HTMLSelectElement).value
+  model.value = selection === 'custom' ? '' : selection
+}
 const apiUrl = ref('')
 const apiKey = ref('')
 const personality = ref(defaultRabbitPersonality)
@@ -70,11 +75,19 @@ const test = (kind: 'connection' | 'blink') => run(async () => { current.value =
 
 <template>
   <section class="pet-ai">
-    <p>摸头、投喂或放玩具会触发 AI 决策；连续摸头在停手后回应一次。平时每 60 秒决定一轮，AI 只控制兔子自身，每轮最多六步动作。每步执行前都会重新检查兔子的状态。</p>
+    <p>摸头、投喂或放玩具会立即触发决策。空闲时每 60 秒编排一轮，每 10 秒安排一个动作或让兔子自由活动。新的互动会接管当前编排。</p>
     <label>API 地址
       <input v-model.trim="apiUrl" type="url" placeholder="https://api.example.com/v1" maxlength="2048" autocomplete="off">
     </label>
     <label>模型
+      <select :value="modelChoice" @change="chooseModel">
+        <optgroup label="百炼 Token Plan">
+          <option v-for="option in tokenPlanModels" :key="option" :value="option">{{ option }}</option>
+        </optgroup>
+        <option value="custom">自定义模型</option>
+      </select>
+    </label>
+    <label v-if="modelChoice === 'custom'">自定义模型名
       <input v-model.trim="model" placeholder="支持工具调用的模型名" maxlength="200" autocomplete="off">
     </label>
     <label>API Key
@@ -105,7 +118,7 @@ const test = (kind: 'connection' | 'blink') => run(async () => { current.value =
 .pet-ai { display: grid; gap: 12px; }
 .pet-ai p { margin: 0; font-size: 13px; }
 .pet-ai label { display: grid; gap: 4px; font-size: 13px; }
-.pet-ai input:not([type=checkbox]), .pet-ai textarea { padding: 6px 8px; border: 1px solid #aab7bd; border-radius: 6px; font: inherit; width: 100%; box-sizing: border-box; }
+.pet-ai input:not([type=checkbox]), .pet-ai textarea, .pet-ai select { padding: 6px 8px; border: 1px solid #aab7bd; border-radius: 6px; font: inherit; width: 100%; box-sizing: border-box; }
 .pet-ai textarea { resize: vertical; }
 .reset-personality { justify-self:start; border:0; padding:0; background:transparent; color:#2c665b; cursor:pointer; }
 .pet-ai .activation { display: flex; align-items: center; }

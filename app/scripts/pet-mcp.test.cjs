@@ -184,123 +184,115 @@ test('sixth-generation state reports both rooms without switching rooms', async 
   assert.equal(catalog.petStateGeneration(f.board.payload.subarray(0,-1)), 0)
 })
 
-test('model sees its personality, the complete available event window and care state without host credentials', async t => {
-  const f=fixture(t)
-  const saved=new Map()
-  class Store { get(key){return saved.get(key)} set(key,value){saved.set(key,value)} }
-  let timer, scheduledDelay, modelRequest, nextTool, nextSteps
-  const ai=loadModule('../electron/controller/petAi.ts',{
-    electron:{safeStorage:{isEncryptionAvailable:()=>true,encryptString:s=>Buffer.from(s),decryptString:b=>b.toString()}},
-    'electron-store':Store,'./petMcp':f.mcp,'./petCareGuide':guide,[pathToCatalog]:catalog,
-    '../../src/utils/petPersonality':loadModule('../src/utils/petPersonality.ts')
-  },{
-    setTimeout(fn,ms){scheduledDelay=ms;timer=fn;return 1},clearTimeout(){timer=undefined},
-    async fetch(_url,options){
-      modelRequest=JSON.parse(options.body)
-      const message=nextTool?{tool_calls:[{type:'function',function:{name:nextTool,arguments: nextTool === 'pet_perform_sequence' ? JSON.stringify({steps:nextSteps ?? [{behavior:'blink'},{behavior:'jump',waitMs:10}]}) : '{"fruit":"apple"}'}}]}:{}
-      return new Response(JSON.stringify({choices:[{message}]}))
+test('built-in AI makes one immediate decision from eligible actions and checks it against live state', async t => {
+  const f = fixture(t)
+  const saved = new Map()
+  class Store { get(key) { return saved.get(key) } set(key, value) { saved.set(key, value) } }
+  let timer, scheduledDelay, modelRequest, reply, beforeResponse, calls = 0, now = 10_000
+  const ai = loadModule('../electron/controller/petAi.ts', {
+    electron: {safeStorage:{isEncryptionAvailable:()=>true,encryptString:s=>Buffer.from(s),decryptString:b=>b.toString()}},
+    'electron-store': Store, './petMcp': f.mcp, [pathToCatalog]: catalog,
+    '../../src/utils/petPersonality': loadModule('../src/utils/petPersonality.ts')
+  }, {
+    Date: {now: () => now},
+    setTimeout(fn, ms) { scheduledDelay = ms; timer = fn; return 1 },
+    clearTimeout() { timer = undefined },
+    async fetch(_url, options) {
+      calls++
+      modelRequest = JSON.parse(options.body)
+      beforeResponse?.()
+      return new Response(JSON.stringify({ choices: [{ message: reply ?? {} }] }))
     }
   })
-  t.after(()=>ai.stopPetAi())
-  const cfg={apiUrl:'http://localhost:19377/v1',model:'fixture',apiKey:'secret-mcp-regression-key',personality:'胆小，喜欢在窝边观察主人。',enabled:false}
+  t.after(() => ai.stopPetAi())
+  const cfg = {apiUrl:'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',model:'qwen3.8-flash',
+    apiKey:'secret-mcp-regression-key',personality:'胆小，喜欢在窝边观察主人。',enabled:false}
   const activity = []
   ai.startPetAi(value => activity.push(value))
   ai.savePetAi(cfg)
-  nextTool='pet_feed'
-  assert.equal((await ai.testPetAi('connection')).status.phase,'error')
-  nextTool='pet_perform_sequence'
-  nextSteps=[{behavior:'blink'}]
-  assert.equal((await ai.testPetAi('connection')).status.phase,'idle')
-  nextSteps=undefined
-  assert.deepEqual(f.board.requests,[])
-  nextTool=undefined
-  const auto=async()=>{
-    ai.savePetAi({...cfg,enabled:true});timer()
-    const end=Date.now()+2500
-    while(ai.getPetAi().running&&Date.now()<end)await new Promise(r=>setImmediate(r))
-    assert(!ai.getPetAi().running);assert.equal(ai.getPetAi().status.phase,nextTool === 'pet_perform_sequence' ? 'action' : 'idle')
-    return JSON.parse(modelRequest.messages[1].content)
+  const offer = (...steps) => { reply = {tool_calls:[{type:'function',function:{name:'pet_perform_sequence',arguments:JSON.stringify({steps})}}]} }
+  const plan = (...actions) => offer(...Array.from({length:6}, (_, index) => ({behavior:actions[index] ?? 'rest'})))
+  const actions = () => modelRequest.tools[0].function.parameters.properties.steps.items.properties.behavior.enum
+  const writes = () => f.board.requests.filter(r => r.command > 0).map(r => r.value)
+  const step = async () => {
+    now += scheduledDelay; timer()
+    while (ai.getPetAi().running) await new Promise(resolve => setImmediate(resolve))
+    return ai.getPetAi().status
   }
-  f.board.events=Array.from({length:14},(_,i)=>i%2===0 ? [8,1,1,10] : [2,12,0,0])
-  f.board.events.push([18,0,1,3], [18,2,2,3])
-  f.board.payload=payload(5,{12:100},[1],[98,2])
-  let message=await auto()
-  assert.match(modelRequest.messages[0].content,/垂耳兔/)
-  assert.equal(message.personality,cfg.personality)
-  assert.equal(message.observation.state.generation,5)
-  assert.deepEqual(message.observation.state.headPet,{remainingMs:980,gesture:'ccw'})
-  assert.deepEqual(message.observation.state.hutchPosition,{x:246,y:142})
-  assert.equal(message.observation.state.positionY,139)
-  assert.deepEqual(message.observation.state.foods,[{fruit:'apple',x:41,y:129,stage:'landed'}])
-  const recent=message.observation.recentActivity
-  assert(!recent.partial);assert.equal(recent.events.length,16)
-  assert(recent.events.some(e=>e.source==='physical'&&e.key===1&&e.item==='carrot_toy'&&e.toy==='carrot_toy'))
-  assert(recent.events.some(e=>e.source==='automatic'&&e.action==='gaze_owner'))
-  assert(recent.events.some(e=>e.type==='head_petted'&&e.source==='physical'&&e.gesture==='tap'&&e.encoder===3))
-  assert(recent.events.some(e=>e.type==='head_petted'&&e.source==='mcp'&&e.gesture==='ccw'&&e.encoder===3))
-  assert(!modelRequest.tools.some(t=>/head|stroke|pat/.test(t.function.name)))
-  assert.match(message.observation.state.availableNow.careNote,/吃饱/)
-  assert(!modelRequest.tools.some(t=>t.function.name==='pet_feed'))
-  for(const token of [cfg.apiKey,'localhost',session,'userData'])assert(!JSON.stringify(modelRequest.messages).includes(token))
-  f.board.payload=payload(1)
-  message=await auto()
-  assert.equal(message.observation.state.stats,null);assert.equal(message.observation.recentActivity.events.length,16)
-  assert(!modelRequest.tools.some(t=>t.function.name.includes('toy')||t.function.name.includes('decoration')))
-  assert(modelRequest.tools.some(t=>t.function.name==='pet_perform_sequence'))
-  assert(!message.observation.state.automaticBehaviors.includes('trip_angry'))
-  assert(!f.board.requests.some(r=>r.command>0))
-  nextTool='pet_perform_sequence'
-  f.board.payload=payload(6,{12:95,13:0,14:97,15:100})
-  const snapshot=(await auto()).observation.state
-  for (const behavior of ['sleep','visit_hutch','apple','eat','gaze_owner','place_carrot'])
-    assert(!snapshot.automaticBehaviors.includes(behavior))
-  assert.equal(snapshot.stats.energy,100)
-  assert.equal('sleepiness' in snapshot.stats,false)
-  assert(snapshot.keyBindings && snapshot.deployedToys);assert.deepEqual(Object.keys(snapshot.availableNow).sort(),['actions','careNote'])
-  assert.deepEqual(f.board.requests.filter(r=>r.command>0).map(r=>r.value),[10,7])
-  assert(activity.some(a=>a.message.includes('1/2') && a.message.includes('眨眼') && a.session===session))
-  assert(activity.some(a=>a.message.includes('2/2') && a.message.includes('跳跃')))
-  assert.match(ai.getPetAiActivity().message,/最近决定.*跳跃/)
-  const steps = activity.filter(a => a.phase === 'action' && a.step)
-  assert.deepEqual(steps.map(a => a.step), [
-    { label:'眨眼', index:1, total:2, next:'跳跃' }, { label:'跳跃', index:2, total:2, next:undefined }
-  ])
-  assert.equal(ai.getPetAiActivity().lastDecision,'跳跃')
-  assert(scheduledDelay===60000 && ai.getPetAiActivity().nextDecisionAt>Date.now())
-  assert(!JSON.stringify(activity).includes(cfg.apiKey))
-  f.board.onWrite=()=>{f.board.payload=payload(6,{},[],[120,1,4])}
+
+  const auto = async () => { ai.savePetAi({...cfg, enabled:true}); return step() }
+  reply = {tool_calls:[{type:'function',function:{name:'pet_feed',arguments:'{}'}}]}
+  assert.equal((await ai.testPetAi('connection')).status.phase, 'error')
+  offer({behavior:'blink'})
+  assert.equal((await ai.testPetAi('connection')).status.phase, 'idle')
+  assert.deepEqual(f.board.requests, [])
+
+  f.board.payload = payload(5, {12:100}, [1], [98,2])
+  plan()
+  assert.equal((await auto()).phase, 'idle')
+  assert.deepEqual(actions(), ['rest'])
+
+  f.board.payload = payload(6, {12:67, 13:80, 14:55})
   await auto()
-  assert.deepEqual(f.board.requests.filter(r=>r.command>0).map(r=>r.value),[10,7,10])
-  assert.match(ai.getPetAiActivity().message,/已接收眨眼.*已跳过跳跃/)
-  f.board.onWrite=undefined
-  f.board.payload=payload(6)
-  const countWrites=()=>f.board.requests.filter(r=>r.command>0).length
-  const before=countWrites()
-  for(const behavior of ['apple','place_carrot','play_carrot','visit_hutch','nursery']) {
-    nextSteps=[{behavior:'blink'},{behavior}]
-    ai.savePetAi({...cfg,enabled:true});timer()
-    while(ai.getPetAi().running) await new Promise(r=>setImmediate(r))
-    assert.equal(ai.getPetAi().status.phase,'error')
-    assert.equal(countWrites(),before)
-  }
-  nextSteps=[{behavior:'blink'}]
-  assert.equal((await ai.testPetAi('blink')).status.phase,'action')
-  assert.equal(countWrites(),before+1)
-  const schema=modelRequest.tools[0].function.parameters.properties.steps.items.properties.behavior
-  assert.deepEqual(schema.enum,catalog.playableActions)
+  assert.deepEqual(actions(), ['sleep','rest'])
+  const modelInput = JSON.parse(modelRequest.messages[1].content)
+  assert.equal(modelInput.personality, cfg.personality)
+  assert.equal(modelInput.observation.stats.energy, 20)
+  assert.equal(modelRequest.enable_thinking, false)
+  assert.equal(modelRequest.tools[0].function.parameters.properties.steps.maxItems, 6)
+  for (const token of [cfg.apiKey, session, 'recentActivity', 'hutchPosition'])
+    assert(!JSON.stringify(modelRequest.messages).includes(token))
+  assert(!f.board.requests.some(r => 'after' in r))
+
+  f.board.payload = payload(9, {12:95, 13:0, 14:40, 15:100})
+  plan('blink', 'rest', 'walk', 'rest', 'rest', 'jump')
+  const requestCount = f.board.requests.length
+  assert.equal((await auto()).phase, 'action')
+  const roundStart = now
+  const modelCalls = calls
+  assert.deepEqual(f.board.requests.slice(requestCount).map(r => r.command), [0,0,3])
+  assert(!actions().some(action => ['sleep','eat','flee','gaze_owner','trip_angry','binky'].includes(action)))
+  assert(activity.some(a => a.step?.label === '眨眼' && a.session === session))
+  assert.equal(ai.getPetAiActivity().nextDecisionAt, roundStart + 60_000)
+  assert.equal(scheduledDelay, 20_000)
+  assert.equal((await step()).phase, 'action')
+  assert.equal(now, roundStart + 20_000)
+  assert.equal(scheduledDelay, 30_000)
+  f.board.payload = payload(6, {}, [], [120,1])
+  assert.match((await step()).message, /状态已变化.*跳跃/)
+  assert.equal(now, roundStart + 50_000)
+  assert.equal(scheduledDelay, 10_000)
+  assert.equal(calls, modelCalls)
+  assert.equal(writes().length, 2)
+  plan()
+  await step()
+  assert.equal(now, roundStart + 60_000)
+  assert.equal(calls, modelCalls + 1)
+
+  f.board.payload = payload(6)
+  offer({behavior:'jump'})
+  assert.equal((await auto()).phase, 'error')
+  plan('jump')
+  beforeResponse = () => { f.board.payload = payload(6, {}, [], [120,1]) }
+  assert.match((await auto()).message, /状态已变化.*跳跃/)
+  assert.equal(writes().length, 2)
+  beforeResponse = undefined
+
+  f.board.payload = payload(6)
+  offer({behavior:'blink'})
+  assert.equal((await ai.testPetAi('blink')).status.phase, 'action')
+  assert.deepEqual(actions(), ['blink'])
+  assert.equal(writes().length, 3)
+  assert.equal(writes().at(-1), 10)
   ai.observePetAiSession(null)
-  assert.equal(timer,undefined)
-  assert.equal(ai.getPetAiActivity().nextDecisionAt,undefined)
+  assert.equal(timer, undefined)
   ai.observePetAiSession(session)
-  assert.equal(scheduledDelay,200)
-  const firstTimer=timer
-  ai.observePetAiSession(session)
-  assert.equal(timer,firstTimer)
+  assert.equal(scheduledDelay, 200)
   timer()
   ai.observePetAiSession(null)
-  while(ai.getPetAi().running) await new Promise(r=>setImmediate(r))
-  assert.equal(timer,undefined)
-  assert.equal(ai.getPetAiActivity().message,'等待键盘进入养宠模式')
+  while (ai.getPetAi().running) await new Promise(resolve => setImmediate(resolve))
+  assert.equal(timer, undefined)
+  assert.equal(ai.getPetAiActivity().message, '等待键盘进入养宠模式')
 })
 
 test('rabbit MCP exposes only reads and body sequences, and rejects a mixed plan before any write', async t => {
@@ -323,20 +315,33 @@ test('owner inputs coalesce, interrupt stale plans and rearm a single idle round
   const config = new Map()
   class Store { get(k){ return config.get(k) } set(k,v){ config.set(k,v) } }
   const observations = []
-  let timer, pollDevice, stall, aborted = false
+  let timer, pollDevice, stall, expireRequest, deadline, responseSteps, waitingTouch, aborted = false
+  let now = 10_000
   const ai = loadModule('../electron/controller/petAi.ts', {
     electron:{safeStorage:{isEncryptionAvailable:()=>true,encryptString:s=>Buffer.from(s),decryptString:b=>b.toString()}},
     'node:timers':{setInterval(fn){pollDevice=fn;return 1},clearInterval(){pollDevice=undefined}},
+    'node:timers/promises':{setTimeout(){return new Promise(resolve => {waitingTouch = resolve})}},
     'electron-store':Store,'./petMcp':f.mcp,'./petCareGuide':guide,[pathToCatalog]:catalog,
     '../../src/utils/petPersonality':loadModule('../src/utils/petPersonality.ts')
   }, {
+    Date: {now: () => now},
     setTimeout(fn,ms){ timer={fn,ms};return timer }, clearTimeout(){ timer=undefined },
+    AbortSignal: { any: AbortSignal.any, timeout(ms) {
+      deadline = ms
+      const controller = new AbortController()
+      expireRequest = () => controller.abort()
+      return controller.signal
+    } },
     async fetch(_url,options) {
       observations.push(JSON.parse(JSON.parse(options.body).messages[1].content).observation)
       if (stall) await new Promise((_,reject) => options.signal.addEventListener('abort',()=>{
         aborted=true;reject(Error('aborted'))
       },{once:true}))
-      return new Response(JSON.stringify({choices:[{message:{}}]}))
+      const tool = JSON.parse(options.body).tools[0].function
+      const message = responseSteps ? {tool_calls:[{type:'function',function:{
+        name:tool.name, arguments:JSON.stringify({steps:responseSteps.map(behavior=>({behavior}))})
+      }}]} : {}
+      return new Response(JSON.stringify({choices:[{message}]}))
     }
   })
   const flush = () => new Promise(r=>setImmediate(r))
@@ -345,7 +350,7 @@ test('owner inputs coalesce, interrupt stale plans and rearm a single idle round
     assert(!ai.getPetAi().running)
   }
   const poll = () => pollDevice()
-  const runTimer = async () => { timer.fn();await done() }
+  const runTimer = async () => { now += timer.ms;timer.fn();await done() }
   const latest = () => observations.at(-1).ownerInteractions
   t.after(()=>ai.stopPetAi())
   // The retained ring already contains a previous owner's feed when AI is enabled.
@@ -353,22 +358,31 @@ test('owner inputs coalesce, interrupt stale plans and rearm a single idle round
   ai.observePetAiSession(session)
   ai.savePetAi({apiUrl:'http://localhost/v1',model:'fixture',apiKey:'fixture',enabled:true})
   await flush()
+  responseSteps = ['rest', 'jump', 'rest', 'rest', 'rest', 'rest']
   await runTimer()
   assert.deepEqual(latest(),[])
-  assert.equal(timer.ms,60_000)
+  assert.equal(timer.ms, 10_000)
+  assert.equal(ai.getPetAiActivity().nextDecisionAt, now + 60_000)
 
   f.board.payload=payload(6,{},[],[100,1])
   f.board.events.push([18,1,1,3],[18,2,1,3],[18,2,2,3])
   await poll()
-  assert(timer.ms>0 && timer.ms<=900)
-  await runTimer()
-  assert.equal(observations.length,1) // the hand is still on the knob
+  assert.equal(timer.ms, 0)
+  responseSteps = ['blink']
+  timer.fn()
+  for (let i=0;i<200 && !waitingTouch;i++) await flush()
+  assert.equal(observations.length,2)
+  assert.deepEqual(latest(),[{type:'head_petted'}])
+  assert(!f.board.requests.some(r => r.command > 0))
   f.board.events.push([18,1,1,3])
   await poll()
-  f.board.payload=payload(6)
-  await runTimer()
-  assert.deepEqual(latest(),[{type:'head_petted'}])
   assert.equal(observations.length,2)
+  f.board.payload=payload(6)
+  waitingTouch()
+  await done()
+  assert.equal(f.board.requests.filter(r=>r.command>0).length,1)
+  f.board.requests.length = 0
+  responseSteps = undefined
 
   // Automatic actions, our MCP feed, toy placement, fruit landing and toy recall do not wake AI.
   const quiet = timer
@@ -397,6 +411,25 @@ test('owner inputs coalesce, interrupt stale plans and rearm a single idle round
   ai.observePetOwnerCommand(session,12,0,payload(6,{16:0,19:10,29:2}))
   await runTimer()
   assert.deepEqual(latest(),[{type:'toy_placed',toy:'carrot_toy'}])
+
+  const beforePending = observations.length
+  f.board.payload = payload(6, {12:58}, [1])
+  ai.observePetOwnerCommand(session,2,1,f.board.payload)
+  await runTimer()
+  assert.equal(observations.length, beforePending + 1)
+  assert(!f.board.requests.some(r => r.command > 0))
+
+  f.board.payload = payload(6)
+  stall = true
+  ai.observePetOwnerCommand(session,2,3,payload(6))
+  timer.fn()
+  for (let i = 0; i < 200 && observations.length === beforePending + 1; i++) await flush()
+  assert.equal(deadline, 4000)
+  expireRequest()
+  await done()
+  assert.match(ai.getPetAiActivity().message, /模型超时.*眨眼/)
+  assert.deepEqual(f.board.requests.filter(r => r.command > 0).map(r => r.value), [10])
+  stall = false
   ai.observePetOwnerCommand(session,2,3,payload(6))
   ai.observePetAiSession(null)
   assert.equal(timer,undefined)

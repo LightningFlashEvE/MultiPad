@@ -12,8 +12,8 @@ static const PetCare initial_care = {
     .bindings = {1,2,3,4,5,6,7,8}, .hutch_x = 246, .hutch_y = 142
 };
 static PetCare care;
-/* Screen and USB readers see the last verified stats. Pending changes can
- * continue to accumulate while a failed page program is retried. */
+/* Pending changes can accumulate while a failed page program is retried.
+ * A completed meal is also reflected in live stats so it has immediate feedback. */
 static struct { uint8_t satiety, energy, mood, affection; } pending_stats;
 static uint32_t sequence, metabolism_ms, energy_ms, exercise_ms, retry_at;
 static uint16_t next_slot;
@@ -146,9 +146,13 @@ void pet_care_follow_clock(bool follow) {
     pet_care_save();
 }
 
+static uint8_t adjusted(uint8_t value, int delta) {
+    const int sum = value + delta;
+    return sum < 0 ? 0 : sum > 100 ? 100 : sum;
+}
+
 static void adjust(uint8_t *value, int delta) {
-    const int sum = *value + delta;
-    const uint8_t result = sum < 0 ? 0 : sum > 100 ? 100 : sum;
+    const uint8_t result = adjusted(*value, delta);
     if (result != *value) dirty = true;
     *value = result;
 }
@@ -176,6 +180,16 @@ void pet_care_adjust(int satiety, int energy, int mood, int affection) {
     adjust(&pending_stats.affection, affection);
     reset_bond_if_changed(previous);
     pet_care_save();
+}
+
+void pet_care_eat_fruit(void) {
+    pet_care_adjust(12, 0, 3, 2);
+    if (!dirty) return;
+    /* The fruit has been consumed. Show its reward while flash retries the
+     * pending snapshot. Explicit stat edits still require verified storage. */
+    care.satiety = adjusted(care.satiety, 12);
+    care.mood = adjusted(care.mood, 3);
+    care.affection = adjusted(care.affection, 2);
 }
 
 bool pet_care_set_stat(uint8_t index, uint8_t value) {

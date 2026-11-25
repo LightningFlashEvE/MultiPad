@@ -143,7 +143,8 @@ static void table_and_food_positions(void) {
     assert(pet_mode_action() == PET_STAND_WATCH && pet_mode_y() == 139);
     advance(780);
     assert(pet_mode_action() != PET_STAND_WATCH);
-    pet_care_adjust(-75, 0, 0, 0);
+    pet_care_adjust(-100, 0, 0, 0);
+    assert(pet_care_get()->satiety == 0);
     assert(pet_mode_control(2, 1) == 0 && pet_mode_control(2, 2) == 0);
     for (unsigned id = 1; id <= 2; id++) {
         for (unsigned t = 0; t < 6000 && pet_mode_action() != PET_EAT; t++) advance(1);
@@ -152,6 +153,7 @@ static void table_and_food_positions(void) {
         int distance = food[0].x - pet_mode_x();
         assert(distance == (id == 1 ? 28 : -28));
         advance(851);
+        assert(pet_care_get()->satiety == 12 * id);
     }
 }
 
@@ -200,6 +202,16 @@ int main(void) {
         saw_table |= pet_mode_action() == PET_INSPECT_TABLE;
     }
     assert(saw_lookout && saw_table);
+    assert(pet_mode_control(6, 0) == 0 && pet_mode_control(6, 1) == 0);
+    assert(pet_mode_control(3, PET_INSPECT_TABLE) == 0);
+    pet_care_adjust(-100, 0, 0, 0);
+    assert(pet_mode_active_toy() != 0);
+    assert(pet_mode_control(2, 1) == 0);
+    advance(675);
+    assert(pet_mode_active_toy() == 0 && pet_mode_fruit() == 1);
+    advance(4500);
+    assert(pet_care_get()->satiety == 12);
+    assert(pet_mode_queue_depth() == 0);
     puts("Encoder 3 head-pat tests passed");
     return 0;
 }
