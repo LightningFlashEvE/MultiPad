@@ -14,6 +14,19 @@ MultiPad is a programmable desktop keypad with eight keys, three rotary encoders
 
 ![The item picker and physical key bindings in the Windows app](docs/images/pet-items.png)
 
+## Work mode
+
+Select **工作模式** (Work) at the top of the Windows app. You can also hold the large encoder on the keypad for about 1.2 seconds to switch modes. When leaving Pet mode, hold it without turning, then release.
+
+| Control | What to configure |
+| --- | --- |
+| K1–K8 and the three encoders | Click a key or encoder in the app to assign a shortcut, key sequence with delays, text, file or app launch, media control, or mouse action. Encoder presses and turns can have separate assignments. |
+| Configuration layers | Use the arrows beside **本机第 N 层** (Local layer N) to edit up to 10 layers. Assign **菜单控制** (Menu control) to a physical key to go to the previous, next, or a specific layer. For example, keep office and video-editing shortcuts on separate layers. |
+| Color display | Choose an image or **电脑性能监测** (PC performance monitor) for CPU, memory, and system drive usage. |
+| Two OLEDs | Configure each display for the current layer with an image, custom text, time, date, date and time, or API data. |
+
+Click **发送到键盘** (Send to keypad) to transfer the enabled layers and their display settings over USB. Live PC metrics and dynamic OLED updates require the Windows app to stay connected over USB and compatible firmware.
+
 ## Living with the rabbit
 
 | Control | What it does |
