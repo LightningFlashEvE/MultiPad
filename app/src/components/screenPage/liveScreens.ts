@@ -14,7 +14,7 @@ export function createLiveScreens(
   paused: () => boolean,
   hasDynamicScreens: () => boolean,
   setConnected: (connected: boolean) => void,
-  updateColor: (menu: number) => Promise<void>,
+  updateColor: (deviceMenu: number) => Promise<void>,
   allowUnconfiguredMenu: () => boolean
 ) {
   const win = window as any
@@ -50,6 +50,7 @@ export function createLiveScreens(
     }
 
     const menu = Math.max(0, device.menu - 1)
+    if (device.menu && !paused()) await updateColor(device.menu)
     await Promise.all([1, 2].map(async screen => {
       const config = getScreens(menu)?.[screen]?.content
       if (!config || config.mode === 'text') return
@@ -92,7 +93,6 @@ export function createLiveScreens(
       if (result.state !== 'ready' || result.code !== 0) return result.state === 'busy' || result.code === 2
       displayed.set(screen, frame.baseData)
     }
-    if (!paused()) await updateColor(menu)
   }
 
   function retryPetRefresh() {
