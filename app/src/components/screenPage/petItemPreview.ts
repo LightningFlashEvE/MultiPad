@@ -142,8 +142,9 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     if (play?.bedtime && hungry && play.gardenFood && !rooms[1].foods.length && rooms[0].foods.length) switchRoom(0)
     let room = rooms[pet.scene]
     const first = room.foods[0]
-    if (gesture?.action !== 15 && first && time - first.droppedAt >= fallMs && hungry) {
-      if (play?.bedtime) play = undefined
+    const veryHungry = stats.satiety <= 25
+    if ((gesture?.action !== 15 || veryHungry) && first && time - first.droppedAt >= fallMs && hungry) {
+      if (play?.bedtime || veryHungry) play = undefined
       if (!play && !food) food = { target: first.x - (first.x >= pet.x ? 28 : -28) }
     }
     pet.actionAgeMs = undefined

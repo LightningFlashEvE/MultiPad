@@ -159,6 +159,20 @@ static void failed_writes_recover(void) {
     stats(74, 69, 80, 42);
 }
 
+static void fruit_reward_is_visible_during_flash_retry(void) {
+    new_flash();
+    assert(pet_care_set_stat(0, 0));
+    program_bytes = 12;
+    pet_care_eat_fruit();
+    stats(12, 75, 73, 37);
+    pet_care_eat_fruit(); /* A second meal during the retry window still counts once. */
+    stats(24, 75, 76, 39);
+    program_bytes = RECORD;
+    tick(1000, false);
+    pet_care_init(W25Q128);
+    stats(24, 75, 76, 39);
+}
+
 static void sector_rotation_survives_unplug(void) {
     new_flash();
     for (unsigned batch = 0; batch < 3; batch++) {
@@ -211,6 +225,7 @@ int main(void) {
     pet_care_init(W25Q128);
     stats(0, 1, 2, 100);
     failed_writes_recover();
+    fruit_reward_is_visible_during_flash_retry();
     sector_rotation_survives_unplug();
     puts("Pet care power-loss tests passed");
     return 0;

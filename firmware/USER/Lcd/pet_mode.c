@@ -654,8 +654,9 @@ static void update_action(uint32_t now, uint32_t step_ms) {
         change_background(PET_GARDEN, SOURCE_AUTOMATIC);
         floor = current_floor();
     }
-    if (bedtime && wants_food() && floor->count && floor->foods[0].stage == FOOD_LANDED)
-        end_toy(true, SOURCE_AUTOMATIC, now);
+    const bool food_ready = wants_food() && floor->count && floor->foods[0].stage == FOOD_LANDED;
+    const bool very_hungry = pet_care_get()->satiety <= 25;
+    if (food_ready && (bedtime || very_hungry)) end_toy(true, SOURCE_AUTOMATIC, now);
     if (active_toy) {
         if (bedtime && pet_care_get()->energy >= 95) {
             end_toy(false, SOURCE_AUTOMATIC, now);
@@ -680,7 +681,7 @@ static void update_action(uint32_t now, uint32_t step_ms) {
         }
         return;
     }
-    if (action != PET_BINKY && !fruit && wants_food() && floor->count && floor->foods[0].stage == FOOD_LANDED) {
+    if ((action != PET_BINKY || very_hungry) && !fruit && food_ready) {
         fruit = floor->foods[0].id;
         direction = floor->foods[0].x >= x ? 1 : -1;
         walk_remainder = 0;
@@ -711,7 +712,7 @@ static void update_action(uint32_t now, uint32_t step_ms) {
         case PET_EAT:
             if (elapsed >= (fruit ? FRUIT_EAT_MS : 2100u)) {
                 if (fruit) {
-                    pet_care_adjust(12, 0, 3, 2);
+                    pet_care_eat_fruit();
                     record_event(PET_EVENT_FRUIT_EATEN, fruit, floor->foods[0].source, pet_care_get()->scene);
                     floor->count--;
                     memmove(floor->foods, floor->foods + 1, floor->count * sizeof(FloorFood));
