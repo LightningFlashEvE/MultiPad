@@ -4,6 +4,11 @@ export const petUnattendedDecayMs = 120_000
 export const petDaydreamMs = 15_000
 export const petGazeOwnerMs = 8_000
 export const petAutoSleepIdleMs = 45_000
+export const petAutoSleepEnergy = 40
+export const petRecoveredEnergy = 70
+export const timedPetActions = ['sleep', 'daydream', 'gaze_owner', 'groom_fur', 'groom_ear'] as const
+export const petTimedActionCommand = 27
+export const petMaxDurationSeconds = 300
 
 export const petActions = ['idle', 'walk', 'sleep', 'eat', 'fall', 'fetch', 'run', 'jump', 'daydream', 'flee', 'blink', 'trip_angry', 'gaze_owner', 'stand_watch', 'inspect_table', 'binky', 'groom_fur', 'groom_ear'] as const
 export const playableActions = ['idle', 'blink', 'walk', 'run', 'jump', 'sleep', 'daydream', 'eat', 'flee', 'trip_angry', 'gaze_owner', 'stand_watch', 'inspect_table', 'binky', 'groom_fur', 'groom_ear'] as const
@@ -92,7 +97,8 @@ export function petStateGeneration(p: Uint8Array) {
   const endOfFoods = 33 + 6 * p[32]
   const roomEnd = endOfFoods + 10 + 6 * p[endOfFoods + 9]
   const danceSupported = p.length === roomEnd + 3 && (p[roomEnd + 2] === 8 || p[roomEnd + 2] === 9 || p[roomEnd + 2] === 10)
-  const tableSupported = danceSupported || p.length === roomEnd + 1 && p[roomEnd] === 7
+  const timingSupported = p.length === roomEnd + 5 && p[p.length - 1] === 11 && (p[roomEnd] | p[roomEnd + 1] << 8) <= petMaxDurationSeconds
+  const tableSupported = timingSupported || danceSupported || p.length === roomEnd + 1 && p[roomEnd] === 7
   const layoutEnd = tableSupported ? roomEnd : p.length
   const tailLength = layoutEnd - endOfFoods
   if ((tailLength !== 0 && tailLength !== 4 && tailLength !== 6 && tailLength < 10) ||
@@ -111,7 +117,7 @@ export function petStateGeneration(p: Uint8Array) {
   if (tailLength >= 10) {
     const count = p[endOfFoods + 9]
     return count <= 8 && tailLength === 10 + count * 6 && p[endOfFoods + 6] < 12 &&
-      p[endOfFoods + 7] < 8 && p[endOfFoods + 8] <= 100 && validFoodEntries(p, endOfFoods + 10, layoutEnd) ? (danceSupported ? p[roomEnd + 2] : tableSupported ? 7 : 6) : 0
+      p[endOfFoods + 7] < 8 && p[endOfFoods + 8] <= 100 && validFoodEntries(p, endOfFoods + 10, layoutEnd) ? (timingSupported ? 11 : danceSupported ? p[roomEnd + 2] : tableSupported ? 7 : 6) : 0
   }
   return 5
 }

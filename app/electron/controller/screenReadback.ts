@@ -1,6 +1,6 @@
 import { DEVICE_SCREEN_SIZES, type DeviceScreens } from '../../src/utils/deviceScreenFormat'
 import type { DeviceButtons } from '../../src/utils/deviceButtonState'
-import { isStatCommand, isStatValue, isHeadPetInput, isHutchPosition, petStateGeneration } from '../../src/utils/petCatalog'
+import { isStatCommand, isStatValue, isHeadPetInput, isHutchPosition, petStateGeneration, petTimedActionCommand } from '../../src/utils/petCatalog'
 
 const REQUEST_MAGIC = Buffer.from([0xaa, 0xbb, 0xc1, 0x53])
 const RESPONSE_MAGIC = Buffer.from([0x4d, 0x50, 0x53, 1])
@@ -157,7 +157,7 @@ export default class ScreenReadback {
       if (this.petGeneration === undefined) {
         // Older boards answer an unknown generation with the 12-byte layout.
         // Try each known generation with reads before sending any mutation.
-        let requested = 10
+        let requested = 11
         let probe = await this.petExchange(PET_CONTROL, requested, 0)
         while (probe.state === 'ready' && probe.status === STATUS_OK && probe.payload.length === 12 && requested > 2) {
           probe = await this.petExchange(PET_CONTROL, --requested, 0)
@@ -169,6 +169,8 @@ export default class ScreenReadback {
         if (!request.command) return probe
       }
       const { command, value } = request
+      if (command === petTimedActionCommand && this.petGeneration < 11) return { state: 'unsupported' }
+      if (command === petTimedActionCommand && (!Number.isInteger(value) || value < 0 || value > 0x1fffff)) return { state: 'unavailable' }
       if (isStatCommand(command) && this.petGeneration < 10) return { state: 'unsupported' }
       if (isStatCommand(command) && !isStatValue(value)) return { state: 'unavailable' }
       if ((command === 3 && value >= 16 && this.petGeneration < 9) || (command === 3 && value === 15 && this.petGeneration < 8) || (command === 3 && value >= 13 && this.petGeneration < 7) ||
@@ -180,7 +182,7 @@ export default class ScreenReadback {
           !isHutchPosition(value & 511, value >> 9))) return { state: 'unavailable' }
       if (command === 22 && !isHeadPetInput(value)) return { state: 'unavailable' }
       const opcode = command === 10 ? 16 + (value >> 8) : command
-      const offset = opcode | ((command === 14 ? value : value & 255) << 8)
+      const offset = opcode | ((command === 14 || command === petTimedActionCommand ? value : value & 255) << 8)
       const reply = await this.petExchange(PET_CONTROL, this.petGeneration === 1 ? 0 : this.petGeneration, offset)
       if (reply.state === 'ready' && reply.status === STATUS_OK &&
           petStateGeneration(reply.payload) !== this.petGeneration) return { state: 'unavailable' }

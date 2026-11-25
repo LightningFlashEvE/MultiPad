@@ -14,6 +14,8 @@ enum {
     SLEEP_AFTER_MS = 45000,
     DAYDREAM_MS = 15000,
     GAZE_OWNER_MS = 8000,
+    AUTO_SLEEP_ENERGY = 40,
+    RECOVERED_ENERGY = 70,
     ENCODER_HOLD_MS = 1200,
     HEAD_PAT_MS = 1200,
     GROUND = 139,
@@ -121,6 +123,8 @@ static const PetToy toys[] = {
 static const PetToy *active_toy;
 static uint8_t toy_phase, toy_source, action_source, walk_stops;
 static bool bedtime, return_for_garden_food;
+static uint32_t timed_duration_ms;
+static uint8_t timed_energy_target;
 
 static bool hungry(void) { return pet_care_get()->satiety < 100; }
 
@@ -154,6 +158,7 @@ static void set_action_from(PetAction next, uint32_t now, uint8_t source) {
         dance_direction = x < WALK_MIN + 36 ? 1 : x > WALK_MAX - 36 ? -1 : direction;
         direction = dance_direction;
     }
+    if (next != PET_SLEEP || !bedtime) timed_duration_ms = timed_energy_target = 0;
     action = next;
     action_source = source;
     action_since = now;
@@ -306,6 +311,12 @@ static void set_mode(bool enabled, uint8_t source, uint32_t now) {
 }
 
 bool pet_mode_is_active(void) { return active; }
+uint16_t pet_mode_timed_remaining(void) {
+    if (!active || !timed_duration_ms) return 0;
+    const uint32_t elapsed = bedtime && action != PET_SLEEP ? 0 : HAL_GetTick() - action_since;
+    return elapsed < timed_duration_ms ? (uint16_t)((timed_duration_ms - elapsed + 999u) / 1000u) : 0;
+}
+
 uint16_t pet_mode_action_age(void) {
     uint32_t age = HAL_GetTick() - action_since;
     return age < 65535 ? (uint16_t)age : 65535;
@@ -558,6 +569,7 @@ uint8_t pet_mode_control(uint8_t opcode, uint8_t value) {
                 return OK;
             }
             if (value == PET_SLEEP) {
+                timed_duration_ms = timed_energy_target = 0;
                 visit_hutch(true, SOURCE_MCP, now);
                 return OK;
             }
@@ -617,6 +629,22 @@ uint8_t pet_mode_control(uint8_t opcode, uint8_t value) {
     }
 }
 
+uint8_t pet_mode_play_timed(uint32_t packed) {
+    const unsigned move = packed & 31u;
+    const unsigned seconds = (packed >> 5) & 511u;
+    const unsigned energy = packed >> 14;
+    if (!seconds || seconds > 300 || (energy && (move != PET_SLEEP || energy < 40 || energy > 90)) ||
+        (move != PET_SLEEP && move != PET_DAYDREAM && move != PET_GAZE_OWNER &&
+         move != PET_GROOM_FUR && move != PET_GROOM_EAR)) return INVALID;
+    const uint8_t status = pet_mode_control(3, (uint8_t)move);
+    if (status == OK) {
+        timed_duration_ms = seconds * 1000u;
+        timed_energy_target = (uint8_t)energy;
+        if (move == PET_SLEEP && action == PET_SLEEP) action_since = HAL_GetTick();
+    }
+    return status;
+}
+
 static void settle_drops(uint32_t now) {
     for (unsigned room = 0; room < PET_SCENE_COUNT; room++) {
         PetFloor *floor = floors + room;
@@ -666,7 +694,10 @@ static void update_action(uint32_t now, uint32_t step_ms) {
     const bool very_hungry = pet_care_get()->satiety <= 25;
     if (food_ready && (bedtime || very_hungry)) end_toy(true, SOURCE_AUTOMATIC, now);
     if (active_toy) {
-        if (bedtime && pet_care_get()->energy >= 95) {
+        if (bedtime && action == PET_SLEEP &&
+            (timed_duration_ms ? elapsed >= timed_duration_ms ||
+                (timed_energy_target && pet_care_get()->energy >= timed_energy_target)
+                : pet_care_get()->energy >= (toy_source == SOURCE_AUTOMATIC ? RECOVERED_ENERGY : 95))) {
             end_toy(false, SOURCE_AUTOMATIC, now);
             last_input = now;
             return;
@@ -734,7 +765,7 @@ static void update_action(uint32_t now, uint32_t step_ms) {
             return;
         case PET_TRIP_ANGRY:
         case PET_GAZE_OWNER:
-            if (elapsed >= (action == PET_TRIP_ANGRY ? 2050u : GAZE_OWNER_MS)) {
+            if (elapsed >= (timed_duration_ms ? timed_duration_ms : action == PET_TRIP_ANGRY ? 2050u : GAZE_OWNER_MS)) {
                 if (action == PET_TRIP_ANGRY) pet_care_adjust(0, -1, -4, 0);
                 else if (!unattended(now)) pet_care_adjust(0, 0, 1, action_source == SOURCE_MCP ? 1 : 0);
                 set_action(PET_IDLE, now);
@@ -747,7 +778,7 @@ static void update_action(uint32_t now, uint32_t step_ms) {
             return;
         case PET_GROOM_FUR:
         case PET_GROOM_EAR:
-            if (elapsed >= (action == PET_GROOM_FUR ? 2500u : 3000u)) set_action(PET_IDLE, now);
+            if (elapsed >= (timed_duration_ms ? timed_duration_ms : action == PET_GROOM_FUR ? 2500u : 3000u)) set_action(PET_IDLE, now);
             return;
         case PET_STAND_WATCH:
             if (elapsed >= 3875) set_action(PET_IDLE, now);
@@ -756,7 +787,7 @@ static void update_action(uint32_t now, uint32_t step_ms) {
         case PET_JUMP:
         case PET_BLINK:
         case PET_DAYDREAM: {
-            const uint32_t duration = action == PET_JUMP ? 500u : action == PET_BLINK ? 125u : DAYDREAM_MS;
+            const uint32_t duration = action == PET_JUMP ? 500u : action == PET_BLINK ? 125u : timed_duration_ms ? timed_duration_ms : DAYDREAM_MS;
             if (elapsed >= duration) set_action(PET_IDLE, now);
             return;
         }
@@ -770,7 +801,7 @@ static void update_action(uint32_t now, uint32_t step_ms) {
             break;
     }
 
-    if (pet_care_get()->energy <= 75 && (!floor->count || !wants_food()) && now - last_input >= SLEEP_AFTER_MS) {
+    if (pet_care_get()->energy <= AUTO_SLEEP_ENERGY && (!floor->count || !wants_food()) && now - last_input >= SLEEP_AFTER_MS) {
         visit_hutch(true, SOURCE_AUTOMATIC, now);
     } else if (action == PET_IDLE) {
         if (elapsed >= 1700) set_action(PET_WALK, now);

@@ -59,6 +59,7 @@ export const petCareGuide = {
     2: '增加四项属性、trip_angry、gaze_owner 和场景；宝宝房兔窝通过 pet_use_toy 短暂互动。',
     3: '增加多份地面食物、玩具放置和重玩、回窝长睡、跟随时间与按键绑定。此代兔窝仍占用宝宝房玩具位。',
     4: '兔窝成为独立可移动装饰。使用 activeDecoration、decorationPhase 和 hutchPosition 读取回窝状态。',
+    11: '睡觉、发呆、面向主人发呆、舔毛和梳理垂耳支持 1–300 秒。定时睡眠从到窝睡着起计时，可按精神目标提前醒。自动睡觉在精神值不高于 40 时启动，恢复到 70 醒来。',
     9: '好感随持续照料状况变化，可以编排 groom_fur 和 groom_ear。',
     8: '可执行 binky 兔子舞，动作年龄可用 actionAgeMs 观察。普通眺望直立约 3 秒。',
     7: '可站起来眺望，在宝宝房探访 nursery_table。家具互动阶段为 approaching 或 using。',
@@ -66,7 +67,7 @@ export const petCareGuide = {
     5: '可通过 headPet 和 head_petted 观察主人摸头。事件 source 为 physical 时来自键盘旋钮，mcp 表示软件操作。'
   },
   observation: {
-    inputs: { sequence: 'pet_perform_sequence(steps)，每步包含 behavior 和 waitMs。automaticBehaviors 列出当前符合需求的行为。', actions: 'pet_play_action(action)', feed: 'pet_feed(fruit)', useToys: 'pet_use_toy(toy)',
+    inputs: { sequence: 'pet_perform_sequence(steps)，每步包含 behavior 和 waitMs，可选 durationSeconds，定时睡眠可加 untilEnergy。automaticBehaviors 列出当前符合需求的行为。', actions: 'pet_play_action(action, durationSeconds?, untilEnergy?)', feed: 'pet_feed(fruit)', useToys: 'pet_use_toy(toy)',
       placeToys: 'pet_place_toy(toy)', interactToys: 'pet_interact_with_toy(toy)',
       visitDecorations: 'pet_interact_with_decoration(decoration)', moveDecorations: 'pet_move_decoration(decoration,x,y)',
       scenes: 'pet_set_scene(scene)', setHour: 'pet_set_time(hour)', setSeason: 'pet_set_season(season)', setMode: 'pet_set_mode(enabled)' },

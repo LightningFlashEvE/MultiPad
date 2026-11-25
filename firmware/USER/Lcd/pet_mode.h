@@ -59,6 +59,8 @@ void pet_mode_poll(void);
 /* USB diagnostics report the action, position and completed LCD frame count. */
 PetAction pet_mode_action(void);
 uint16_t pet_mode_action_age(void);
+uint16_t pet_mode_timed_remaining(void);
+uint8_t pet_mode_play_timed(uint32_t packed);
 uint16_t pet_mode_x(void);
 uint8_t pet_mode_y(void);
 uint32_t pet_mode_frames(void);

@@ -225,6 +225,28 @@ int main(void) {
     assert(pet_mode_action() == PET_GAZE_OWNER);
     advance(1);
     assert(pet_mode_action() == PET_IDLE);
+    assert(pet_mode_play_timed(PET_GROOM_FUR | (9u << 5)) == 0);
+    advance(8999);
+    assert(pet_mode_action() == PET_GROOM_FUR && pet_mode_timed_remaining() == 1);
+    advance(1);
+    assert(pet_mode_action() == PET_IDLE && pet_mode_timed_remaining() == 0);
+    assert(pet_mode_play_timed(PET_BLINK | (5u << 5)) == 3);
+    pet_care_adjust(0, -100, 0, 0);
+    assert(pet_mode_play_timed(PET_SLEEP | (5u << 5) | (60u << 14)) == 0);
+    assert(pet_mode_timed_remaining() == 5);
+    for (unsigned i = 0; i < 5000 && pet_mode_action() != PET_SLEEP; ++i) advance(1);
+    assert(pet_mode_action() == PET_SLEEP && pet_mode_timed_remaining() == 5);
+    advance(4999);
+    assert(pet_mode_action() == PET_SLEEP);
+    advance(1);
+    assert(pet_mode_action() == PET_IDLE && pet_mode_timed_remaining() == 0);
+    assert(pet_care_get()->energy < 60);
+    pet_care_adjust(0, 59, 0, 0);
+    assert(pet_care_get()->energy == 59);
+    assert(pet_mode_play_timed(PET_SLEEP | (90u << 5) | (60u << 14)) == 0);
+    advance(23000);
+    assert(pet_mode_action() != PET_SLEEP && pet_mode_timed_remaining() == 0);
+    assert(pet_care_get()->energy >= 59 && pet_care_get()->energy <= 60);
     puts("Encoder 3 head-pat tests passed");
     return 0;
 }

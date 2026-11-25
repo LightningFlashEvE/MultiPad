@@ -1,13 +1,13 @@
 import type { PetState } from './petDisplay'
 import { isStatValue, petStats, binkyChance, binkyDuration, binkyMotion, defaultHutchPosition, isHutchPosition,
-  petCareGraceMs, petUnattendedDecayMs, petDaydreamMs, petGazeOwnerMs, petAutoSleepIdleMs } from '../../utils/petCatalog'
+  petCareGraceMs, petUnattendedDecayMs, petDaydreamMs, petGazeOwnerMs, petAutoSleepIdleMs, petAutoSleepEnergy, petRecoveredEnergy } from '../../utils/petCatalog'
 
 export const previewCare = { satiety: 65, energy: 75, mood: 70, affection: 35 }
 type Food = { id: number; x: number; droppedAt: number }
 type Room = { toy: number; droppedAt: number; awaitingPlay: boolean; foods: Food[] }
 type FoodActivity = { target: number; eatingAt?: number }
 type RoomActivity = { item: 1 | 2 | 3; bedtime: boolean; usingAt?: number; gardenFood: boolean;
-  fromX: number; fromY: number; walkStart: number }
+  fromX: number; fromY: number; walkStart: number; wakeEnergy: number }
 
 const fallMs = 650
 const clampStat = (value: number) => Math.max(0, Math.min(value, 100))
@@ -80,14 +80,14 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     room.awaitingPlay = !!toy
   }
 
-  function startActivity(item: 1 | 2 | 3, bedtime = false, gardenFood = false) {
-    play = { item, bedtime, gardenFood, fromX: state().x, fromY: state().rabbitY ?? 139, walkStart: time }
+  function startActivity(item: 1 | 2 | 3, bedtime = false, gardenFood = false, wakeEnergy = 95) {
+    play = { item, bedtime, gardenFood, wakeEnergy, fromX: state().x, fromY: state().rabbitY ?? 139, walkStart: time }
   }
 
-  function visitHutch(bedtime: boolean) {
+  function visitHutch(bedtime: boolean, automatic = false) {
     const gardenFood = state().scene === 0 && rooms[0].foods.length > 0
     switchRoom(1)
-    startActivity(1, bedtime, gardenFood)
+    startActivity(1, bedtime, gardenFood, automatic ? petRecoveredEnergy : 95)
   }
 
   function updateCare(pet: PetState, stats: typeof previewCare, dt: number) {
@@ -156,7 +156,7 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
       if (leavingTable) return
     }
     const hungry = stats.satiety < 90
-    if (play?.bedtime && stats.energy >= 95) { play = undefined; lastInput = time }
+    if (play?.bedtime && stats.energy >= play.wakeEnergy) { play = undefined; lastInput = time }
     if (play?.bedtime && hungry && play.gardenFood && !rooms[1].foods.length && rooms[0].foods.length) switchRoom(0)
     let room = rooms[pet.scene]
     const first = room.foods[0]
@@ -182,8 +182,8 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
       startActivity(2)
       gesture = undefined
     }
-    if (!play && !food && !gesture && (!first || !hungry) && stats.energy <= 75 && time - lastInput >= petAutoSleepIdleMs) {
-      visitHutch(true)
+    if (!play && !food && !gesture && (!first || !hungry) && stats.energy <= petAutoSleepEnergy && time - lastInput >= petAutoSleepIdleMs) {
+      visitHutch(true, true)
       room = rooms[pet.scene]
     }
     if (!play && !food && !gesture && time >= nextLook && time - lastInput >= 6000) {
