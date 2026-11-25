@@ -133,7 +133,7 @@ test('good care takes ten minutes and poor care takes five minutes to change aff
   assert.equal(state.stats.affection, 35)
   tick(25)
   assert.equal(state.stats.affection, 36)
-  state.stats.mood = 30
+  world.use(25, 30)
   tick(240000)
   world.changeScene(0)
   tick(60000)
@@ -291,7 +291,7 @@ test('completed toy interactions and gestures reward once each, recalled toys do
   tick(2100)
   assert.equal(state.stats.mood, 83)
   world.use(3, 12)
-  tick(3100)
+  tick(catalog.petGazeOwnerMs)
   assert.equal(state.stats.mood, 84)
   assert.equal(state.stats.affection, 42)
 })
