@@ -314,7 +314,8 @@ export function createPetMcp(enabled: () => boolean = () => true,
   }, () => result(async () => {
     const state = await command(commands.state)
     const availableNow = rabbitOnly ? { actions: state.availableNow.actions, careNote: state.availableNow.careNote } : state.availableNow
-    return { ...state, availableNow, automaticBehaviors: automaticBehaviors(state, rabbitOnly) }
+    return { ...state, availableNow, automaticBehaviors: automaticBehaviors(state, rabbitOnly),
+      ...(rabbitOnly ? { reactionBehaviors: automaticBehaviors({ ...state, headPet: null }, true) } : {}) }
   }))
 
   server.registerTool('pet_get_events', {
