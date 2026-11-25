@@ -16,24 +16,35 @@ function loadSource(path, imports = {}) {
 }
 
 const font = loadSource('../src/components/screenPage/performanceLcdFont.ts')
+const labels = loadSource('../src/components/screenPage/performanceLcdLabels.ts')
 const { drawPerformanceLcd } = loadSource('../src/components/screenPage/performanceLcd.ts', {
   '../../utils/deviceScreenFormat': loadSource('../src/utils/deviceScreenFormat.ts'),
-  './performanceLcdFont': font
+  './performanceLcdFont': font,
+  './performanceLcdLabels': labels
 })
 
-test('performance text uses the firmware bitmap rows', () => {
+test('percentages use the firmware bitmap rows', () => {
   const source = readFileSync(resolve(__dirname, '../../firmware/HARDWARE/LCD/LCD_47/lcdfont.h'), 'utf8')
-  for (const [size, stride, table, characters] of [
-    [16, 1, 'ascii_1608', 'CPUMEDISK'],
-    [24, 2, 'ascii_2412', 'PCERFOMAN0123456789%-']
-  ]) {
-    const block = source.split(`const unsigned char ${table}`)[1].split('};')[0]
-    const glyphs = [...block.matchAll(/\{([0-9a-fx,\s]+)\}/gi)]
+  const block = source.split('const unsigned char ascii_2412')[1].split('};')[0]
+  const glyphs = [...block.matchAll(/\{([0-9a-fx,\s]+)\}/gi)]
+  for (const char of '0123456789%-') {
+    const bytes = glyphs[char.charCodeAt(0) - 32][1].match(/0x[0-9a-f]+/gi).map(Number)
+    const rows = Array.from({ length: 24 }, (_, row) => bytes[row * 2] | bytes[row * 2 + 1] << 8)
+    assert.deepEqual([...font.performanceLcdFont[char]], rows)
+  }
+})
+
+test('Chinese performance labels match the keyboard glyphs and order', () => {
+  const source = readFileSync(resolve(__dirname, '../../firmware/USER/Usb/performance_labels.inc'), 'utf8')
+  for (const [size, characters] of [[24, '电脑性能监测'], [16, '处理器内存系统盘']]) {
+    const block = source.split(`performance_labels_${size}`)[1].split('};')[0]
+    const glyphs = [...block.matchAll(/\{([0-9a-fx,\s]+)\}.*?U\+([0-9a-f]{4})/gi)]
+    assert.equal(glyphs.map(([, , code]) => String.fromCharCode(parseInt(code, 16))).join(''), characters)
     for (const char of characters) {
-      const bytes = glyphs[char.charCodeAt(0) - 32][1].match(/0x[0-9a-f]+/gi).map(Number)
-      const rows = Array.from({ length: size }, (_, row) =>
-        bytes[row * stride] | (stride === 2 ? bytes[row * stride + 1] << 8 : 0))
-      assert.deepEqual([...font.performanceLcdFont[size][char]], rows)
+      const rows = glyphs[characters.indexOf(char)][1].match(/0x[0-9a-f]+/gi).map(Number)
+      assert.equal(rows.length, size)
+      assert.ok(rows.some(row => row > 0))
+      assert.deepEqual([...labels.performanceLcdLabels[size][char]], rows)
     }
   }
 })
