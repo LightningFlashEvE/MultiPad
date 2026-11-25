@@ -82,6 +82,24 @@ test('an alert rabbit stays awake and a held stroke freezes its route to the hut
   assert.notEqual(state.x,x)
 })
 
+test('the nursery table has a fixed approach and paw contact without a care reward', () => {
+  const {world,state,tick} = preview()
+  assert.ok(world.use(3,14))
+  world.changeScene(1)
+  const before = {...state.stats}
+  assert.equal(world.use(3,14),'')
+  assert.equal(state.activeToy,3)
+  tick(1700)
+  assert.equal(state.action,14)
+  assert.equal(state.x,98)
+  assert.equal(state.rabbitY,116)
+  assert.equal(state.facing,-1)
+  tick(4200)
+  assert.equal(state.activeToy,0)
+  assert.equal(state.rabbitY,139)
+  assert.deepEqual(state.stats,before)
+})
+
 test('each snack lands independently and surplus food waits until the rabbit is hungry', () => {
   const { world, state, tick } = preview()
   for (const id of [1, 1, 2, 3]) world.use(2, id)

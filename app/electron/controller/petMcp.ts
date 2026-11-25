@@ -55,6 +55,7 @@ function decodeState(payload: Buffer, session?: string) {
   if (!generation) throw Error('桌宠状态格式不匹配。')
   const extended = generation >= 2
   const scene = extended ? petScenes[payload[16]] ?? null : null
+  const visitingTable = generation >= 7 && payload[17] === 3
   const visitingHutch = generation >= 4 && payload[17] === 1
   const endOfFoods = generation >= 3 ? 33 + 6 * payload[32] : 0
   const phase = extended ? petToyPhases[payload[18]] : null
@@ -80,10 +81,10 @@ function decodeState(payload: Buffer, session?: string) {
     queuedFruit: payload[11],
     stats: extended ? { satiety: payload[12], sleepiness: payload[13], mood: payload[14], affection: payload[15] } : null,
     scene,
-    activeToy: extended && !visitingHutch ? toyForWireId(payload[17]) : null,
-    toyPhase: visitingHutch ? 'idle' : phase,
-    activeDecoration: visitingHutch ? 'rabbit_hutch' : null,
-    decorationPhase: generation >= 4 ? (visitingHutch ? phase : 'idle') : null,
+    activeToy: extended && !visitingHutch && !visitingTable ? toyForWireId(payload[17]) : null,
+    toyPhase: visitingHutch || visitingTable ? 'idle' : phase,
+    activeDecoration: visitingTable ? 'nursery_table' : visitingHutch ? 'rabbit_hutch' : null,
+    decorationPhase: generation >= 4 ? (visitingTable || visitingHutch ? phase : 'idle') : null,
     hutchPosition: generation >= 4 ? { x: payload.readUInt16LE(endOfFoods), y: payload[endOfFoods + 2] } : null,
     facing: generation >= 6 ? (flags & 1 ? 'right' : 'left') : null,
     otherRoom: generation >= 6 ? { scene: other, foods: readFoods(endOfFoods + 9), toyDropProgress: payload[endOfFoods + 8] } : null,
@@ -131,6 +132,8 @@ function availableNow(state: State) {
   const deployed = scene && state.deployedToys?.[scene]
   const actions = playableActions.filter(action => {
     if (!active || fruit || legacyBusy) return false
+    if ((action === 'stand_watch' || action === 'inspect_table') && generation < 7) return false
+    if (action === 'inspect_table' && (scene !== 'nursery' || occupied)) return false
     if (generation === 1 && petActions.indexOf(action) > petActions.indexOf('blink')) return false
     if (floor && action === 'eat' && full) return false
     return !occupied || state.bedtime || action === 'sleep'
@@ -143,7 +146,7 @@ function availableNow(state: State) {
     placeToys: active && floor ? availableToys.filter(toy => !deployed || toy === deployed) : [],
     interactToys: active && deployed && !occupied && state.toyDropProgress === 100 && (!state.foods?.length || leavesFoodOnGround(state))
       ? [deployed] : [],
-    visitDecorations: active && generation >= 4 && !fruit ? ['rabbit_hutch'] : [],
+    visitDecorations: active && generation >= 4 && !fruit ? ['rabbit_hutch', ...(actions.includes('inspect_table') ? ['nursery_table'] : [])] : [],
     moveDecorations: active && generation >= 4 ? ['rabbit_hutch'] : [],
     scenes: active && generation >= 2 ? petScenes.filter(id => !legacyBusy || id === scene) : [],
     setHour: active && !state.followRealTime, setSeason: active, setMode: true,
@@ -186,9 +189,9 @@ function decodeEvent(payload: Buffer, offset: number) {
     case 12: return { ...base, type: 'toy_finished', toy: toyForWireId(value), interrupted: Boolean(detail) }
     case 13: return { ...base, type: 'toy_placed', toy: toyForWireId(value), scene: petScenes[detail] }
     case 14: return { ...base, type: 'toy_removed', toy: toyForWireId(value), scene: petScenes[detail] }
-    case 15: return { ...base, type: 'decoration_started', decoration: toyForWireId(value) }
-    case 16: return { ...base, type: 'decoration_finished', decoration: toyForWireId(value), interrupted: Boolean(detail) }
-    case 17: return { ...base, type: 'decoration_moved', decoration: toyForWireId(value), scene: petScenes[detail] }
+    case 15: return { ...base, type: 'decoration_started', decoration: value === 3 ? 'nursery_table' : toyForWireId(value) }
+    case 16: return { ...base, type: 'decoration_finished', decoration: value === 3 ? 'nursery_table' : toyForWireId(value), interrupted: Boolean(detail) }
+    case 17: return { ...base, type: 'decoration_moved', decoration: value === 3 ? 'nursery_table' : toyForWireId(value), scene: petScenes[detail] }
     case 18: return { ...base, type: 'head_petted', gesture: petHeadGestures[value], encoder: detail }
     default: return { ...base, type: 'unknown', value, detail }
   }
@@ -368,7 +371,9 @@ export function createPetMcp(enabled: () => boolean = () => true) {
     const selected = scene ?? state.scene
     const entries = selected === 'nursery' && state.hutchPosition ? petDecorations.map(({ id, label, description }) =>
       ({ id, label, description, position: state.hutchPosition, bounds: hutchBounds })) : []
-    return { scene: selected, decorations: entries }
+    const table = selected === 'nursery' && state.generation >= 7
+      ? [{ id: 'nursery_table', label: '玩具桌', description: '走到木桌右侧，搭着桌沿看桌上的玩具。', movable: false, position: { x: 82, y: 93 } }] : []
+    return { scene: selected, decorations: [...entries, ...table] }
   }))
 
   server.registerTool('pet_move_decoration', {
@@ -378,9 +383,10 @@ export function createPetMcp(enabled: () => boolean = () => true) {
   }, ({ x, y }) => result(() => command(commands.moveHutch, x | (y << 9))))
 
   server.registerTool('pet_interact_with_decoration', {
-    description: '让兔子去宝宝房的兔窝小憩片刻，醒来后继续活动。持续睡觉可用 pet_play_action 的 sleep。',
-    inputSchema: { decoration }
-  }, () => result(() => command(commands.visitHutch)))
+    description: '访问兔窝小憩，或在宝宝房走到玩具桌边，站起来搭住桌沿观察。',
+    inputSchema: { decoration: z.enum(['rabbit_hutch', 'nursery_table']) }
+  }, ({ decoration }) => result(() => decoration === 'nursery_table'
+    ? command(commands.action, petActions.indexOf('inspect_table')) : command(commands.visitHutch)))
 
   server.registerTool('pet_get_events', {
     description: '读取已发生的桌宠事件。后续调用传入上次响应的 cursor。包括实体投喂键、旋钮改动和自动动作。',

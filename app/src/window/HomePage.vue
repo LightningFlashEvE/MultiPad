@@ -950,7 +950,7 @@ const showAppInfo = () => {
           <PetAiSettings v-if="petTab === 'ai'" :device-ready="petLinked && petState.active" />
           <PetDecorationPanel v-else-if="petTab === 'decor'" :state="petState" :connected="petLinked" :generation="generation"
             :busy="interacting || (conState && !petLinked)" @enter="interactWithPet(6, 1)"
-            @move="p => interactWithPet(14, p.x | (p.y << 9))" @rest="interactWithPet(15, 0)" />
+            @move="p => interactWithPet(14, p.x | (p.y << 9))" @rest="interactWithPet(15, 0)" @inspect="interactWithPet(3, 14)" />
           <PetItemsPanel v-else-if="petTab === 'items'" :selected="selectedItem" :bindings="bindings" :generation="generation"
             :connected="petLinked" :busy="interacting" :occupied="!!currentToy" :scene="petState.scene"
             :deployed-toys="petState.deployedToys" :toy-drop="petState.toyDrop" :food-count="petState.foods?.length ?? 0"
@@ -968,8 +968,8 @@ const showAppInfo = () => {
               <div class="pet-fields" role="group" aria-label="宠物互动">
                 <button type="button" :disabled="interacting || !!petState.fruit || (petLinked && generation < 3 && !!currentToy)"
                   @click="interactWithPet(3, isSleeping ? 0 : 2)">{{ isSleeping ? '叫醒' : '睡觉' }}</button>
-                <button v-for="action in (['trip_angry', 'gaze_owner'] as const)" :key="action"
-                  type="button" :disabled="legacyPet || interacting || !!currentToy"
+                <button v-for="action in (['trip_angry', 'gaze_owner', 'stand_watch'] as const)" :key="action"
+                  type="button" :disabled="legacyPet || interacting || !!currentToy || (action === 'stand_watch' && petLinked && generation < 7)"
                   @click="interactWithPet(3, petActions.indexOf(action))">{{ petActionLabels[action] }}</button>
               </div>
             </section>

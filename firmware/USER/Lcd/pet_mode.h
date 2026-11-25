@@ -17,7 +17,7 @@ typedef enum {
     PET_FLEE,
     PET_BLINK,
     PET_TRIP_ANGRY,
-    PET_GAZE_OWNER
+    PET_GAZE_OWNER, PET_STAND_WATCH, PET_INSPECT_TABLE
 } PetAction;
 
 typedef enum {

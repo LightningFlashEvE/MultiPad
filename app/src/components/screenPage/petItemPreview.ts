@@ -5,7 +5,7 @@ export const previewCare = { satiety: 65, sleepiness: 25, mood: 70, affection: 3
 type Food = { id: number; x: number; droppedAt: number }
 type Room = { toy: number; droppedAt: number; awaitingPlay: boolean; foods: Food[] }
 type FoodActivity = { target: number; eatingAt?: number }
-type RoomActivity = { item: 1 | 2; bedtime: boolean; usingAt?: number; gardenFood: boolean;
+type RoomActivity = { item: 1 | 2 | 3; bedtime: boolean; usingAt?: number; gardenFood: boolean;
   fromX: number; fromY: number; walkStart: number }
 
 const fallMs = 650
@@ -18,6 +18,9 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
   let gesture: { action: number; until: number } | undefined
   let timer: number | undefined
   let lastTick = 0
+  let leavingTable = false
+  let nextLook = 10000
+  let looks = 0
   let time = 0
   let lastInput = 0
   let patUntil = 0
@@ -42,6 +45,7 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
 
   function switchRoom(scene: number) {
     if (scene === state().scene) return
+    leavingTable = false
     state().scene = scene
     state().rabbitY = 139
     play = undefined
@@ -56,7 +60,7 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     room.awaitingPlay = !!toy
   }
 
-  function startActivity(item: 1 | 2, bedtime = false, gardenFood = false) {
+  function startActivity(item: 1 | 2 | 3, bedtime = false, gardenFood = false) {
     play = { item, bedtime, gardenFood, fromX: state().x, fromY: state().rabbitY ?? 139, walkStart: time }
   }
 
@@ -93,6 +97,14 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
       if (food?.eatingAt !== undefined) food.eatingAt += dt
       return
     }
+    if (leavingTable) {
+      const dy = Math.min(dt * .056, 139 - (pet.rabbitY ?? 139))
+      pet.rabbitY = (pet.rabbitY ?? 139) + dy
+      pet.x += dy
+      pet.facing = 1
+      leavingTable = pet.rabbitY < 139
+      if (leavingTable) return
+    }
     const hungry = stats.satiety < 90
     if (play?.bedtime && stats.sleepiness <= 5) { play = undefined; lastInput = time }
     if (play?.bedtime && hungry && play.gardenFood && !rooms[1].foods.length && rooms[0].foods.length) switchRoom(0)
@@ -100,7 +112,7 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     const first = room.foods[0]
     if (first && time - first.droppedAt >= fallMs && hungry) {
       if (play?.bedtime) play = undefined
-      if (!play && !food) food = { target: first.x - (first.x >= pet.x ? 25 : -25) }
+      if (!play && !food) food = { target: first.x - (first.x >= pet.x ? 28 : -28) }
     }
     if (gesture && (food || time >= gesture.until)) {
       if (!food && gesture.action === 11) reward(0, 1, -4, 0)
@@ -116,11 +128,16 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
       visitHutch(true)
       room = rooms[pet.scene]
     }
+    if (!play && !food && !gesture && time >= nextLook && time - lastInput >= 6000) {
+      nextLook = time + 12000
+      if (++looks % 2 === 0 && pet.scene === 1) startActivity(3)
+      else gesture = { action: 13, until: time + 2600 }
+    }
     if (play) {
       const hutch = play.item === 1
       if (play.usingAt === undefined) {
-        if (hutch) {
-          const target = pet.hutchPosition ?? defaultHutchPosition
+        if (hutch || play.item === 3) {
+          const target = hutch ? pet.hutchPosition ?? defaultHutchPosition : { x: 98, y: 116 }
           const dx = target.x - play.fromX, dy = target.y - play.fromY
           const distance = Math.max(Math.abs(dx), Math.abs(dy))
           const progress = distance ? Math.min(1, (time - play.walkStart) * .078 / distance) : 1
@@ -128,8 +145,9 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
           pet.rabbitY = play.fromY + Math.trunc(dy * progress)
           if (progress === 1) { pet.x = target.x; pet.rabbitY = target.y; play.usingAt = time }
         } else if (move(151, dt * .078)) play.usingAt = time
-      } else if (!play.bedtime && time - play.usingAt >= (hutch ? 4500 : 2400)) {
-        reward(0, hutch ? -12 : 2, hutch ? 5 : 6, 2)
+      } else if (!play.bedtime && time - play.usingAt >= (hutch ? 4500 : play.item === 3 ? 3400 : 2400)) {
+        leavingTable = play.item === 3
+        if (play.item !== 3) reward(0, hutch ? -12 : 2, hutch ? 5 : 6, 2)
         lastInput = time
         play = undefined
       }
@@ -149,10 +167,11 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
         stage: index === 0 && food?.eatingAt !== undefined ? 2 : t === 1 ? 1 : 0 }
     })
     const toyPhase = !play ? 0 : play.usingAt === undefined ? 1 : 2
-    pet.action = play ? toyPhase === 1 ? 1 : play.item === 1 ? 2 : 3 :
-      food ? food.eatingAt === undefined ? 5 : 3 : gesture?.action ?? 0
+    pet.action = play ? toyPhase === 1 ? 1 : play.item === 1 ? 2 : play.item === 3 ? 14 : 3 :
+      food ? food.eatingAt === undefined ? 5 : 3 : leavingTable ? 1 : gesture?.action ?? 0
     pet.activeToy = play?.item ?? 0
-    if (pet.activeToy !== 1) pet.rabbitY = 139
+    if (pet.activeToy === 3 && toyPhase === 2) pet.facing = -1
+    if (!leavingTable && pet.activeToy !== 1 && pet.activeToy !== 3) pet.rabbitY = 139
     pet.toyPhase = toyPhase
     pet.fruit = food ? foods[0].id : 0
     pet.queue = foods.length - Number(!!food)
@@ -233,11 +252,14 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
       if (play?.item !== 1) visitHutch(false)
     } else if (command === 3) {
       if (food || (value !== 2 && play && !play.bedtime)) return '兔子正在忙，请稍后再试。'
-      if (value === 2) {
+      if (value === 14) {
+        if (pet.scene !== 1 || play) return '请在宝宝房空闲时查看玩具桌。'
+        startActivity(3)
+      } else if (value === 2) {
         if (!play?.bedtime) visitHutch(true)
       } else {
         play = undefined
-        gesture = value === 0 ? undefined : { action: value, until: time + (value === 12 ? 3000 : 2050) }
+        gesture = value === 0 ? undefined : { action: value, until: time + (value === 12 ? 3000 : value === 13 ? 2600 : 2050) }
       }
     }
     lastInput = time
@@ -251,6 +273,9 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     gesture = undefined
     metabolism = fatigue = time = 0
     wasSleeping = false
+    nextLook = 10000
+    looks = 0
+    leavingTable = false
     for (const room of rooms) { room.toy = 0; room.awaitingPlay = false; room.foods.length = 0 }
   }
   return { use, start, pause, changeScene, reset }

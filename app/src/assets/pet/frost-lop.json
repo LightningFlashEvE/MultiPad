@@ -3,7 +3,7 @@
   "height": 44,
   "anchorX": 28,
   "anchorY": 41,
-  "fruitContactX": 44,
+  "fruitContactX": 47,
   "tickRateHz": 16,
   "compatibilityFrames": [
     "idle",
@@ -145,6 +145,36 @@
         10
       ],
       "loop": true
+    },
+    "stand_watch": {
+      "first": 69,
+      "ticks": [
+        3,
+        3,
+        12,
+        8,
+        10
+      ],
+      "loop": true,
+      "loopFrom": 2
     }
-  }
+  },
+  "biteMouth": [
+    [
+      45,
+      37
+    ],
+    [
+      46,
+      38
+    ],
+    [
+      46,
+      38
+    ],
+    [
+      46,
+      37
+    ]
+  ]
 }

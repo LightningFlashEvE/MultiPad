@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { drawCarrotToy, drawGarden, drawPetEffects, drawNursery, drawNurseryHutch, drawNurseryLight, drawSceneClock, tintNursery, type PetAction } from './petScene'
-import { drawRabbit, drawRabbitHeadPat, rabbitAtlasUrl } from './petAnimation'
+import { bitePosition, drawRabbit, drawRabbitHeadPat, rabbitAtlasUrl } from './petAnimation'
 import { patPhase } from './petHeadPat'
 import itemsUrl from '../../assets/pet/items.png'
 import type { HutchPosition, PetState } from './petDisplay'
@@ -160,11 +160,16 @@ onMounted(() => {
     const roaming = clip === 'walk' || clip === 'run' || clip === 'flee'
     const playingCarrot = activeToy === 2
     const followingFood = !!foods?.length && (stateAction === 'fetch' || stateAction === 'eat')
-    const target = props.connected || followingFood ? position : inHutch ? home.x : playingCarrot ? 151 : roaming ? 160 + Math.sin(now / 1750) * 94 : x
+    const target = props.connected || followingFood || activeToy === 3 || (props.state.rabbitY ?? 139) < 139 ? position : inHutch ? home.x : playingCarrot ? 151 : roaming ? 160 + Math.sin(now / 1750) * 94 : x
     if (props.connected && props.state.facing) direction = props.state.facing
     else if (!touched && Math.abs(target - x) > 1) direction = target > x ? 1 : -1
-    if (touched && props.connected) x = position
+    const eating = foods?.find(food => food.stage === 2)
+    if (eating && stateAction === 'eat') {
+      x = position
+      direction = eating.x >= x ? 1 : -1
+    } else if (touched && props.connected) x = position
     else if (!touched) x += (target - x) * (inHutch && !props.connected ? .055 : .14)
+    if (activeToy === 3 && toyPhase === 2) { x = position; direction = -1 }
     if (resting) { x = home.x; direction = -1 }
     if (playingCarrot && toyPhase === 2) { x = 151; direction = 1 }
     const rabbitY = resting ? home.y : (props.state.rabbitY ?? 139)
@@ -202,17 +207,23 @@ onMounted(() => {
     }
     const phase = now < patUntil ? (patKind && props.state.headPatPhase !== undefined && patUntil - now > 200
       ? props.state.headPatPhase : patPhase(now - patStarted, patUntil - now)) : undefined
-    const pose = drawRabbit(display!, atlas, Math.round(x), rabbitY, direction, clip, elapsed, phase)
-    if (resting) display!.drawImage(hutch, 21, 63, 40, 4, home.x - 20, home.y - 6, 40, 4)
+    const drawFood = (id: number, cx: number, cy: number) =>
+      display!.drawImage(items, (id - 1) * 16 + 3, 3, 9, 9, cx - 9, cy - 9, 18, 18)
     if (foods && items.complete && items.naturalWidth) {
       for (const food of foods) {
-        if (food.id < 1 || food.id > 8) continue
+        if (food.stage === 2 || food.id < 1 || food.id > 8) continue
         // The device reports the centre of each falling fruit; advance its arc between USB samples.
         const initial = Math.max(0, Math.min(1, (food.y + 9) / 138))
         const t = Math.min(1, (Math.sqrt(1 + 8 * initial) - 1) / 2 + (now - sampleAt) / 650)
         const y = food.stage === 0 ? Math.round(-9 + 69 * t * (1 + t)) : food.y
-        display!.drawImage(items, (food.id - 1) * 16 + 3, 3, 9, 9, food.x - 9, y - 9, 18, 18)
+        drawFood(food.id, food.x, y)
       }
+    }
+    const pose = drawRabbit(display!, atlas, Math.round(x), rabbitY, direction, clip, elapsed, phase)
+    if (resting) display!.drawImage(hutch, 21, 63, 40, 4, home.x - 20, home.y - 6, 40, 4)
+    if (eating && items.complete && items.naturalWidth) {
+      const bite = pose === undefined ? undefined : bitePosition(Math.round(x), rabbitY, direction, pose)
+      drawFood(eating.id, bite?.x ?? eating.x, bite?.y ?? eating.y)
     }
     display!.save()
     display!.translate(0, rabbitY - (resting ? 142 : 139))

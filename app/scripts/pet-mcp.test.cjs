@@ -26,14 +26,15 @@ const catalog = loadModule('../src/utils/petCatalog.ts')
 const guide = loadModule('../electron/controller/petCareGuide.ts', { [pathToCatalog]: catalog })
 function payload(generation = 4, fields = {}, foodIds = [], headPet = [0, 0]) {
   const endOfFoods = 33 + foodIds.length * 6
-  const p = Buffer.alloc(endOfFoods + 10)
+  const p = Buffer.alloc(endOfFoods + 10 + Number(generation >= 7))
   p.set([1,0,78,0,0,0,0,0,0,12,1,0,65,24,68,45,1,0,0])
   p[31] = 100
   p[32] = foodIds.length
   foodIds.forEach((id, i) => p.set([id,41+i*34,0,129,0,1],33+i*6))
   p.set([246,0,142,139,...headPet], endOfFoods)
+  if (generation === 7) p[p.length - 1] = 7
   for (const [i,v] of Object.entries(fields)) p[Number(i)] = v
-  return p.subarray(0, [0, 12, 19, endOfFoods, endOfFoods + 4, endOfFoods + 6, p.length][generation])
+  return p.subarray(0, [0, 12, 19, endOfFoods, endOfFoods + 4, endOfFoods + 6, endOfFoods + 10, p.length][generation])
 }
 function eventPage(events) {
   const p = Buffer.alloc(1 + events.length * 12)
@@ -50,7 +51,7 @@ test('serial protocol probes with reads, and transmits each supported owner gest
   const { default: ScreenReadback } = loadModule('../electron/controller/screenReadback.ts', {
     [pathToCatalog]: catalog, '../../src/utils/deviceScreenFormat': { DEVICE_SCREEN_SIZES: [] }
   })
-  for (const generation of [1, 2, 3, 4, 5, 6]) {
+  for (const generation of [1, 2, 3, 4, 5, 6, 7]) {
     const writes = []
     const reader = new ScreenReadback(async request => {
       const requested = request.readUInt32LE(6), offset = request.readUInt32LE(11)
@@ -78,7 +79,7 @@ test('serial protocol probes with reads, and transmits each supported owner gest
         const reply = await reader.readPet({ command: 22, value: input })
         assert.equal(reply.state, generation >= 5 ? 'ready' : 'unsupported')
       }
-      assert.deepEqual(writes.filter(p=>!p.offset).map(p=>p.requested), [6,5,4,3,2].filter(g=>g>=generation))
+      assert.deepEqual(writes.filter(p=>!p.offset).map(p=>p.requested), [7,6,5,4,3,2].filter(g=>g>=generation))
       const mutations = writes.filter(p=>p.offset).map(p=>p.offset)
       assert.deepEqual(mutations, generation >= 5 ? [0,1,2,3,4].map(v=>22|(v<<8)) : [])
       if (generation === 5) assert.equal((await reader.readPet({command:22,value:5})).state, 'unsupported')

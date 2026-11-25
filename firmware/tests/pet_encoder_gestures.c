@@ -126,10 +126,46 @@ static void concurrent_activities(void) {
     assert(pet_mode_active_toy() == 2 && pet_mode_toy_phase() == 2);
 }
 
+static void table_and_food_positions(void) {
+    pet_mode_control(1, 0);
+    pet_mode_control(1, 1);
+    pet_mode_control(6, 0);
+    assert(pet_mode_control(3, PET_INSPECT_TABLE) == 3);
+    pet_mode_control(6, 1);
+    assert(pet_mode_control(3, PET_INSPECT_TABLE) == 0);
+    advance(2900);
+    assert(pet_mode_action() == PET_INSPECT_TABLE && pet_mode_active_toy() == 3);
+    assert(pet_mode_x() == 98 && pet_mode_y() == 116);
+    advance(4200);
+    assert(pet_mode_active_toy() == 0 && pet_mode_y() == 139);
+    assert(pet_mode_control(3, PET_STAND_WATCH) == 0);
+    advance(2700);
+    assert(pet_mode_action() != PET_STAND_WATCH);
+    pet_care_adjust(-75, 0, 0, 0);
+    assert(pet_mode_control(2, 1) == 0 && pet_mode_control(2, 2) == 0);
+    for (unsigned id = 1; id <= 2; id++) {
+        for (unsigned t = 0; t < 6000 && pet_mode_action() != PET_EAT; t++) advance(1);
+        PetFloorFood food[PET_FLOOR_CAPACITY];
+        assert(pet_mode_foods(food) > 0 && food[0].id == id && pet_mode_fruit() == id);
+        int distance = food[0].x - pet_mode_x();
+        assert(distance == (id == 1 ? 28 : -28));
+        advance(851);
+    }
+}
+
 int main(void) {
     pet_care_init(0); /* In-memory care. Separate NOR tests exercise durable storage. */
     gestures_and_framebuffer();
     concurrent_activities();
+    table_and_food_positions();
+    pet_care_adjust(100, -100, 0, 0);
+    bool saw_lookout = false, saw_table = false;
+    for (unsigned i = 0; i < 1200 && !(saw_lookout && saw_table); i++) {
+        advance(75);
+        saw_lookout |= pet_mode_action() == PET_STAND_WATCH;
+        saw_table |= pet_mode_action() == PET_INSPECT_TABLE;
+    }
+    assert(saw_lookout && saw_table);
     puts("Encoder 3 head-pat tests passed");
     return 0;
 }

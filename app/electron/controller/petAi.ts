@@ -27,7 +27,7 @@ const stateSchema = z.object({
   season: z.string(), bedtime: z.boolean().nullable(),
   stats: z.object({ satiety: stat, sleepiness: stat, mood: stat, affection: stat }).nullable(),
   scene: z.enum(petScenes).nullable(), activeToy: z.enum(petToyIds).nullable(),
-  activeDecoration: z.literal('rabbit_hutch').nullable(), decorationPhase: z.enum(petToyPhases).nullable(),
+  activeDecoration: z.enum(['rabbit_hutch','nursery_table']).nullable(), decorationPhase: z.enum(petToyPhases).nullable(),
   headPet: z.object({ remainingMs: z.number().int().min(0).max(1200), gesture: z.enum(petHeadGestures).nullable() }).passthrough().nullable(),
   hutchPosition: z.object({ x: z.number(), y: z.number() }).nullable(),
   toyPhase: z.enum(petToyPhases).nullable(), availableToys: z.array(z.enum(petToyIds)),
@@ -38,7 +38,7 @@ const stateSchema = z.object({
   availableNow: z.object({
     actions: z.array(z.enum(playableActions)), feed: z.boolean(), placeToys: z.array(z.enum(petToyIds)),
     interactToys: z.array(z.enum(petToyIds)), useToys: z.array(z.enum(petToyIds)),
-    visitDecorations: z.array(z.literal('rabbit_hutch')), careNote: z.string()
+    visitDecorations: z.array(z.enum(['rabbit_hutch','nursery_table'])), careNote: z.string()
   }).passthrough().optional()
 }).passthrough()
 type PetState = z.infer<typeof stateSchema>
@@ -56,7 +56,7 @@ const eventsSchema = z.object({
     fruit: z.enum(fruits).nullish(), queueDepth: z.number().optional(), active: z.boolean().optional(),
     action: z.enum(petActions).optional(), scene: z.enum(petScenes).optional(), key: z.number().optional(),
     item: z.string().nullable().optional(), toy: z.enum(petToyIds).nullable().optional(),
-    decoration: z.literal('rabbit_hutch').nullable().optional(), interrupted: z.boolean().optional(),
+    decoration: z.enum(['rabbit_hutch','nursery_table']).nullable().optional(), interrupted: z.boolean().optional(),
     gesture: z.enum(petHeadGestures).optional(), encoder: z.number().optional()
   }).passthrough())
 })

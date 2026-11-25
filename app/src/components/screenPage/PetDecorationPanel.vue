@@ -5,7 +5,7 @@ import PetDisplay from './PetDisplay.vue'
 import type { HutchPosition, PetState } from './petDisplay'
 
 const props = defineProps<{ state: PetState; connected: boolean; generation: number; busy: boolean }>()
-const emit = defineEmits<{ enter: []; move: [position: HutchPosition]; rest: [] }>()
+const emit = defineEmits<{ enter: []; move: [position: HutchPosition]; rest: []; inspect: [] }>()
 const supported = computed(() => !props.connected || props.generation >= 4)
 const canEdit = computed(() => supported.value && props.state.scene === 1 && !props.busy)
 const position = computed(() => props.state.hutchPosition ?? defaultHutchPosition)
@@ -49,6 +49,9 @@ function save() {
             @click="emit('move', { ...defaultHutchPosition })">恢复默认</button>
           <button type="button" :disabled="busy || !!state.fruit" @click="emit('rest')">去兔窝小憩</button>
         </div>
+        <h3 v-if="!connected || generation >= 7">玩具桌</h3>
+        <button v-if="!connected || generation >= 7" type="button" :disabled="busy || !!state.fruit || !!state.activeToy"
+          @click="emit('inspect')">去桌边看看</button>
         <p v-if="!connected">离线布置会保存在本机。</p>
       </template>
     </section>

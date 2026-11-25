@@ -8,7 +8,7 @@ export const rabbitAtlasUrl = atlasUrl
 function frameFor(action: PetAction, elapsed: number) {
   const blink = action === 'idle' && elapsed >= 1400 && elapsed < 1525
   const name = blink ? 'blink' : action === 'idle' ? 'daydream' : action === 'react' ? 'jump' : action
-  const clip = sprite.clips[name]
+  const clip = sprite.clips[name === 'inspect_table' ? 'stand_watch' : name]
   const total = clip.ticks.reduce((sum, duration) => sum + duration, 0)
   const elapsedTicks = Math.floor(elapsed * sprite.tickRateHz / 1000)
   const loopFrom = 'loopFrom' in clip ? Number(clip.loopFrom) : 0
@@ -36,6 +36,12 @@ export function drawRabbit(
   ctx.drawImage(atlas, frame * width, 0, width, height, -anchorX, -anchorY, width, height)
   ctx.restore()
   return frame
+}
+
+export function bitePosition(x: number, y: number, direction: number, pose: number) {
+  const mouth = sprite.biteMouth[pose - sprite.clips.eat.first]
+  if (!mouth) return
+  return { x: x + direction * (mouth[0] - sprite.anchorX + 6), y: y + mouth[1] - sprite.anchorY - 1 }
 }
 
 export function drawRabbitHeadPat(ctx: CanvasRenderingContext2D, x: number, y: number, direction: number,

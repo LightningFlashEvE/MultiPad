@@ -10,6 +10,7 @@ export const rabbitBrows: readonly (readonly [number, number])[] = [
   [36, 18], [35, 2], [36, 8], [40, 21], [42, 18], [42, 17], [40, 22], [38, 16], // flee
   [37, 16], [43, 19], [44, 21], [43, 28], [46, 29], [31, 13], [31, 11], [31, 12], [31, 11], [31, 11], // trip
   [31, 11], [31, 12], [31, 12], [31, 12], [31, 12], [31, 11], // gaze
+  [37, 14], [34, 12], [34, 4], [35, 5], [36, 4], // standing lookout
 ]
 
 export const patWidth = 40, patHeight = 30, patAnchorX = 20, patAnchorY = 24

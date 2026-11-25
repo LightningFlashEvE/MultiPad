@@ -10,7 +10,7 @@ export const petServerInstructions = '你控制的是实体键盘上的宠物兔
 export const petCareGuide = {
   stats: {
     range: [0, 100],
-    satiety: '越高越饱。养宠模式累计每分钟 −1。第 3 代起达到 100 时暂停吃水果，剩下的留在原场景。',
+    satiety: '越高越饱。养宠模式累计每分钟 −1。第 6 代起达到 90 时暂停吃水果，旧版达到 100 时暂停，剩下的留在原场景。',
     sleepiness: '越高越困。清醒每满 60 秒 +1，睡着每满 20 秒 −1。',
     mood: '越高越开心。每个代谢周期开始时，若饱食度低于 25 或困意高于 85，心情 −1。',
     affection: '越高越亲近主人。吃完水果、玩完玩具和回应主人的注视可增加好感。'
@@ -20,6 +20,8 @@ export const petCareGuide = {
     blink: '眨眼，约 0.125 秒。', walk: '散步，到边界或约 3.6 秒后会自行停下。',
     run: '奔跑，约 2.3 秒。', jump: '跳一下，约 0.5 秒。', daydream: '做白日梦，约 1.75 秒。',
     flee: '受惊逃跑，约 2.3 秒。', eat: '仅播放约 2.1 秒的进食动作，没有水果和饱食度收益。',
+    stand_watch: '原地用后腿撑起身体，抬头眺望约 2.6 秒。',
+    inspect_table: '在宝宝房走到玩具桌右侧，前爪搭桌沿观察约 3.4 秒，结束后回到地面。两种眺望都不额外改变属性。',
     trip_angry: '绊脚生气，约 2.05 秒。自然结束时困意 +1、心情 −4。',
     gaze_owner: '面向主人发呆，约 3 秒。由 MCP 发起且自然结束时心情 +1、好感 +1。',
     sleep: '持续睡眠，无固定时长。第 3 代起会从花园走到宝宝房兔窝。到达前可以同时是 action=walk、bedtime=true。'
@@ -53,6 +55,7 @@ export const petCareGuide = {
     2: '增加四项属性、trip_angry、gaze_owner 和场景；宝宝房兔窝通过 pet_use_toy 短暂互动。',
     3: '增加多份地面食物、玩具放置和重玩、回窝长睡、跟随时间与按键绑定。此代兔窝仍占用宝宝房玩具位。',
     4: '兔窝成为独立可移动装饰。使用 activeDecoration、decorationPhase 和 hutchPosition 读取回窝状态。',
+    7: '可站起来眺望，在宝宝房探访 nursery_table。家具互动阶段为 approaching 或 using。',
     6: '摸头期间兔子停在原地，转动决定手的位置和速度；饱食度达到90时留食，困意至少25才主动睡，降到5时结束长睡。',
     5: '可通过 headPet 和 head_petted 观察主人摸头。事件 source 为 physical 时来自键盘旋钮，mcp 表示软件操作。'
   },
