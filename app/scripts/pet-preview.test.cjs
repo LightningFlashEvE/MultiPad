@@ -47,7 +47,7 @@ test('head strokes overlay bedtime and late detents of the same press earn no ex
   world.use(22, 1)
   assert.equal(state.headPatKind, 1)
   assert.equal(state.headPatRemaining, 1200)
-  assert.deepEqual(state.stats, { satiety: 100, energy: 75, mood: 71, affection: 36 })
+  assert.deepEqual(state.stats, { satiety: 100, energy: 75, mood: 70, affection: 36 })
   tick(1400)
   world.use(22, 4)
   assert.equal(state.headPatKind, 2)
@@ -122,7 +122,7 @@ test('continuous running spends both energy and fullness before the base minute 
   assert.equal(state.stats.satiety,satiety-1)
 })
 
-test('good care takes ten minutes and poor care takes five minutes to change affection', () => {
+test('affection stays level during good care and declines after five minutes of poor care', () => {
   const {world, state, tick} = preview(100)
   state.stats.energy = 100
   tick(240000)
@@ -132,12 +132,12 @@ test('good care takes ten minutes and poor care takes five minutes to change aff
   tick(119975)
   assert.equal(state.stats.affection, 35)
   tick(25)
-  assert.equal(state.stats.affection, 36)
+  assert.equal(state.stats.affection, 35)
   world.use(25, 30)
   tick(240000)
   world.changeScene(0)
   tick(60000)
-  assert.equal(state.stats.affection, 35)
+  assert.equal(state.stats.affection, 34)
 })
 
 test('unattended stats fall together even during sleep, and a head pat restarts the grace period', () => {
@@ -216,7 +216,7 @@ test('each snack lands independently and surplus food waits until the rabbit is 
   tick(12000)
   assert.equal(state.stats.satiety, 100)
   assert.equal(state.stats.mood, 79)
-  assert.equal(state.stats.affection, 41)
+  assert.equal(state.stats.affection, 38)
   assert.equal(state.foods.length, 1)
   assert.equal(state.foods[0].stage, 1)
   // Near-full rabbits leave surplus food on the ground.
@@ -224,11 +224,11 @@ test('each snack lands independently and surplus food waits until the rabbit is 
   tick(60000)
   assert.equal(state.scene, 0)
   assert.equal(state.stats.satiety, 99)
-  assert.equal(state.stats.affection, 41)
+  assert.equal(state.stats.affection, 38)
   assert.equal(state.foods.length, 1)
   state.stats.satiety = 89
   tick(4000)
-  assert.equal(state.stats.affection, 43)
+  assert.equal(state.stats.affection, 39)
   assert.equal(state.foods.length, 0)
 })
 
@@ -286,14 +286,14 @@ test('completed toy interactions and gestures reward once each, recalled toys do
   world.use(15, 0)
   tick(7000)
   assert.equal(state.stats.energy, 83)
-  assert.equal(state.stats.mood, 87)
+  assert.equal(state.stats.mood, 82)
   world.use(3, 11)
   tick(2100)
-  assert.equal(state.stats.mood, 83)
+  assert.equal(state.stats.mood, 78)
   world.use(3, 12)
   tick(catalog.petGazeOwnerMs)
-  assert.equal(state.stats.mood, 84)
-  assert.equal(state.stats.affection, 42)
+  assert.equal(state.stats.mood, 78)
+  assert.equal(state.stats.affection, 37)
 })
 
 test('the hutch moves independently of the carrot, including during approach and rest', () => {

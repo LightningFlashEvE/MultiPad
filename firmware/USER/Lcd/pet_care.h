@@ -25,7 +25,7 @@ const PetCare *pet_care_get(void);
 void pet_care_set_scene(uint8_t scene);
 bool pet_care_set_stat(uint8_t index, uint8_t value);
 void pet_care_adjust(int satiety, int energy, int mood, int affection);
-void pet_care_eat_fruit(void);
+void pet_care_eat_fruit(bool owner_fed);
 void pet_care_bind(uint8_t key, uint8_t item);
 void pet_care_set_toy(uint8_t scene, uint8_t toy);
 bool pet_care_move_hutch(uint16_t x, uint16_t y);
