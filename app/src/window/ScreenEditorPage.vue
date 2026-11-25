@@ -114,15 +114,16 @@ const generate = async (commit: boolean) => {
 
 <template>
   <PopBox />
-  <div class="container">
+  <div class="settings-window screen-window">
     <WindowTitle>
       <template #title>{{ screen ? `小屏 ${screen} · 菜单 ${menu + 1}` : '彩屏图片编辑' }}</template>
     </WindowTitle>
+    <main class="screen-body settings-scroll">
     <p v-if="screen === 0 && initial?.content?.mode === 'performance'" class="image-mode-hint">
       此层彩屏正在显示性能。保存图片后，可在性能监测页面切换为图片。
     </p>
     <nav v-if="screen !== 0" class="screen-modes" aria-label="显示内容">
-      <button v-for="option in modes" :key="option.value" type="button" :aria-pressed="mode === option.value"
+      <button v-for="option in modes" :key="option.value" type="button" class="settings-button" :aria-pressed="mode === option.value"
         :disabled="!loaded || busy" @click="mode = option.value; error = ''">{{ option.label }}</button>
     </nav>
     <div v-if="imageMounted" v-show="mode === 'image'" class="image-editor">
@@ -135,106 +136,57 @@ const generate = async (commit: boolean) => {
       </div>
       <div class="screen-fields">
         <template v-if="mode === 'api'">
-          <label>API 地址<input v-model="url" type="url" maxlength="2048" placeholder="https://api.example.com/status" required :disabled="busy" /></label>
-          <label>JSON 字段路径<input v-model="field" maxlength="256" placeholder="例如 data.temperature，纯文本可留空" :disabled="busy" /></label>
-          <label>屏幕标题（可选）<input v-model="label" maxlength="20" placeholder="例如 室温" :disabled="busy" /></label>
-          <label>刷新间隔（秒）<input v-model.number="interval" type="number" min="15" max="3600" required :disabled="busy" /></label>
+          <label>API 地址<input v-model="url" class="settings-field" type="url" maxlength="2048" placeholder="https://api.example.com/status" required :disabled="busy" /></label>
+          <label>JSON 字段路径<input v-model="field" class="settings-field" maxlength="256" placeholder="例如 data.temperature，纯文本可留空" :disabled="busy" /></label>
+          <label>屏幕标题（可选）<input v-model="label" class="settings-field" maxlength="20" placeholder="例如 室温" :disabled="busy" /></label>
+          <label>刷新间隔（秒）<input v-model.number="interval" class="settings-field" type="number" min="15" max="3600" required :disabled="busy" /></label>
         </template>
-        <label v-else-if="mode === 'text'">显示文字<textarea v-model="text" rows="2" maxlength="50" placeholder="最多显示两行" required :disabled="busy" /></label>
+        <label v-else-if="mode === 'text'">显示文字<textarea v-model="text" class="settings-field" rows="2" maxlength="50" placeholder="最多显示两行" required :disabled="busy" /></label>
         <p v-if="mode !== 'text'" class="screen-hint">保存后自动同步。动态显示需要支持该功能的固件、USB 连接和正在运行的 MultiPad。</p>
         <p v-if="error" class="screen-error" role="alert">{{ error }}</p>
         <div class="screen-actions">
-          <button type="button" @click="close">取消</button>
-          <button v-if="mode === 'api'" type="button" :disabled="busy" @click="generate(false)">测试 API</button>
-          <button type="submit" :disabled="busy">{{ busy ? '处理中…' : '保存设置' }}</button>
+          <button type="button" class="settings-button" @click="close">取消</button>
+          <button v-if="mode === 'api'" type="button" class="settings-button" :disabled="busy" @click="generate(false)">测试 API</button>
+          <button type="submit" class="settings-button is-primary" :disabled="busy">{{ busy ? '处理中…' : '保存设置' }}</button>
         </div>
       </div>
     </form>
+    </main>
   </div>
 </template>
 
 <style scoped lang="scss">
-.container {
-  width: 100%;
-  height: 100%;
-  position: relative;
-  box-sizing: border-box;
-  padding: 10px 16px 16px;
-  border: 6px solid #0f1017;
-  border-radius: 2.5em;
-  overflow: hidden;
-  background: linear-gradient(135deg, #d9c6c6, #c9e0e5 87%, #cfdcdd);
-  color: #202830;
-  display: flex;
-  flex-direction: column;
+.screen-window .screen-body {
+  display:flex;
+  flex-direction:column;
+  flex:1;
+  gap:12px;
+  padding:14px 16px 16px;
+  background:var(--settings-canvas);
 }
-.container :deep(.top-title) { color: #24323a; }
-.image-mode-hint { margin: 2px 0 7px; color: #465e69; font-size: 12px; }
-.screen-modes {
-  display: flex;
-  gap: 8px;
-  padding: 8px 12px 14px;
-  -webkit-app-region: no-drag;
-}
-button, input, textarea {
-  font: inherit;
-}
-button {
-  cursor: pointer;
-  color: #24323a;
-  border: 1px solid #aab7bd;
-  border-radius: 8px;
-  background: #f8fafb;
-  padding: 8px 14px;
-}
-button:disabled { opacity: .6; cursor: wait; }
-button[aria-pressed="true"], button[type="submit"] {
-  background: #263d46;
-  color: white;
-  border-color: #263d46;
-}
-.image-editor {
-  flex: 1;
-  min-height: 0;
-  position: relative;
-  overflow: hidden;
-  border-radius: 16px;
-}
-.screen-settings {
-  display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(340px, 1.4fr);
-  gap: 26px;
-  padding: 24px;
-  min-height: 0;
-  overflow: auto;
-  background: #ffffffb3;
-  border-radius: 16px;
-}
+.image-mode-hint { color:var(--settings-muted); font-size:13px; }
+.screen-modes { display:flex; flex-wrap:wrap; gap:4px; }
+.screen-modes button { background:transparent; color:var(--settings-muted); }
+.screen-modes button[aria-pressed="true"] { background:var(--settings-selected); color:var(--settings-accent); }
+.image-editor { flex:1; min-height:340px; position:relative; }
+.screen-settings { display:grid; grid-template-columns:minmax(160px,.9fr) minmax(250px,1.1fr); gap:20px; align-items:start; padding:16px; border-radius:10px; background:var(--settings-surface); }
 .screen-preview {
-  width: 100%;
-  align-self: start;
-  aspect-ratio: 72 / 40;
-  display: grid;
-  place-items: center;
-  background: #000;
-  color: #bec8ca;
-  border-radius: 12px;
-  overflow: hidden;
+  width:100%;
+  aspect-ratio:72 / 40;
+  display:grid;
+  place-items:center;
+  background:#111a18;
+  color:#d5ded9;
+  border-radius:8px;
+  overflow:hidden;
 }
-.screen-preview img { width: 100%; image-rendering: pixelated; }
-.screen-fields { display: grid; gap: 12px; align-content: start; }
-label { display: grid; gap: 5px; font-size: 14px; }
-input, textarea {
-  width: 100%;
-  box-sizing: border-box;
-  border: 1px solid #adbcc0;
-  border-radius: 7px;
-  padding: 8px 10px;
-  background: #fff;
-  color: #202830;
-}
-.screen-hint, .screen-error { margin: 0; font-size: 13px; }
-.screen-hint { color: #405058; }
-.screen-error { color: #952626; }
-.screen-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.screen-preview img { width:100%; image-rendering:pixelated; }
+.screen-fields { display:grid; gap:11px; }
+label { display:grid; gap:5px; font-size:13px; font-weight:600; }
+textarea { resize:vertical; }
+.screen-hint, .screen-error { font-size:12px; }
+.screen-hint { color:var(--settings-muted); }
+.screen-error { color:#923d38; }
+.screen-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; }
+@media(max-width:560px) { .screen-settings { grid-template-columns:1fr; } .screen-preview { max-width:250px; } }
 </style>

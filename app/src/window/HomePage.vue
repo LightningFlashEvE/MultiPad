@@ -77,8 +77,10 @@ const performanceValues = ref<number[]>([])
 const performancePreview = ref<{ menu: number; values: number[] }>()
 const performanceUnavailable = ref(false)
 const petDialog = ref<HTMLDialogElement>()
+const petSettingsBody = ref<HTMLDivElement>()
 const petScreen = ref(0)
 const petTab = ref<'scene' | 'items' | 'decor' | 'shop' | 'ai' | 'stats'>('scene')
+watch(petTab, () => { if (petSettingsBody.value) petSettingsBody.value.scrollTop = 0 })
 const selectedItem = ref(1)
 const isSleeping = computed(() => bedtime.value || (petLinked.value && generation.value < 3 && petState.value.action === 2))
 const clockText = computed(() => [petState.value.hour, petState.value.minute ?? 0].map(n => String(n).padStart(2, '0')).join(':'))
@@ -1169,17 +1171,18 @@ const showAppInfo = () => {
         :class="{ 'device-active': isDeviceButtonActive(10) }"
         @click.stop="openConfigWindow(10)">旋钮 3</button>
     </div>
-    <dialog ref="petDialog" class="pet-dialog" :class="{ 'param-dialog': petScreen > 0 }">
+    <dialog ref="petDialog" class="pet-dialog settings-dialog" :class="{ 'param-dialog': petScreen > 0 }" aria-labelledby="pet-dialog-title">
       <form method="dialog">
         <header>
-          <h2>{{ petScreen === 0 ? '宠物设置' : screenLabels[petScreen] + ' · 宠物参数' }}</h2>
-          <button type="submit">完成</button>
+          <h2 id="pet-dialog-title">{{ petScreen === 0 ? '宠物设置' : screenLabels[petScreen] + ' · 宠物参数' }}</h2>
+          <button type="submit" class="settings-button">完成</button>
         </header>
-        <template v-if="petScreen === 0">
-          <nav class="pet-tabs" aria-label="宠物设置">
+          <nav v-if="petScreen === 0" class="pet-tabs" aria-label="宠物设置">
             <button v-for="tab in ([['scene','场景与作息'],['stats','属性数值'],['items','道具'],['decor','装修'],['shop','商店'],['ai','AI 控制']] as const)" :key="tab[0]"
               type="button" :aria-pressed="petTab === tab[0]" @click="petTab = tab[0]; interactionNotice = ''">{{ tab[1] }}</button>
           </nav>
+        <div ref="petSettingsBody" class="pet-dialog-body settings-scroll">
+        <template v-if="petScreen === 0">
           <PetAiSettings v-if="petTab === 'ai'" :device-ready="petLinked && petState.active" />
           <PetStatSettings v-else-if="petTab === 'stats'" :key="petLinked ? petSession : 'preview'"
             :stats="petState.stats" :connected="petLinked" :supported="!petLinked || generation >= 10"
@@ -1207,28 +1210,28 @@ const showAppInfo = () => {
                 </div>
               </dl>
               <div class="pet-fields" role="group" aria-label="宠物互动">
-                <button type="button" :disabled="interacting || !!petState.fruit || (petLinked && generation < 3 && !!currentToy)"
+                <button type="button" class="settings-button" :disabled="interacting || !!petState.fruit || (petLinked && generation < 3 && !!currentToy)"
                   @click="interactWithPet(3, isSleeping ? 0 : 2)">{{ isSleeping ? '叫醒' : '睡觉' }}</button>
                 <button v-for="action in (['trip_angry', 'gaze_owner', 'stand_watch', 'binky', 'groom_fur', 'groom_ear'] as const)" :key="action"
-                  type="button" :disabled="legacyPet || interacting || !!currentToy || (petLinked && ((action === 'stand_watch' && generation < 7) || (action === 'binky' && generation < 8) || ((action === 'groom_fur' || action === 'groom_ear') && generation < 9)))"
+                  type="button" class="settings-button" :disabled="legacyPet || interacting || !!currentToy || (petLinked && ((action === 'stand_watch' && generation < 7) || (action === 'binky' && generation < 8) || ((action === 'groom_fur' || action === 'groom_ear') && generation < 9)))"
                   @click="interactWithPet(3, petActions.indexOf(action))">{{ petActionLabels[action] }}</button>
               </div>
             </section>
             <section class="scene-controls">
               <label>宠物场景
-                <select :value="petState.scene" :disabled="legacyPet" @change="setScene(6, $event)">
+                <select class="settings-field" :value="petState.scene" :disabled="legacyPet" @change="setScene(6, $event)">
                   <option v-for="(scene, index) in petScenes" :key="scene" :value="index">{{ petSceneLabels[scene] }}</option>
                 </select>
               </label>
               <label>场景季节
-                <select :value="petState.season" @change="setScene(5, $event)">
+                <select class="settings-field" :value="petState.season" @change="setScene(5, $event)">
                   <option v-for="(name, index) in petSeasons" :key="name" :value="index">{{ name }}</option>
                 </select>
               </label>
               <label class="follow-clock"><input type="checkbox" :checked="followClock"
                 :disabled="interacting || (petLinked && generation < 3)" @change="setFollowClock">跟随现实时间</label>
               <label v-if="!followClock">场景时间
-                <select :value="petState.hour" @change="setScene(4, $event)">
+                <select class="settings-field" :value="petState.hour" @change="setScene(4, $event)">
                   <option v-for="n in 24" :key="n" :value="n - 1">{{ String(n - 1).padStart(2, '0') }}:00</option>
                 </select>
               </label>
@@ -1238,16 +1241,16 @@ const showAppInfo = () => {
               <p v-else-if="followClock">连接软件时校准为电脑本地时间。</p>
             </section>
           </div>
-          <p v-if="petTab !== 'ai' && currentToy" role="status">{{ petState.toyPhase === 1 ? '正在走向' : '正在使用' }}{{ currentToy.label }}</p>
-          <p v-if="interactionNotice || petNotice" role="status">{{ interactionNotice || petNotice }}</p>
-          <p v-else-if="petTab === 'scene' && legacyPet">升级键盘固件即可启用新动作、场景玩具和宠物属性。</p>
-          <p v-else-if="petTab === 'scene' && !petLinked">本机预览 · 连接后显示键盘上的宠物和属性。</p>
+          <p v-if="petTab !== 'ai' && currentToy" class="pet-note" role="status">{{ petState.toyPhase === 1 ? '正在走向' : '正在使用' }}{{ currentToy.label }}</p>
+          <p v-if="interactionNotice || petNotice" class="pet-note" role="status">{{ interactionNotice || petNotice }}</p>
+          <p v-else-if="petTab === 'scene' && legacyPet" class="pet-note">升级键盘固件即可启用新动作、场景玩具和宠物属性。</p>
+          <p v-else-if="petTab === 'scene' && !petLinked" class="pet-note">本机预览 · 连接后显示键盘上的宠物和属性。</p>
         </template>
         <template v-else>
           <img class="oled-sample" v-if="petImages[petScreen - 1]" :src="petImages[petScreen - 1]" alt="双参数小屏预览">
           <div class="param-fields">
             <label v-for="row in 2" :key="row">{{ row === 1 ? '第一行' : '第二行' }}
-              <select :value="petParameterIds[petScreen - 1][row - 1]" @change="setPetParameter(row - 1, $event)">
+              <select class="settings-field" :value="petParameterIds[petScreen - 1][row - 1]" @change="setPetParameter(row - 1, $event)">
                 <option v-for="option in petParameters" :key="option.id" :value="option.id"
                   :disabled="legacyPet && petStats.some(stat => stat.id === option.id)">{{ option.label }}</option>
               </select>
@@ -1255,6 +1258,7 @@ const showAppInfo = () => {
           </div>
           <p v-if="legacyPet">升级键盘固件即可显示宠物属性。</p>
         </template>
+        </div>
       </form>
     </dialog>
   </div>
@@ -1265,33 +1269,48 @@ const showAppInfo = () => {
 .home-toolbar .mode-switch button { padding: 5px 7px; border: 0; border-radius: 6px; font-size: 13px; white-space: nowrap; color: #263d46; background: transparent; cursor: pointer; }
 .home-toolbar .mode-switch button[aria-pressed="true"] { color: white; background: #263d46; }
 .mode-status { grid-column: 1 / -1; align-self: center; font-size: 12px; color: #405058; }
-.pet-dialog { box-sizing: border-box; width: min(640px, 96%); max-height: calc(100vh - 28px); overflow: auto; margin: auto; padding: 18px; color: #24323a; border: 1px solid #aab7bd; border-radius: 14px; background: #f7fafb; }
-.pet-dialog.param-dialog { width: min(330px, 94%); }
-.pet-tabs { display:flex; flex-wrap:wrap; gap:4px; margin:0 0 14px; padding-bottom:8px; border-bottom:1px solid #d3dfdd; }
-.pet-tabs button[aria-pressed=true] { color:#215447; background:#deede7; border-color:#73998e; }
-.scene-settings { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(0,1fr); gap:16px; }
-.scene-controls,.param-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; align-content:start; }
-.scene-controls .follow-clock { display:flex; align-items:center; gap:6px; grid-column:1/-1; margin-top:3px; }
-.scene-controls .clock-readout,.scene-controls p { grid-column:1/-1; }
-.scene-controls .clock-readout { display:flex; justify-content:space-between; padding:6px 8px; background:#e7efed; border-radius:5px; }
+.pet-dialog {
+  width:min(640px, calc(100vw - 30px));
+  height:min(470px, calc(100dvh - 24px));
+  max-height:none;
+  max-width:none;
+  margin:auto;
+  padding:0;
+  overflow:hidden;
+  box-shadow:0 14px 45px #13262133;
+}
+.pet-dialog.param-dialog { width:min(340px, calc(100vw - 30px)); height:auto; max-height:calc(100dvh - 24px); }
+.pet-dialog::backdrop { background:#17292373; }
+.pet-dialog form { display:flex; flex-direction:column; max-height:inherit; height:100%; }
+.pet-dialog header { display:flex; flex:none; align-items:center; justify-content:space-between; gap:12px; padding:13px 18px 9px; }
+.pet-dialog h2 { margin:0; font-size:18px; font-weight:650; }
+.pet-tabs { display:flex; flex:none; gap:3px; padding:4px 18px 9px; overflow-x:auto; border-bottom:1px solid var(--settings-line); }
+.pet-tabs button { flex:none; min-height:31px; padding:5px 9px; border:0; border-radius:7px; color:var(--settings-muted); background:transparent; font:600 13px var(--settings-font); cursor:pointer; }
+.pet-tabs button:hover { background:var(--settings-canvas); color:var(--settings-ink); }
+.pet-tabs button[aria-pressed=true] { color:var(--settings-accent); background:var(--settings-selected); }
+.pet-tabs button:focus-visible { outline-offset:-2px; }
+.pet-dialog-body { flex:1; padding:15px 18px 18px; background:var(--settings-canvas); }
+.param-dialog .pet-dialog-body { border-top:1px solid var(--settings-line); }
+.scene-settings { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(0,1fr); gap:16px; }
+.scene-settings :deep(.pet-scene) { border-radius:9px; }
+.scene-controls, .param-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; align-content:start; }
+.scene-controls { padding:12px; border-radius:10px; background:var(--settings-surface); }
+.scene-controls label, .param-fields label { display:grid; gap:4px; font-size:13px; font-weight:600; }
+.scene-controls .follow-clock { display:flex; align-items:center; gap:7px; grid-column:1/-1; margin-top:2px; }
+.scene-controls input[type=checkbox] { accent-color:var(--settings-accent); }
+.scene-controls .clock-readout,.scene-controls p { grid-column:1/-1; color:var(--settings-muted); font-size:12px; }
+.scene-controls .clock-readout { display:flex; justify-content:space-between; padding:6px 8px; background:var(--settings-group); border-radius:6px; }
 .scene-controls time { font-variant-numeric:tabular-nums; }
-.scene-controls .knob-hint { line-height:1.5; }
-.oled-sample { width:144px; height:80px; display:block; margin:4px auto 14px; image-rendering:pixelated; background:#000; }
-@media(max-width:500px) { .scene-settings { grid-template-columns:1fr; } }
-.pet-dialog::backdrop { background: #15222d80; }
-.pet-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
-.pet-dialog h2 { margin: 0; font-size: 18px; }
-.pet-dialog canvas { width: 100%; height: auto; border-radius: 8px; }
-.pet-fields { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-top: 12px; }
-.pet-stats { display: grid; grid-template-columns: repeat(4, 1fr); margin: 10px 0 0; padding: 8px 10px; border-radius: 7px; background: #e7efed; }
-.pet-stats dt { color: #4d625c; font-size: 12px; }
-.pet-stats dd { margin: 2px 0 0; font-size: 16px; font-variant-numeric: tabular-nums; }
-.pet-stats small { color: #52665f; font-size: 10px; }
-.pet-dialog label { display: grid; gap: 4px; font-size: 13px; }
-.pet-dialog button, .pet-dialog select { font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid #aab7bd; background: white; color: inherit; }
-.pet-dialog button { cursor: pointer; }
-.pet-dialog :disabled { opacity: .55; cursor: default; }
-.pet-dialog p { margin: 8px 0 0; font-size: 12px; }
+.oled-sample { width:144px; height:80px; display:block; margin:4px auto 14px; border-radius:7px; image-rendering:pixelated; background:#000; }
+.pet-fields { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+.pet-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:5px; margin-top:9px; padding:9px 10px; border-radius:8px; background:var(--settings-surface); }
+.pet-stats dt { color:var(--settings-muted); font-size:12px; }
+.pet-stats dd { margin-top:2px; font-size:17px; font-weight:650; font-variant-numeric:tabular-nums; }
+.pet-note { margin-top:10px; color:var(--settings-muted); font-size:12px; }
+@media(max-width: 515px) {
+  .scene-settings { grid-template-columns:1fr; gap:10px; }
+  .pet-dialog header, .pet-tabs, .pet-dialog-body { padding-inline:12px; }
+}
 #app-info {
   @include global.full_wh;
   @include global.pos_ab;

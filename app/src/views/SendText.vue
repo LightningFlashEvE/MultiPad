@@ -82,47 +82,20 @@ const commit = () => {
 
 <template>
   <div id="send-text-content">
-    <textarea name="" id="" cols="30" rows="10" v-model="textValue" spellcheck="false"></textarea>
-    <div id="commit-box" @click="commit">确认</div>
-    <div id="text-limit">
-      <span>{{ textCount }} </span
-      > / 100
+    <label>发送文本
+      <textarea class="settings-field" rows="5" v-model="textValue" spellcheck="false"></textarea>
+    </label>
+    <div class="actions">
+      <small>{{ textCount }} / 100</small>
+      <button type="button" class="settings-button is-primary" @click="commit">确认</button>
     </div>
   </div>
 </template>
 
 <style lang="scss" scoped>
-#send-text-content {
-  @include global.wh(60%, 35%, 600px, 350px);
-  @include global.ab_center;
-  z-index: 66;
-  // background: rgba($color: #000000, $alpha: 0.3);
-  overflow: hidden;
-  @include global.style_common(16px, rgba(255, 255, 255, 1));
-  padding: 3.5em;
-
-  textarea {
-    @include global.full_wh;
-    font-size: 20px;
-    outline: none;
-    border: none;
-    background: rgba(255, 255, 255, 0);
-    resize: none;
-  }
-  #commit-box {
-    @include global.wh(120px, 50px);
-    @include global.pos_ab(20px, 20px, 2);
-    @include global.style_common(12px, rgba(210, 168, 169, 0.8));
-    cursor: pointer;
-    @include global.flex_center;
-    @include global.font_config(20px, rgba(255, 255, 255, 1));
-  }
-  #text-limit {
-    @include global.wh(120px, 50px);
-    @include global.pos_ab(6px, 20px, 1);
-    border-radius: 12px;
-    @include global.flex_center;
-    font-size: 20px;
-  }
-}
+#send-text-content { width:min(480px,90%); padding:16px; }
+label { display:grid; gap:9px; font-weight:650; }
+textarea { resize:vertical; min-height:96px; font-weight:400; }
+.actions { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:10px; }
+small { color:var(--settings-muted); }
 </style>

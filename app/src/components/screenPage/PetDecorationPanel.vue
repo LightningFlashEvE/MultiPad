@@ -67,15 +67,17 @@ function resetPosition() {
 </template>
 
 <style scoped>
-.decoration-panel { display:grid; grid-template-columns:minmax(112px, .42fr) minmax(0, 1.58fr); align-items:start; gap:16px; }
-aside { display:grid; gap:6px; }
+.decoration-panel { display:grid; grid-template-columns:minmax(123px,.45fr) minmax(0,1.55fr); align-items:start; gap:12px; }
+aside { display:grid; gap:5px; padding:10px; background:var(--settings-surface); border-radius:10px; }
+.room :deep(.pet-scene) { border-radius:9px; }
 h3 { margin:0; font-size:15px; }
 .room h3 { margin-top:10px; }
 .room p { margin:5px 0 8px; font-size:12px; color:#49615f; }
-button { padding:6px 8px; background:#fff; border:1px solid #bbc9c6; border-radius:6px; color:#304647; font:inherit; font-size:13px; }
+button { padding:6px 8px; background:var(--settings-group); border:1px solid transparent; border-radius:var(--settings-radius); color:var(--settings-ink); font:inherit; font-size:13px; }
 button:enabled { cursor:pointer; }
+button:hover:enabled { background:var(--settings-selected); }
 button:disabled { opacity:.55; }
-button[aria-pressed=true] { background:#deede7; border-color:#568475; }
+button[aria-pressed=true] { background:var(--settings-selected); color:var(--settings-accent); border-color:var(--settings-input-line); }
 .owned-item { display:flex; justify-content:space-between; align-items:center; gap:4px; text-align:left; }
 small { color:#49615f; font-size:11px; }
 .actions { display:flex; flex-wrap:wrap; gap:6px; }
