@@ -13,7 +13,7 @@ import { fileReadListener } from "../controller/fileRead"
 import { fetchScreenValue } from '../controller/screenApi'
 import { startPetMcp } from '../controller/petMcp'
 import { isStatCommand, isStatValue, isHeadPetInput, isHutchPosition } from '../../src/utils/petCatalog'
-import { getPetAi, savePetAi, startPetAi, stopPetAi, testPetAi } from '../controller/petAi'
+import { getPetAiActivity, getPetAi, savePetAi, startPetAi, stopPetAi, testPetAi } from '../controller/petAi'
 import type { IpcMainInvokeEvent, WebContents } from 'electron'
 
 // A detached Windows launcher can close its logging pipes while MultiPad is open.
@@ -118,6 +118,10 @@ function fromHome(event: IpcMainInvokeEvent) {
     throw Error('请在 MultiPad 主窗口使用宠物设置')
   }
 }
+ipcMain.handle('pet-ai-activity-get', (event: IpcMainInvokeEvent) => {
+  fromHome(event)
+  return getPetAiActivity()
+})
 ipcMain.handle('pet-ai-get', (event: IpcMainInvokeEvent) => {
   fromHome(event)
   return getPetAi()
@@ -213,7 +217,9 @@ app.whenReady().then(() => {
   } catch (error) {
     console.error('MultiPad MCP startup failed', error)
   }
-  startPetAi()
+  startPetAi(activity => {
+    if (mainContents && !mainContents.isDestroyed()) mainContents.send('pet-ai-activity', activity)
+  })
   app.once('before-quit', stopPetAi)
   // 创建窗口
   createMainWindow()

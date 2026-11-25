@@ -112,6 +112,12 @@ contextBridge.exposeInMainWorld('myApi', {
   pcPerformance: () => ipcRenderer.invoke('pc-performance'),
   livePerformance: (menu: number, metrics?: number[]) => ipcRenderer.invoke('live-performance', menu, metrics),
   petAction: (command: number, value = 0) => ipcRenderer.invoke('pet-action', command, value),
+  getPetAiActivity: () => ipcRenderer.invoke('pet-ai-activity-get'),
+  onPetAiActivity: (callback: (activity: unknown) => void) => {
+    const listener = (_event: unknown, activity: unknown) => callback(activity)
+    ipcRenderer.on('pet-ai-activity', listener)
+    return () => ipcRenderer.removeListener('pet-ai-activity', listener)
+  },
   getPetAi: () => ipcRenderer.invoke('pet-ai-get'),
   savePetAi: (settings: object) => ipcRenderer.invoke('pet-ai-save', settings),
   testPetAi: (kind: 'connection' | 'feed') => ipcRenderer.invoke('pet-ai-test', kind),

@@ -18,6 +18,7 @@ import { renderScreenContent, type ScreenFrame } from '../components/screenPage/
 import PetDisplay from '../components/screenPage/PetDisplay.vue'
 import PetStatSettings from '../components/screenPage/PetStatSettings.vue'
 import PetAiSettings from '../components/screenPage/PetAiSettings.vue'
+import PetAiActivity from '../components/homePage/PetAiActivity.vue'
 import PetHeadKnob from '../components/homePage/PetHeadKnob.vue'
 import PetItemsPanel from '../components/screenPage/PetItemsPanel.vue'
 import PetDecorationPanel from '../components/screenPage/PetDecorationPanel.vue'
@@ -918,6 +919,7 @@ const showAppInfo = () => {
           </span>
           <span>{{ appMode === 'pet' ? (index ? petContent(index - 1).rows.map(row => row.label).join(' · ') : '宠物设置') : label }}</span>
         </button>
+        <PetAiActivity v-if="appMode === 'pet'" :session="petLinked && petState.active ? petSession : undefined" />
         <div v-if="appMode === 'pet'" class="mode-status" role="status">
           {{ petNotice || interactionNotice || (petLinked && petState.active ? '键盘养宠模式已同步' : '本机宠物预览') }}
         </div>

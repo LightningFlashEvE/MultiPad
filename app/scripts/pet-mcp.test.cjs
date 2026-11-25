@@ -202,6 +202,8 @@ test('model sees its personality, the complete available event window and care s
   })
   t.after(()=>ai.stopPetAi())
   const cfg={apiUrl:'http://localhost:19377/v1',model:'fixture',apiKey:'secret-mcp-regression-key',personality:'胆小，喜欢在窝边观察主人。',enabled:false}
+  const activity = []
+  ai.startPetAi(value => activity.push(value))
   ai.savePetAi(cfg)
   nextTool='pet_feed'
   assert.equal((await ai.testPetAi('connection')).status.phase,'idle')
@@ -249,7 +251,12 @@ test('model sees its personality, the complete available event window and care s
     assert(!snapshot.automaticBehaviors.includes(behavior))
   assert(snapshot.keyBindings && snapshot.availableNow.moveDecorations)
   assert.deepEqual(f.board.requests.filter(r=>r.command>0).map(r=>r.value),[10,7])
+  assert(activity.some(a=>a.message.includes('1/2') && a.message.includes('眨眼') && a.session===session))
+  assert(activity.some(a=>a.message.includes('2/2') && a.message.includes('跳跃')))
+  assert.match(ai.getPetAiActivity().message,/最近决定.*跳跃/)
+  assert(!JSON.stringify(activity).includes(cfg.apiKey))
   f.board.onWrite=()=>{f.board.payload=payload(6,{},[],[120,1,4])}
   await auto()
   assert.deepEqual(f.board.requests.filter(r=>r.command>0).map(r=>r.value),[10,7,10])
+  assert.match(ai.getPetAiActivity().message,/已接收眨眼.*已跳过跳跃/)
 })

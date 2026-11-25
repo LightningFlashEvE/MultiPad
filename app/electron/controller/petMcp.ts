@@ -259,7 +259,8 @@ function behaviorCommand(b: typeof behaviors[number]): [number, number] {
 }
 
 let planRunning = false
-export function createPetMcp(enabled: () => boolean = () => true) {
+export function createPetMcp(enabled: () => boolean = () => true,
+  onStepAccepted?: (behavior: typeof behaviors[number], index: number, total: number) => void) {
   const server = new McpServer({ name: 'multipad-pet', version: '1.4.0' }, { instructions: petServerInstructions })
   server.registerTool('pet_perform_sequence', {
     description: '按顺序安排 1–6 步身体动作、投喂（水果名）、场景、玩具或回窝。waitMs 是每步发出前的等待。每步读取真机，需求已满足、被摸头、设备忙或会话改变即停止。accepted 是已接收的步骤，实际完成看事件。',
@@ -283,6 +284,7 @@ export function createPetMcp(enabled: () => boolean = () => true) {
           return { accepted, stoppedBefore: step.behavior, reason: error instanceof Error ? error.message : '设备未确认此步' }
         }
         accepted.push(step.behavior)
+        onStepAccepted?.(step.behavior, accepted.length, steps.length)
       }
       return { accepted, state }
     } finally { planRunning = false }
