@@ -14,7 +14,7 @@ const loaded = ref(false)
 let timer: ReturnType<typeof setInterval> | undefined
 
 async function sample() {
-  values.value = await win.myApi.pcPerformance().catch(() => [])
+  values.value = await win.myApi.pcPerformancePreview(menu + 1).catch(() => [])
 }
 
 onMounted(async () => {
@@ -84,6 +84,7 @@ main { padding: 13px 17px 16px; }
 }
 .monitor-context { margin-bottom: 10px; font-size: 12px; font-weight: 650; }
 .current-source { color: #b9cadd; font-weight: 500; }
+.performance-display { border-radius: 7px; }
 footer { margin-top: 13px; }
 footer p { margin: 0; color: #b9cadd; font-size: 11px; }
 footer button {

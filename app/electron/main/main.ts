@@ -99,6 +99,8 @@ ipcMain.handle('device-screens', (_event, knownGeneration?: number) => {
 
 ipcMain.handle('device-buttons', () => SerialConnect.readDeviceButtons())
 ipcMain.handle('pc-performance', () => readPcPerformance())
+ipcMain.handle('pc-performance-preview', (_event, menu: number) =>
+  SerialConnect.displayedPerformance(menu) ?? readPcPerformance())
 ipcMain.handle('live-performance', (_event, menu, metrics) => SerialConnect.performance(menu, metrics))
 ipcMain.handle('pet-action', async (event, command, value) => {
   if (!Number.isInteger(command) || command < 0 || (command > 15 && command !== 22 && command !== petLampCommand && !isStatCommand(command)) ||
