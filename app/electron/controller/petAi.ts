@@ -25,6 +25,7 @@ const stateSchema = z.object({
   scene: z.enum(petScenes).nullable(), bedtime: z.boolean().nullable(),
   headPet: z.object({ remainingMs: z.number().int().min(0).max(1200) }).nullable(),
   automaticBehaviors: z.array(z.enum(playableActions)),
+  interruptibleBehaviors: z.array(z.enum(playableActions)),
   reactionBehaviors: z.array(z.enum(playableActions)),
   planningBehaviors: z.array(z.enum(playableActions))
 })
@@ -399,6 +400,7 @@ async function run(kind: 'auto' | 'connection' | 'blink', scheduled?: PlannedSte
       }
 
       if (!pet || !action) return
+      const eligible = (state: typeof pet) => kind === 'auto' ? state?.interruptibleBehaviors ?? [] : state?.automaticBehaviors ?? []
       if (trigger?.events.some(event => event.type === 'head_petted')) {
         // Decide as soon as the gesture is seen. Wait only to deliver the selected
         // response so a held encoder cannot interrupt or be interrupted by the AI.
@@ -411,19 +413,20 @@ async function run(kind: 'auto' | 'connection' | 'blink', scheduled?: PlannedSte
       }
       if (playBy) {
         const session = pet.session
-        while (!pet.automaticBehaviors.length && pet.action !== action && Date.now() + 400 < playBy) {
+        while (!eligible(pet).length && pet.action !== action && Date.now() + 400 < playBy) {
           await waitFor(400, undefined, { signal: controller.signal })
           pet = await readState(client)
           if (!stillEnabled() || pet.session !== session || !pet.active) return
         }
       }
       const label = behaviorLabel(action)
-      if (!pet.automaticBehaviors.includes(action) || (playBy !== undefined && Date.now() >= playBy)) {
+      if (!eligible(pet).includes(action) || (playBy !== undefined && Date.now() >= playBy)) {
         setStatus({ phase: 'idle', message: '兔子状态已变化，已跳过' + label })
         return
       }
       const outcome = z.object({ accepted: z.array(z.string()) })
-        .parse(await callPet(client, actionTool, { steps: [{ behavior: action, durationSeconds, untilEnergy }], session: pet.session }, controller.signal))
+        .parse(await callPet(client, actionTool, { steps: [{ behavior: action, durationSeconds, untilEnergy }],
+          session: pet.session, interrupt: kind === 'auto' }, controller.signal))
       if (!stillEnabled()) return
       if (!outcome.accepted.length) {
         setStatus({ phase: 'idle', message: '兔子状态已变化，已跳过' + label })

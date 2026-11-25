@@ -86,6 +86,7 @@ uint8_t pet_mode_room_drop(uint8_t scene);
 uint8_t pet_mode_room_flags(void);
 uint8_t pet_mode_control(uint8_t opcode, uint8_t value);
 uint8_t pet_mode_move_hutch(uint16_t x, uint16_t y);
+uint8_t pet_mode_move_furniture(uint8_t item, uint16_t x, uint16_t y);
 uint8_t pet_mode_events(uint32_t after, PetEvent *out, bool *overrun, bool *more);
 
 #endif

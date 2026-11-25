@@ -10,6 +10,8 @@ enum { PET_KEY_COUNT = 8, ITEM_HUTCH = 9, ITEM_CARROT = 10 };
 enum { PET_CARE_GRACE_MS = 300000, PET_UNATTENDED_DECAY_MS = 120000 };
 /* The 81 x 74 sprite starts at (anchor_x - 41, anchor_y - 69). */
 enum { HUTCH_X_MIN = 41, HUTCH_X_MAX = 280, HUTCH_Y_MIN = 69, HUTCH_Y_MAX = 167 };
+enum { PET_SNACKS = 8, PET_MAX_STOCK = 99, PET_MAX_COINS = 9999, PET_SNACK_PRICE = 10, PET_SNACK_PACK = 5 };
+enum { PET_TABLE = 0, PET_LAMP = 1 };
 
 typedef struct {
     uint8_t satiety, energy, mood, affection, scene;
@@ -18,6 +20,8 @@ typedef struct {
     uint8_t placed[PET_SCENE_COUNT];
     uint16_t hutch_x;
     uint8_t hutch_y;
+    uint16_t table_x, lamp_x, coins;
+    uint8_t table_y, lamp_y, stock[PET_SNACKS];
 } PetCare;
 
 void pet_care_init(uint16_t flash_id);
@@ -29,6 +33,9 @@ void pet_care_eat_fruit(bool owner_fed);
 void pet_care_bind(uint8_t key, uint8_t item);
 void pet_care_set_toy(uint8_t scene, uint8_t toy);
 bool pet_care_move_hutch(uint16_t x, uint16_t y);
+bool pet_care_move_furniture(uint8_t item, uint16_t x, uint16_t y);
+bool pet_care_buy_snacks(uint8_t item);
+bool pet_care_take_snack(uint8_t item);
 void pet_care_follow_clock(bool follow);
 void pet_care_set_pendant_lamp(bool installed);
 void pet_care_tick(uint32_t elapsed_ms, bool sleeping, unsigned exertion, bool unattended);

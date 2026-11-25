@@ -135,7 +135,7 @@ export function drawNursery(ctx: CanvasRenderingContext2D, hour = 12, minute = 0
   const oval = (color: string, x: number, y: number, rx: number, ry: number) => nurseryOval(ctx, color, x, y, rx, ry)
   const honey = '#c99470', maple = '#e1b181', mapleLight = '#f4d5a8'
   const cream = '#fff0cf', peach = '#efb4a2', rose = '#cb8b80'
-  const mint = '#9bc7b8', teal = '#78a99d'
+  const mint = '#9bc7b8'
 
   // Daisies on buttercream wallpaper, above a low honey-oak skirting board.
   paint('#fae6cc', 0, 0, 320, 172)
@@ -220,6 +220,23 @@ export function drawNursery(ctx: CanvasRenderingContext2D, hour = 12, minute = 0
   }
   paint('#f4d9b9', 26, 51, 7, 1)
   paint('#f4d9b9', 43, 51, 7, 1)
+  // Braided oval play mat; the centre is open for the rabbit to roam.
+  oval('#ddba9e', 160, 150, 101, 15)
+  oval('#92b8ab', 159, 148, 101, 16)
+  oval('#bedac5', 159, 147, 98, 15)
+  oval('#93bcae', 159, 147, 90, 12)
+  oval('#c7dfca', 159, 147, 87, 11)
+  for (const x of [106, 130, 154, 178, 202]) {
+    paint('#a9cdb9', x, 153, 3, 1)
+    paint('#dfebd0', x + 1, 152, 1, 3)
+  }
+}
+
+export function drawNurseryTable(ctx: CanvasRenderingContext2D) {
+  const paint = (color: string, x: number, y: number, w: number, h: number) => rect(ctx, color, x, y, w, h)
+  const oval = (color: string, x: number, y: number, rx: number, ry: number) => nurseryOval(ctx, color, x, y, rx, ry)
+  const honey = '#c99470', maple = '#e1b181', mapleLight = '#f4d5a8'
+  const cream = '#fff0cf', peach = '#efb4a2', mint = '#9bc7b8', teal = '#78a99d'
   oval('#dfaF8d', 44, 123, 39, 3)
   paint(honey, 8, 96, 74, 27)
   paint(maple, 9, 97, 72, 25)
@@ -261,17 +278,6 @@ export function drawNursery(ctx: CanvasRenderingContext2D, hour = 12, minute = 0
   paint('#e7bd7e', 58, 78, 12, 4)
   paint(peach, 60, 75, 8, 3)
   pixelCircle(ctx, cream, 64, 73, 2)
-
-  // Braided oval play mat; the centre is open for the rabbit to roam.
-  oval('#ddba9e', 160, 150, 101, 15)
-  oval('#92b8ab', 159, 148, 101, 16)
-  oval('#bedac5', 159, 147, 98, 15)
-  oval('#93bcae', 159, 147, 90, 12)
-  oval('#c7dfca', 159, 147, 87, 11)
-  for (const x of [106, 130, 154, 178, 202]) {
-    paint('#a9cdb9', x, 153, 3, 1)
-    paint('#dfebd0', x + 1, 152, 1, 3)
-  }
 }
 
 export function drawNurseryHutch(ctx: CanvasRenderingContext2D) {

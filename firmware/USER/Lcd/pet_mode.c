@@ -41,7 +41,7 @@ _Static_assert(sizeof(fruit_art) / sizeof(fruit_art[0]) == FRUIT_COUNT, "Each ke
 
 typedef struct {
     uint16_t left, right, row, bottom;
-    int16_t x, y, hutch_x, hutch_y;
+    int16_t x, y, hutch_x, hutch_y, table_x, table_y, lamp_x, lamp_y;
     int8_t direction;
     uint8_t sprite;
     PetAction action;
@@ -202,11 +202,12 @@ static void end_toy(bool interrupted, uint8_t source, uint32_t now) {
 }
 
 static int16_t target_x(void) {
+    if (active_toy->id == NURSERY_TABLE) return pet_care_get()->table_x;
     return active_toy->id == TOY_RABBIT_HUTCH ? (int16_t)pet_care_get()->hutch_x : active_toy->target_x;
 }
 
 static int16_t target_y(void) {
-    if (active_toy->id == NURSERY_TABLE) return 116;
+    if (active_toy->id == NURSERY_TABLE) return pet_care_get()->table_y;
     return active_toy->id == TOY_RABBIT_HUTCH ? pet_care_get()->hutch_y : GROUND;
 }
 
@@ -276,6 +277,17 @@ uint8_t pet_mode_move_hutch(uint16_t new_x, uint16_t new_y) {
     }
     if (pet_care_get()->scene == PET_NURSERY) redraw_scene = true;
     record_event(PET_EVENT_DECORATION_MOVED, TOY_RABBIT_HUTCH, SOURCE_MCP, PET_NURSERY);
+    return OK;
+}
+
+uint8_t pet_mode_move_furniture(uint8_t item, uint16_t new_x, uint16_t new_y) {
+    if (!active || pet_care_get()->scene != PET_NURSERY) return BUSY;
+    if (!pet_care_move_furniture(item, new_x, new_y)) return INVALID;
+    if (item == PET_TABLE && active_toy && active_toy->id == NURSERY_TABLE) {
+        if (toy_phase == TOY_APPROACHING) aim_at_activity();
+        else { x = new_x; y = new_y; }
+    }
+    redraw_scene = true;
     return OK;
 }
 
@@ -444,7 +456,7 @@ bool pet_mode_encoder_rotated(bool clockwise, bool pressed_detent) {
 
 static bool queue_fruit(uint8_t requested, uint8_t source, uint32_t now) {
     PetFloor *floor = current_floor();
-    if (floor->count == PET_FLOOR_CAPACITY) return false;
+    if (floor->count == PET_FLOOR_CAPACITY || !pet_care_take_snack(requested)) return false;
     if (bedtime && wants_food()) end_toy(true, source, now);
     /* Choose the closest free landing site to the original toss, keeping fruit distinct. */
     const int preferred = x + (requested % 2 ? 77 : -77);
@@ -520,6 +532,7 @@ void pet_mode_adjust_scene(int8_t direction_step, bool change_season) {
 }
 
 uint8_t pet_mode_control(uint8_t opcode, uint8_t value) {
+    if (opcode == 31) return active && pet_care_buy_snacks(value) ? OK : INVALID;
     enum { MODE = 1, FEED, PLAY, HOUR, SEASON, SCENE, DEPLOY_TOY, BIND_KEY, FOLLOW_CLOCK, PLAY_TOY = 11, TRIGGER_KEY, PLACE_IF_EMPTY, VISIT_HUTCH = 15, CLOCK_BASE = 16, PAT_HEAD = 22, SET_SATIETY, SET_ENERGY, SET_MOOD, SET_AFFECTION, SET_PENDANT_LAMP = 28 };
     const uint32_t now = HAL_GetTick();
     if (opcode == MODE && value <= 1) {
@@ -975,6 +988,8 @@ static void begin_frame(uint32_t now) {
     PetFrame next = {
         .bottom = DIRTY_BOTTOM, .x = x, .y = action == PET_BINKY ? y - dance_lift(elapsed) : y,
         .hutch_x = pet_care_get()->hutch_x, .hutch_y = pet_care_get()->hutch_y,
+        .table_x = pet_care_get()->table_x, .table_y = pet_care_get()->table_y,
+        .lamp_x = pet_care_get()->lamp_x, .lamp_y = pet_care_get()->lamp_y,
         .direction = direction, .sprite = sprite_frame(action_clip(elapsed), elapsed),
         .action = action, .elapsed = elapsed, .hour = hour, .minute = minute, .season = season,
         .scene = scene, .visible_toy = pet_care_get()->placed[scene], .using_toy = using,
@@ -1222,14 +1237,27 @@ static void paint_window_sky(uint8_t *line, int row, int left, int right) {
 }
 
 static void paint_pendant_lamp(uint8_t *line, uint16_t row) {
-    if (row >= 33) return;
-    paint_rect(line, row, 217, 0, 10, 3, HEX565(0x86654c));
-    paint_rect(line, row, 221, 3, 2, 13, HEX565(0x86654c));
-    paint_rect(line, row, 217, 15, 10, 4, HEX565(0x9e6942));
-    paint_rect(line, row, 213, 19, 18, 5, HEX565(0xb98650));
-    paint_rect(line, row, 209, 24, 26, 4, HEX565(0xbb8c54));
-    paint_rect(line, row, 209, 28, 26, 2, HEX565(0x825737));
-    paint_rect(line, row, 216, 28, 12, 5, frame.lamp_lit ? HEX565(0xffedaa) : HEX565(0xccae83));
+    if (row < frame.lamp_y || row >= frame.lamp_y + 33) return;
+    const int dx = frame.lamp_x - 222, dy = frame.lamp_y;
+    paint_rect(line, row, 217 + dx, 0 + dy, 10, 3, HEX565(0x86654c));
+    paint_rect(line, row, 221 + dx, 3 + dy, 2, 13, HEX565(0x86654c));
+    paint_rect(line, row, 217 + dx, 15 + dy, 10, 4, HEX565(0x9e6942));
+    paint_rect(line, row, 213 + dx, 19 + dy, 18, 5, HEX565(0xb98650));
+    paint_rect(line, row, 209 + dx, 24 + dy, 26, 4, HEX565(0xbb8c54));
+    paint_rect(line, row, 209 + dx, 28 + dy, 26, 2, HEX565(0x825737));
+    paint_rect(line, row, 216 + dx, 28 + dy, 12, 5, frame.lamp_lit ? HEX565(0xffedaa) : HEX565(0xccae83));
+}
+
+static void paint_table(uint8_t *line, uint16_t row) {
+    const int local = (int)row - frame.table_y + 50;
+    if (local < 0 || local >= 61) return;
+    int col = frame.table_x - 91;
+    for (uint16_t run = table_rows[local]; run < table_rows[local + 1]; run++) {
+        const int end = col + table_runs[run * 2];
+        const uint8_t color = table_runs[run * 2 + 1];
+        if (color) paint_span(line, col, end, nursery_palette[color]);
+        col = end;
+    }
 }
 
 static void paint_row(uint8_t *line, uint16_t row) {
@@ -1247,6 +1275,7 @@ static void paint_row(uint8_t *line, uint16_t row) {
         x_pos = end;
     }
     if (!nursery) paint_sky(line, row);
+    if (nursery) paint_table(line, row);
     if (frame.lamp_installed) paint_pendant_lamp(line, row);
 
     if (nursery) {

@@ -150,6 +150,7 @@ async function generate() {
   const rabbit = encode(frames, true)
   const nursery = encode([render(320, 172, ctx => scene.drawNursery(ctx, 12, 0, true))])
   const hutch = encode([render(81, 74, scene.drawNurseryHutch, 205, 73)])
+  const table = encode([render(76, 61, scene.drawNurseryTable, 7, 66)])
   if (pat.rabbitBrows.length !== frames.length) throw Error('Each rabbit frame needs a head-pat contact point')
   const patImages = []
   for (let kind = 0; kind < 3; kind++) {
@@ -190,6 +191,8 @@ async function generate() {
     cArray('uint8_t', 'nursery_runs', nursery.runs),
     cArray('uint16_t', 'hutch_rows', hutch.rows),
     cArray('uint8_t', 'hutch_runs', hutch.runs),
+    cArray('uint16_t', 'table_rows', table.rows),
+    cArray('uint8_t', 'table_runs', table.runs),
     cArray('uint16_t', 'rabbit_rows', rabbit.rows),
     cArray('uint8_t', 'rabbit_runs', rabbit.runs)
   ].join('\n')

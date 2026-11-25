@@ -22,10 +22,13 @@ import PetAiActivity from '../components/homePage/PetAiActivity.vue'
 import PetHeadKnob from '../components/homePage/PetHeadKnob.vue'
 import PetItemsPanel from '../components/screenPage/PetItemsPanel.vue'
 import PetDecorationPanel from '../components/screenPage/PetDecorationPanel.vue'
+import PetShopPanel from '../components/screenPage/PetShopPanel.vue'
 import { createPetItemPreview, previewCare } from '../components/screenPage/petItemPreview'
 import PerformanceDisplay from '../components/screenPage/PerformanceDisplay.vue'
 import { petParameters, petParameterContent, petValue, petSeasons, petStats, type HutchPosition, type PetParameter, type PetState } from '../components/screenPage/petDisplay'
 import { invertPetEnergy, petActions, petActionLabels, petScenes, petSceneLabels, petRoomItems, petItems, petStateGeneration, petLampCommand, petLampGeneration, petLampInstalledFlag, isHutchPosition, defaultHutchPosition } from '../utils/petCatalog'
+import { furniturePositionValid, newPetWarehouse, petBuySnackCommand, petFruitIds, petFruitLabels, petFurniture, petMaxCoins, petMaxStock,
+  petSnackPack, petSnackPrice, petWarehouseBytes, readPetWarehouse, type PetFurnitureId, type PetPosition } from '../utils/petCatalog'
 
 const router = useRouter()
 const win = window as any
@@ -59,6 +62,12 @@ let nextClockRetry = 0
 const currentToy = computed(() => petRoomItems.find(item => item.wireId === petState.value.activeToy))
 let offlineHutch: HutchPosition = { ...defaultHutchPosition }
 let offlineLamp = false
+const offlineWarehouse = ref(newPetWarehouse())
+const warehouse = computed(() => petLinked.value ? petState.value.warehouse : offlineWarehouse.value)
+const offlineFurniture = { table: { ...petFurniture[1].position }, lamp: { ...petFurniture[2].position } } as Record<'table' | 'lamp', PetPosition>
+function saveWarehouse() {
+  win.myApi.storageMenu('petWarehousePreview', JSON.stringify(offlineWarehouse.value))
+}
 type ParamPair = [PetParameter, PetParameter]
 const petParameterIds = ref<[ParamPair, ParamPair]>([['satiety','energy'], ['mood','affection']])
 const petImages = ref(['', ''])
@@ -67,13 +76,16 @@ const performancePreview = ref<{ menu: number; values: number[] }>()
 const performanceUnavailable = ref(false)
 const petDialog = ref<HTMLDialogElement>()
 const petScreen = ref(0)
-const petTab = ref<'scene' | 'items' | 'decor' | 'ai' | 'stats'>('scene')
+const petTab = ref<'scene' | 'items' | 'decor' | 'shop' | 'ai' | 'stats'>('scene')
 const selectedItem = ref(1)
 const isSleeping = computed(() => bedtime.value || (petLinked.value && generation.value < 3 && petState.value.action === 2))
 const clockText = computed(() => [petState.value.hour, petState.value.minute ?? 0].map(n => String(n).padStart(2, '0')).join(':'))
 const pendingScene = new Map<number, number>()
 let offlineBackground: number | undefined
-const previewWorld = createPetItemPreview(() => petState.value, value => { bedtime.value = value })
+const previewWorld = createPetItemPreview(() => petState.value, value => { bedtime.value = value }, () => {
+  offlineWarehouse.value.coins = Math.min(petMaxCoins, offlineWarehouse.value.coins + 2)
+  saveWarehouse()
+})
 const hasPetPayload = (p?: Uint8Array) => p && petStateGeneration(p) !== 0
 watch(petLinked, linked => {
   if (!linked) {
@@ -81,7 +93,8 @@ watch(petLinked, linked => {
     bindings.value = undefined
     bedtime.value = false
     Object.assign(petState.value, { active: false, stats: { ...(petState.value.stats ?? previewCare) }, activeToy: 0, toyPhase: 0, action: 1,
-      deployedToys: [0, 0], foods: [], toyDrop: 100, queue: 0, fruit: 0, headPatRemaining: 0, hutchPosition: { ...offlineHutch }, pendantLamp: offlineLamp })
+      deployedToys: [0, 0], foods: [], toyDrop: 100, queue: 0, fruit: 0, headPatRemaining: 0, hutchPosition: { ...offlineHutch },
+      tablePosition: offlineFurniture.table, lampPosition: offlineFurniture.lamp, pendantLamp: offlineLamp })
   }
 })
 
@@ -108,6 +121,8 @@ function applyPetReply(reply: { session?: string; payload: Uint8Array }) {
   petLinked.value = true
   petNotice.value = ''
   generation.value = petStateGeneration(p)
+  const savedInventory = readPetWarehouse(p, generation.value)
+  const ageOffset = p.length - 3 - (savedInventory ? petWarehouseBytes : 0)
   const world = generation.value >= 3
   const decorationOffset = 33 + 6 * p[32]
   bindings.value = world ? Array.from(p.slice(19, 27)) : undefined
@@ -125,11 +140,12 @@ function applyPetReply(reply: { session?: string; payload: Uint8Array }) {
     scene: p.length >= 19 ? p[16] : 0,
     activeToy: p[17] ?? 0, toyPhase: p[18] ?? 0,
     pendantLamp: generation.value >= petLampGeneration && Boolean(p[27] & petLampInstalledFlag),
+    tablePosition: savedInventory?.table, lampPosition: savedInventory?.lamp, warehouse: savedInventory?.warehouse,
     hutchPosition: generation.value >= 4 ? { x: p[decorationOffset] | p[decorationOffset + 1] << 8, y: p[decorationOffset + 2] } : undefined,
     rabbitY: generation.value >= 4 ? p[decorationOffset + 3] : undefined,
     headPatRemaining: generation.value >= 5 ? p[decorationOffset + 4] * 10 : undefined,
     facing: generation.value >= 6 ? (p[decorationOffset + 7] & 1 ? 1 : -1) : undefined,
-    actionAgeMs: generation.value >= 8 ? p[p.length - 3] + 256 * p[p.length - 2] : undefined,
+    actionAgeMs: generation.value >= 8 ? p[ageOffset] + 256 * p[ageOffset + 1] : undefined,
     headPatPhase: generation.value >= 6 ? p[decorationOffset + 6] : undefined,
     headPatKind: generation.value >= 5 ? p[decorationOffset + 5] : undefined,
     deployedToys: world ? [p[29], p[30]] : undefined, toyDrop: world ? p[31] : undefined,
@@ -303,10 +319,15 @@ async function interactWithPet(command: number, value: number) {
     if (conState.value) interactionNotice.value = petNotice.value || '等待读取键盘的宠物状态。'
     else if (command === 8) interactionNotice.value = '连接键盘后即可绑定道具。'
     else if (command === 6) previewWorld.changeScene(value)
+    else if (command === 2 && !offlineWarehouse.value.snacks[value - 1]) interactionNotice.value = '背包里没有这种零食。'
     else {
       const previewError = previewWorld.use(command, value)
       applied = !previewError
       interactionNotice.value = previewError || (stat ? '已更新本机预览。' : '本机宠物预览')
+      if (!previewError && command === 2) {
+        offlineWarehouse.value.snacks[value - 1]--
+        saveWarehouse()
+      }
       if (!previewError && command === 14 && petState.value.hutchPosition) {
         offlineHutch = { ...petState.value.hutchPosition }
         win.myApi.storageMenu('petHutchPreview', JSON.stringify(offlineHutch))
@@ -395,6 +416,37 @@ function setPetParameter(row: number, event: Event) {
 function useItem(id: number) {
   const item = petItems.find(entry => entry.itemId === id)
   if (item) void triggerItem(item)
+}
+
+function moveFurniture(id: PetFurnitureId, position: PetPosition) {
+  const item = petFurniture.find(item => item.id === id)
+  if (!item || !furniturePositionValid(item, position.x, position.y) || interacting.value) return
+  if (!petLinked.value && !conState.value && id !== 'hutch') {
+    offlineFurniture[id] = { ...position }
+    if (id === 'table') petState.value.tablePosition = offlineFurniture.table
+    else petState.value.lampPosition = offlineFurniture.lamp
+    win.myApi.storageMenu('petFurniturePreview', JSON.stringify(offlineFurniture))
+    interactionNotice.value = '已保存' + item.label + '位置。'
+    return
+  }
+  void interactWithPet(item.command, position.x | (position.y << 9)).then(ok => {
+    if (ok && id !== 'hutch') interactionNotice.value = '已保存' + item.label + '位置。'
+  })
+}
+
+async function buySnack(id: number) {
+  const fruit = petFruitIds[id - 1]
+  const stock = warehouse.value
+  if (!fruit || !stock || interacting.value || (conState.value && !petLinked.value) ||
+      stock.coins < petSnackPrice || stock.snacks[id - 1] > petMaxStock - petSnackPack) return
+  if (petLinked.value) {
+    if (!await interactWithPet(petBuySnackCommand, id)) return
+  } else {
+    stock.coins -= petSnackPrice
+    stock.snacks[id - 1] += petSnackPack
+    saveWarehouse()
+  }
+  interactionNotice.value = '已将 ' + petSnackPack + ' 份' + petFruitLabels[fruit] + '放入背包。'
 }
 
 function triggerItem(item: typeof petItems[number]) {
@@ -486,6 +538,25 @@ onMounted(async () => {
   } catch { /* Use the default layout for a new local preview. */ }
   offlineLamp = await win.myApi.getMenu('petPendantLampPreview').catch(() => undefined) === 'true'
   if (!petLinked.value) petState.value.pendantLamp = offlineLamp
+  try {
+    const saved = JSON.parse(await win.myApi.getMenu('petWarehousePreview') || 'null')
+    if (saved && Number.isInteger(saved.coins) && saved.coins >= 0 && saved.coins <= petMaxCoins &&
+        Array.isArray(saved.snacks) && saved.snacks.length === petFruitIds.length &&
+        saved.snacks.every((n: number) => Number.isInteger(n) && n >= 0 && n <= petMaxStock)) {
+      offlineWarehouse.value = { coins: saved.coins, snacks: saved.snacks }
+    }
+  } catch { /* Retain starter inventory. */ }
+  try {
+    const saved = JSON.parse(await win.myApi.getMenu('petFurniturePreview') || 'null')
+    for (const item of [petFurniture[1], petFurniture[2]]) {
+      const point = saved?.[item.id]
+      if (point && furniturePositionValid(item, point.x, point.y)) offlineFurniture[item.id] = { x: point.x, y: point.y }
+    }
+    if (!petLinked.value) {
+      petState.value.tablePosition = offlineFurniture.table
+      petState.value.lampPosition = offlineFurniture.lamp
+    }
+  } catch { /* Retain the starter layout. */ }
   try {
     const savedScene = JSON.parse(await win.myApi.getMenu('petSceneSettings') || 'null')
     followClock.value = savedScene?.followClock === true
@@ -1081,7 +1152,7 @@ const showAppInfo = () => {
         </header>
         <template v-if="petScreen === 0">
           <nav class="pet-tabs" aria-label="宠物设置">
-            <button v-for="tab in ([['scene','场景与作息'],['stats','属性数值'],['items','道具与按键'],['decor','装饰布置'],['ai','AI 控制']] as const)" :key="tab[0]"
+            <button v-for="tab in ([['scene','场景与作息'],['stats','属性数值'],['items','道具'],['decor','装修'],['shop','商店'],['ai','AI 控制']] as const)" :key="tab[0]"
               type="button" :aria-pressed="petTab === tab[0]" @click="petTab = tab[0]; interactionNotice = ''">{{ tab[1] }}</button>
           </nav>
           <PetAiSettings v-if="petTab === 'ai'" :device-ready="petLinked && petState.active" />
@@ -1092,11 +1163,13 @@ const showAppInfo = () => {
           <PetDecorationPanel v-else-if="petTab === 'decor'" :state="petState" :connected="petLinked" :generation="generation"
             :busy="interacting || (conState && !petLinked)" @enter="interactWithPet(6, 1)"
             @lamp="installed => interactWithPet(petLampCommand, Number(installed))"
-            @move="p => interactWithPet(14, p.x | (p.y << 9))" @rest="interactWithPet(15, 0)" @inspect="interactWithPet(3, 14)" />
+            @move="moveFurniture" @rest="interactWithPet(15, 0)" @inspect="interactWithPet(3, 14)" />
+          <PetShopPanel v-else-if="petTab === 'shop'" :warehouse="warehouse" :linked="petLinked"
+            :busy="interacting || (conState && !petLinked)" @buy="buySnack" />
           <PetItemsPanel v-else-if="petTab === 'items'" :selected="selectedItem" :bindings="bindings" :generation="generation"
             :connected="petLinked" :busy="interacting" :occupied="!!currentToy" :scene="petState.scene"
             :deployed-toys="petState.deployedToys" :toy-drop="petState.toyDrop" :food-count="petState.foods?.length ?? 0"
-            :full="petState.stats?.satiety === 100" @play="id => interactWithPet(11, id)"
+            :full="petState.stats?.satiety === 100" :warehouse="warehouse" @play="id => interactWithPet(11, id)"
             @select="id => { selectedItem = id; interactionNotice = '' }"
             @bind="(key, id) => interactWithPet(8, (key << 4) | id)" @use="useItem" />
           <div v-else class="scene-settings">

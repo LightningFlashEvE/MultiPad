@@ -1,4 +1,4 @@
-import { petActionLabels, petActions, petStats } from '../../utils/petCatalog'
+import { petActionLabels, petActions, petStats, type PetWarehouse } from '../../utils/petCatalog'
 import type { PetOledRow } from './screenContent'
 
 export { petStats } from '../../utils/petCatalog'
@@ -38,6 +38,9 @@ export interface PetState {
   activeToy: number
   toyPhase: number
   hutchPosition?: HutchPosition
+  tablePosition?: HutchPosition
+  lampPosition?: HutchPosition
+  warehouse?: PetWarehouse
   pendantLamp?: boolean
   deployedToys?: readonly number[]
   toyDrop?: number

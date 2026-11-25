@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { petItems } from '../../utils/petCatalog'
+import { petItems, type PetWarehouse } from '../../utils/petCatalog'
 
 const props = defineProps<{
   selected: number
@@ -14,6 +14,7 @@ const props = defineProps<{
   toyDrop?: number
   foodCount: number
   full: boolean
+  warehouse?: PetWarehouse
 }>()
 const emit = defineEmits<{
   select: [id: number]
@@ -26,7 +27,6 @@ const independentHutch = computed(() => !props.connected || props.generation >= 
 const groups = computed(() => [
   { title: '零食', entries: petItems.filter(item => item.kind === 'fruit') },
   { title: '玩具', entries: petItems.filter(item => item.kind === 'toy' || (!independentHutch.value && item.kind === 'decoration')) },
-  ...(independentHutch.value ? [{ title: '装饰', entries: petItems.filter(item => item.kind === 'decoration') }] : [])
 ])
 const available = computed(() => !props.connected || props.generation >= selectedItem.value.minGeneration)
 const placement = computed(() => !props.connected || props.generation >= 3)
@@ -35,7 +35,7 @@ const deployed = computed(() => props.deployedToys?.[targetScene.value] ?? 0)
 const visiting = computed(() => independentHutch.value && selectedItem.value.kind === 'decoration')
 const placed = computed(() => !visiting.value && selectedItem.value.kind !== 'fruit' && deployed.value === selectedItem.value.wireId)
 const canUse = computed(() => available.value && !props.busy && (placement.value || !props.occupied) &&
-  (selectedItem.value.kind !== 'fruit' || props.foodCount < 8))
+  (selectedItem.value.kind !== 'fruit' || props.foodCount < 8 && (props.warehouse?.snacks[selectedItem.value.itemId - 1] ?? 1) > 0))
 const useLabel = computed(() => {
   const item = selectedItem.value
   if (item.kind === 'fruit') return '投喂' + item.label
@@ -49,7 +49,8 @@ const boundLabel = (id: number) => petItems.find(item => item.itemId === id)?.la
 
 <template>
   <div class="inventory">
-    <div class="catalog" aria-label="道具列表">
+    <div class="catalog" aria-label="背包">
+      <h3>背包 <span v-if="warehouse" class="wallet">{{ warehouse.coins }} 游戏币</span></h3>
       <section v-for="group in groups" :key="group.title">
         <h3>{{ group.title }}</h3>
         <div class="items">
@@ -57,6 +58,7 @@ const boundLabel = (id: number) => petItems.find(item => item.itemId === id)?.la
             @click="emit('select', item.itemId)">
             <span class="item-icon" aria-hidden="true" :style="{ backgroundPositionX: (1 - item.itemId) * 16 + 'px' }"></span>
             {{ item.label }}
+            <small v-if="warehouse && item.kind === 'fruit'" class="quantity">{{ warehouse.snacks[item.itemId - 1] }}</small>
           </button>
         </div>
       </section>
@@ -91,8 +93,10 @@ const boundLabel = (id: number) => petItems.find(item => item.itemId === id)?.la
 h3,h4,p { margin:0; }
 .catalog section+section { margin-top:14px; }
 .catalog h3,h4 { font-size:13px; margin-bottom:6px; color:#405459; }
+.wallet { float:right; color:#6d551d; font-weight:500; }
+.quantity { margin-left:auto; color:#526764; font-variant-numeric:tabular-nums; }
 .items,.keys { display:grid; gap:5px; }
-.items { grid-template-columns:1fr 1fr; }
+.items { grid-template-columns:repeat(2, minmax(0,1fr)); }
 .items button { display:flex; align-items:center; gap:7px; text-align:left; }
 .item-icon { flex:none; width:16px; height:16px; transform:scale(1.28); background:url('../../assets/pet/items.png') no-repeat; image-rendering:pixelated; }
 .inventory button { box-sizing:border-box; font:inherit; font-size:13px; padding:6px; color:#304647; background:#fff; border:1px solid #bbc9c6; border-radius:6px; cursor:pointer; }

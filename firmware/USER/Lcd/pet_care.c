@@ -4,12 +4,14 @@
 
 /* External SPI flash. Menu 10's last color sector is 10 * 27 + 22 + 26 = 318.
  * The alternate sector retains a complete record during erase or power loss. */
-enum { FIRST_SECTOR = 319, SECTOR_BYTES = 4096, V1_BYTES = 16, RECORD_BYTES = 32,
+enum { FIRST_SECTOR = 319, SECTOR_BYTES = 4096, V1_BYTES = 16, V3_BYTES = 32, RECORD_BYTES = 64,
        PER_SECTOR = SECTOR_BYTES / RECORD_BYTES, SLOTS = 2 * PER_SECTOR };
 static const uint8_t signature[] = {'P', 'E', 'T'};
 static const PetCare initial_care = {
     .satiety = 65, .energy = 75, .mood = 70, .affection = 35,
-    .bindings = {1,2,3,4,5,6,7,8}, .hutch_x = 246, .hutch_y = 142
+    .bindings = {1,2,3,4,5,6,7,8}, .hutch_x = 246, .hutch_y = 142,
+    .table_x = 98, .table_y = 116, .lamp_x = 222, .lamp_y = 0,
+    .coins = 100, .stock = {8,8,8,8,8,8,8,8}
 };
 static PetCare care;
 /* Pending changes can accumulate while a failed page program is retried.
@@ -38,15 +40,27 @@ static bool valid_hutch_position(uint16_t x, uint16_t y) {
     return x >= HUTCH_X_MIN && x <= HUTCH_X_MAX && y >= HUTCH_Y_MIN && y <= HUTCH_Y_MAX;
 }
 
+static bool valid_furniture_position(uint8_t item, uint16_t x, uint16_t y) {
+    if (item == PET_TABLE) return x >= 91 && x <= 244 && y >= 70 && y <= 155;
+    return item == PET_LAMP && x >= 13 && x <= 307 && y <= 92;
+}
+
 static bool valid(const uint8_t *record, unsigned bytes) {
     if (memcmp(record, signature, sizeof(signature)) || record[8] > 100 || record[9] > 100 ||
         record[10] > 100 || record[11] > 100 || record[12] >= PET_SCENE_COUNT) return false;
-    if (bytes == RECORD_BYTES) {
+    if (bytes >= V3_BYTES) {
         if (record[13] > 1 || record[22] > 2 || record[23] > 2 || record[22] == 1) return false;
         for (unsigned k = 0; k < PET_KEY_COUNT; k++)
             if (record[14+k] > ITEM_CARROT) return false;
-        if (record[3] == 3 &&
+        if (record[3] >= 3 &&
             (record[23] == 1 || !valid_hutch_position(record[24] | record[25] << 8, record[26]))) return false;
+    }
+    if (bytes == RECORD_BYTES) {
+        if (!valid_furniture_position(PET_TABLE, record[30] | record[31] << 8, record[32]) ||
+            !valid_furniture_position(PET_LAMP, record[33] | record[34] << 8, record[35]) ||
+            (record[36] | record[37] << 8) > PET_MAX_COINS) return false;
+        for (unsigned i = 0; i < PET_SNACKS; i++)
+            if (record[38 + i] > PET_MAX_STOCK) return false;
     }
     return crc16(record, bytes) == (record[bytes-2] | record[bytes-1] << 8);
 }
@@ -67,20 +81,19 @@ void pet_care_init(uint16_t flash_id) {
     uint8_t group[256];
     for (uint16_t base = 0; journal_available && base < SLOTS; base += sizeof(group) / RECORD_BYTES) {
         read_flash(group, address(base), sizeof(group));
-        /* V1 records are 16-byte aligned. Later formats use 32-byte slots. */
+        /* Scan old 16/32-byte records and the new 64-byte slots. */
         for (unsigned i = 0; i < sizeof(group); i += V1_BYTES) {
             const uint8_t *record = group + i;
-            unsigned bytes = record[3] == 1 ? V1_BYTES : RECORD_BYTES;
-            if ((record[3] != 1 && ((record[3] != 2 && record[3] != 3) || i % RECORD_BYTES)) ||
-                !valid(record, bytes)) continue;
+            if (!record[3] || record[3] > 4) continue;
+            unsigned bytes = record[3] == 1 ? V1_BYTES : record[3] == 4 ? RECORD_BYTES : V3_BYTES;
+            if (i % bytes || !valid(record, bytes)) continue;
             uint32_t serial;
             memcpy(&serial, record + 4, sizeof(serial));
             if (found && (int32_t)(serial - sequence) <= 0) continue;
             found = true;
             sequence = serial;
             care = initial_care;
-            /* V3 reserved byte 27 was zero on older firmware. */
-            bond_ms = record[3] == 3 && record[27] < 5 ? record[27] * 60000u : 0;
+            bond_ms = record[3] >= 3 && record[27] < 5 ? record[27] * 60000u : 0;
             care.satiety = record[8];
             care.energy = 100 - record[9]; /* V1–V3 journals encode fatigue. */
             care.mood = record[10];
@@ -92,12 +105,20 @@ void pet_care_init(uint16_t flash_id) {
                 memcpy(care.placed, record + 22, PET_SCENE_COUNT);
                 if (care.placed[PET_NURSERY] == 1) care.placed[PET_NURSERY] = 0;
             }
-            if (record[3] == 3) {
+            if (record[3] >= 3) {
                 care.hutch_x = record[24] | record[25] << 8;
                 care.hutch_y = record[26];
                 care.pendant_lamp = record[28] == 1;
             }
-            next_slot = (base + i / RECORD_BYTES + 1) % SLOTS;
+            if (record[3] >= 4) {
+                care.table_x = record[30] | record[31] << 8;
+                care.table_y = record[32];
+                care.lamp_x = record[33] | record[34] << 8;
+                care.lamp_y = record[35];
+                care.coins = record[36] | record[37] << 8;
+                memcpy(care.stock, record + 38, PET_SNACKS);
+            }
+            next_slot = (base + (i + bytes + RECORD_BYTES - 1) / RECORD_BYTES) % SLOTS;
         }
     }
     pending_stats.satiety = care.satiety;
@@ -147,6 +168,37 @@ void pet_care_set_pendant_lamp(bool installed) {
     pet_care_save();
 }
 
+bool pet_care_move_furniture(uint8_t item, uint16_t x, uint16_t y) {
+    if (!valid_furniture_position(item, x, y)) return false;
+    uint16_t *saved_x = item == PET_TABLE ? &care.table_x : &care.lamp_x;
+    uint8_t *saved_y = item == PET_TABLE ? &care.table_y : &care.lamp_y;
+    if (*saved_x != x || *saved_y != y) {
+        *saved_x = x;
+        *saved_y = (uint8_t)y;
+        dirty = true;
+        pet_care_save();
+    }
+    return true;
+}
+
+bool pet_care_buy_snacks(uint8_t item) {
+    if (!item || item > PET_SNACKS || care.coins < PET_SNACK_PRICE ||
+        care.stock[item - 1] > PET_MAX_STOCK - PET_SNACK_PACK) return false;
+    care.coins -= PET_SNACK_PRICE;
+    care.stock[item - 1] += PET_SNACK_PACK;
+    dirty = true;
+    pet_care_save();
+    return true;
+}
+
+bool pet_care_take_snack(uint8_t item) {
+    if (!item || item > PET_SNACKS || !care.stock[item - 1]) return false;
+    care.stock[item - 1]--;
+    dirty = true;
+    pet_care_save();
+    return true;
+}
+
 void pet_care_follow_clock(bool follow) {
     if (care.follow_time == follow) return;
     care.follow_time = follow;
@@ -188,6 +240,10 @@ void pet_care_adjust(int satiety, int energy, int mood, int affection) {
 }
 
 void pet_care_eat_fruit(bool owner_fed) {
+    if (owner_fed && care.coins <= PET_MAX_COINS - 2) {
+        care.coins += 2;
+        dirty = true;
+    }
     pet_care_adjust(12, 0, 3, owner_fed ? 1 : 0);
     if (!dirty) return;
     /* The fruit has been consumed. Show its reward while flash retries the
@@ -275,7 +331,7 @@ static bool append_record(void) {
     }
     if (!(next_slot % PER_SECTOR)) erase_flash_sector(FIRST_SECTOR + next_slot / PER_SECTOR);
     memcpy(record, signature, sizeof(signature));
-    record[3] = 3;
+    record[3] = 4;
     /* A failed readback can still leave a valid record. Never reuse its serial. */
     uint32_t serial = ++sequence;
     memcpy(record + 4, &serial, sizeof(serial));
@@ -292,6 +348,15 @@ static bool append_record(void) {
     record[26] = care.hutch_y;
     record[27] = bond_ms / 60000u;
     record[28] = care.pendant_lamp;
+    record[30] = (uint8_t)care.table_x;
+    record[31] = (uint8_t)(care.table_x >> 8);
+    record[32] = care.table_y;
+    record[33] = (uint8_t)care.lamp_x;
+    record[34] = (uint8_t)(care.lamp_x >> 8);
+    record[35] = care.lamp_y;
+    record[36] = (uint8_t)care.coins;
+    record[37] = (uint8_t)(care.coins >> 8);
+    memcpy(record + 38, care.stock, PET_SNACKS);
     uint16_t crc = crc16(record, sizeof(record));
     record[RECORD_BYTES-2] = (uint8_t)crc;
     record[RECORD_BYTES-1] = (uint8_t)(crc >> 8);

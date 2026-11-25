@@ -12,7 +12,8 @@ import { setItem, getItem, delItem } from "../controller/storage"
 import { fileReadListener } from "../controller/fileRead"
 import { fetchScreenValue } from '../controller/screenApi'
 import { startPetMcp } from '../controller/petMcp'
-import { isStatCommand, isStatValue, isHeadPetInput, isHutchPosition, petLampCommand } from '../../src/utils/petCatalog'
+import { isStatCommand, isStatValue, isHeadPetInput, furniturePositionValid, petFurniture, petFruitIds,
+  petBuySnackCommand, petLampCommand } from '../../src/utils/petCatalog'
 import { getPetAiActivity, observePetAiSession, observePetOwnerCommand, getPetAi, savePetAi, startPetAi, stopPetAi, testPetAi } from '../controller/petAi'
 import type { IpcMainInvokeEvent, WebContents } from 'electron'
 
@@ -103,9 +104,12 @@ ipcMain.handle('pc-performance-preview', (_event, menu: number) =>
   SerialConnect.displayedPerformance(menu) ?? readPcPerformance())
 ipcMain.handle('live-performance', (_event, menu, metrics) => SerialConnect.performance(menu, metrics))
 ipcMain.handle('pet-action', async (event, command, value) => {
-  if (!Number.isInteger(command) || command < 0 || (command > 15 && command !== 22 && command !== petLampCommand && !isStatCommand(command)) ||
-      !Number.isInteger(value) || value < 0 || value > (command === 14 ? 0x1ffff : command === 10 ? 1439 : 255) ||
-      (command === 14 && !isHutchPosition(value & 511, value >> 9)) || (command === 15 && value !== 0) ||
+  const furniture = petFurniture.find(item => item.command === command)
+  if (!Number.isInteger(command) || command < 0 || (command > 15 && command !== 22 && command !== petLampCommand &&
+      command !== petBuySnackCommand && !furniture && !isStatCommand(command)) ||
+      !Number.isInteger(value) || value < 0 || value > (furniture ? 0x1ffff : command === 10 ? 1439 : 255) ||
+      (furniture && !furniturePositionValid(furniture, value & 511, value >> 9)) || (command === 15 && value !== 0) ||
+      (command === petBuySnackCommand && (value < 1 || value > petFruitIds.length)) ||
       (isStatCommand(command) && !isStatValue(value)) || (command === petLampCommand && value > 1) ||
       (command === 22 && !isHeadPetInput(value)) ||
       (command === 8 && ((value >> 4) > 7 || (value & 15) > 10)) ||
