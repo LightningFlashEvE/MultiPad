@@ -142,7 +142,7 @@ ipcMain.handle('pet-ai-save', (event: IpcMainInvokeEvent, settings: unknown) => 
 })
 ipcMain.handle('pet-ai-test', (event: IpcMainInvokeEvent, kind: unknown) => {
   fromHome(event)
-  if (kind !== 'connection' && kind !== 'feed') throw Error('无效的测试项目')
+  if (kind !== 'connection' && kind !== 'blink') throw Error('无效的测试项目')
   return testPetAi(kind)
 })
 ipcMain.handle('live-oled', (_event, operation) => SerialConnect.liveOled(operation))

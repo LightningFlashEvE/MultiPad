@@ -120,7 +120,7 @@ contextBridge.exposeInMainWorld('myApi', {
   },
   getPetAi: () => ipcRenderer.invoke('pet-ai-get'),
   savePetAi: (settings: object) => ipcRenderer.invoke('pet-ai-save', settings),
-  testPetAi: (kind: 'connection' | 'feed') => ipcRenderer.invoke('pet-ai-test', kind),
+  testPetAi: (kind: 'connection' | 'blink') => ipcRenderer.invoke('pet-ai-test', kind),
   liveOled: (operation?: object) => ipcRenderer.invoke('live-oled', operation),
   fetchScreenValue: (url: string, field: string) => ipcRenderer.invoke('screen-api-value', url, field),
   updateFirmware: () => ipcRenderer.invoke('update-firmware'),

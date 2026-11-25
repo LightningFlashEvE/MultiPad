@@ -66,7 +66,7 @@ $env:MULTIPAD_PET_MCP_TOKEN = [guid]::NewGuid().ToString('N')
 
 通过 `pet_perform_sequence` 可以编排 1–6 步，每步包含 `behavior` 和执行前等待的 `waitMs`（0–8000 毫秒）。例如先眨眼再跳可提交 `{"steps":[{"behavior":"blink"},{"behavior":"jump","waitMs":500}]}`。每步重读设备，摸头、断连或需求变化时停止剩余步骤。返回的 `accepted` 仅列出键盘接收的动作。
 
-它可以在空位放下玩具，或和已落地的玩具再次互动。已有水果或已吃饱时，AI 暂停投喂。取食、回窝途中和玩玩具时会等待，熟睡时可继续休息或叫醒。道具目录位于 `app/src/utils/petCatalog.ts`，新增玩具需为固件分配稳定的 ID 并实现其互动。
+内置 AI 只编排兔子自身动作。主人投放食物或玩具，键盘处理取食与玩耍；模型能观察这些变化并作出反应。取食、回窝途中和玩玩具时会等待，熟睡时可继续休息或叫醒。道具目录位于 `app/src/utils/petCatalog.ts`，新增玩具需为固件分配稳定的 ID 并实现其互动。
 
 ## 从 LLM 读取事件
 

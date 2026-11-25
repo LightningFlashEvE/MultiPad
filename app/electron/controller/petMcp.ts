@@ -225,12 +225,14 @@ async function result(run: () => Promise<Record<string, unknown>>) {
 }
 
 const behaviors = [...playableActions, ...fruits, ...petScenes, 'place_carrot', 'play_carrot', 'visit_hutch'] as const
-export const planSteps = z.array(z.object({
-  behavior: z.enum(behaviors),
+const rabbitStep = z.object({
+  behavior: z.enum(playableActions),
   waitMs: z.number().int().min(0).max(8000).default(0).describe('执行此步之前等待的毫秒数')
-}).strict()).min(1).max(6)
+}).strict()
+export const rabbitSteps = z.array(rabbitStep).min(1).max(6)
+const planSteps = z.array(rabbitStep.extend({ behavior: z.enum(behaviors) })).min(1).max(6)
 
-function automaticBehaviors(s: Awaited<ReturnType<typeof command>>) {
+function automaticBehaviors(s: Awaited<ReturnType<typeof command>>, rabbitOnly = false) {
   if (!s.active || s.headPet?.remainingMs || s.fruit || s.foods?.some(f => f.stage === 'eating')) return []
   const a = s.availableNow, stats = s.stats
   if ((s.activeDecoration || s.activeToy) && !(s.bedtime && s.action === 'sleep')) return []
@@ -238,7 +240,7 @@ function automaticBehaviors(s: Awaited<ReturnType<typeof command>>) {
   const canSleep = !!stats && stats.sleepiness >= 25
   const canPlay = !!stats && stats.mood < 90 && stats.sleepiness < 85
   if (canEat && (s.foods?.length || s.queuedFruit)) return []
-  return behaviors.filter(b => {
+  return (rabbitOnly ? playableActions : behaviors).filter(b => {
     if (s.bedtime && s.action === 'sleep') return b === 'idle' && (stats?.sleepiness ?? 0) <= 5
     if (fruits.some(f => f === b)) return canEat && a.feed && !s.foods?.length && !s.queuedFruit
     if (b === 'place_carrot') return canPlay && a.placeToys.includes('carrot_toy') && s.scene && !s.deployedToys?.[s.scene]
@@ -261,11 +263,12 @@ function behaviorCommand(b: typeof behaviors[number]): [number, number] {
 
 let planRunning = false
 export function createPetMcp(enabled: () => boolean = () => true,
-  onStepAccepted?: (behavior: typeof behaviors[number], index: number, total: number) => void) {
-  const server = new McpServer({ name: 'multipad-pet', version: '1.4.0' }, { instructions: petServerInstructions })
+  onStepAccepted?: (behavior: typeof behaviors[number], index: number, total: number) => void, scope: 'keyboard' | 'rabbit' = 'keyboard') {
+  const rabbitOnly = scope === 'rabbit'
+  const server = new McpServer({ name: 'multipad-pet', version: '1.4.0' }, { instructions: rabbitOnly ? '读取键盘状态和事件，只编排兔子自身的动作。' : petServerInstructions })
   server.registerTool('pet_perform_sequence', {
-    description: '按顺序安排 1–6 步身体动作、投喂（水果名）、场景、玩具或回窝。waitMs 是每步发出前的等待。每步读取真机，需求已满足、被摸头、设备忙或会话改变即停止。accepted 是已接收的步骤，实际完成看事件。',
-    inputSchema: { steps: planSteps, session: z.string().optional().describe('使用这次观察到的设备会话') }
+    description: rabbitOnly ? '编排 1–6 步兔子自身动作。每步先等待 waitMs 毫秒，再按键盘实况确认能否执行。' : '按顺序安排 1–6 步身体动作、投喂（水果名）、场景、玩具或回窝。waitMs 是每步发出前的等待。每步读取真机，需求已满足、被摸头、设备忙或会话改变即停止。accepted 是已接收的步骤，实际完成看事件。',
+    inputSchema: { steps: rabbitOnly ? rabbitSteps : planSteps, session: z.string().optional().describe('使用这次观察到的设备会话') }
   }, ({steps, session}, extra) => result(async () => {
     if (planRunning) throw Error('上一段动作尚未结束')
     planRunning = true
@@ -276,7 +279,7 @@ export function createPetMcp(enabled: () => boolean = () => true,
       for (const step of steps) {
         if (step.waitMs) await delay(step.waitMs, undefined, { signal: extra.signal })
         state = await command(commands.state)
-        if (!enabled() || extra.signal.aborted || state.session !== expected || !automaticBehaviors(state).includes(step.behavior))
+        if (!enabled() || extra.signal.aborted || state.session !== expected || !automaticBehaviors(state, rabbitOnly).includes(step.behavior))
           return { accepted, stoppedBefore: step.behavior, state }
         const [opcode, value] = behaviorCommand(step.behavior)
         try {
@@ -290,19 +293,30 @@ export function createPetMcp(enabled: () => boolean = () => true,
       return { accepted, state }
     } finally { planRunning = false }
   }))
-  server.registerTool('pet_get_care_guide', {
-    description: '查阅固件照料手册，包括属性方向、各种动作的时长和效果、投喂、玩具、兔窝、场景和事件。无需连接键盘。',
-    annotations: { readOnlyHint: true }
-  }, () => result(async () => petCareGuide))
   server.registerTool('pet_get_state', {
     description: '读取键盘实况。availableNow 给出此刻可选的动作、道具和操作，generation 表示固件能力。' +
       '结合动作、属性、食物阶段、玩具和装饰互动进度决定行动或等待。旧固件缺少的扩展字段为 null。',
     annotations: { readOnlyHint: true }
   }, () => result(async () => {
     const state = await command(commands.state)
-    return { ...state, automaticBehaviors: automaticBehaviors(state) }
+    const availableNow = rabbitOnly ? { actions: state.availableNow.actions, careNote: state.availableNow.careNote } : state.availableNow
+    return { ...state, availableNow, automaticBehaviors: automaticBehaviors(state, rabbitOnly) }
   }))
 
+  server.registerTool('pet_get_events', {
+    description: '读取已发生的桌宠事件。后续调用传入上次响应的 cursor。包括实体投喂键、旋钮改动和自动动作。',
+    inputSchema: {
+      cursor: z.string().regex(/^[0-9a-f-]{36}:\d{1,10}$/i)
+        .refine(value => Number(value.split(':')[1]) <= 0xffffffff).optional()
+    },
+    annotations: { readOnlyHint: true }
+  }, ({ cursor }) => result(() => readPetEvents(cursor)))
+  if (rabbitOnly) return server
+
+  server.registerTool('pet_get_care_guide', {
+    description: '查阅固件照料手册，包括属性方向、各种动作的时长和效果、投喂、玩具、兔窝、场景和事件。无需连接键盘。',
+    annotations: { readOnlyHint: true }
+  }, () => result(async () => petCareGuide))
   server.registerTool('pet_set_mode', {
     description: '进入桌宠模式，或者退出并恢复当前层的彩屏画面。',
     inputSchema: { enabled: z.boolean() }
@@ -394,14 +408,6 @@ export function createPetMcp(enabled: () => boolean = () => true,
   }, ({ decoration }) => result(() => decoration === 'nursery_table'
     ? command(commands.action, petActions.indexOf('inspect_table')) : command(commands.visitHutch)))
 
-  server.registerTool('pet_get_events', {
-    description: '读取已发生的桌宠事件。后续调用传入上次响应的 cursor。包括实体投喂键、旋钮改动和自动动作。',
-    inputSchema: {
-      cursor: z.string().regex(/^[0-9a-f-]{36}:\d{1,10}$/i)
-        .refine(value => Number(value.split(':')[1]) <= 0xffffffff).optional()
-    },
-    annotations: { readOnlyHint: true }
-  }, ({ cursor }) => result(() => readPetEvents(cursor)))
   return server
 }
 

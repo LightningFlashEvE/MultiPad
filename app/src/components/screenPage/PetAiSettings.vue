@@ -65,12 +65,12 @@ const save = () => run(async () => {
     personality: personality.value }))
   apiKey.value = ''
 })
-const test = (kind: 'connection' | 'feed') => run(async () => { current.value = await api.testPetAi(kind) })
+const test = (kind: 'connection' | 'blink') => run(async () => { current.value = await api.testPetAi(kind) })
 </script>
 
 <template>
   <section class="pet-ai">
-    <p>摸头、投喂或放玩具会触发 AI 决策；连续摸头在停手后回应一次。平时每 60 秒决定一轮，可安排最多六步动作。每步执行前都会重新检查兔子的状态。</p>
+    <p>摸头、投喂或放玩具会触发 AI 决策；连续摸头在停手后回应一次。平时每 60 秒决定一轮，AI 只控制兔子自身，每轮最多六步动作。每步执行前都会重新检查兔子的状态。</p>
     <label>API 地址
       <input v-model.trim="apiUrl" type="url" placeholder="https://api.example.com/v1" maxlength="2048" autocomplete="off">
     </label>
@@ -91,9 +91,9 @@ const test = (kind: 'connection' | 'feed') => run(async () => { current.value = 
     <div class="actions">
       <button type="button" :disabled="localOperation || !dirty || !apiUrl || !model" @click="save">保存配置</button>
       <button type="button" :disabled="localOperation || current?.running || dirty || !current?.hasKey" @click="test('connection')">测试连接</button>
-      <button type="button" :disabled="localOperation || current?.running || dirty || !current?.hasKey || !deviceReady" @click="test('feed')">测试投喂苹果</button>
+      <button type="button" :disabled="localOperation || current?.running || dirty || !current?.hasKey || !deviceReady" @click="test('blink')">测试兔子眨眼</button>
     </div>
-    <p v-if="!deviceReady">测试投喂需要键盘已连接并进入养宠模式。</p>
+    <p v-if="!deviceReady">测试眨眼需要键盘已连接并进入养宠模式。</p>
     <p v-if="current?.status" class="status" role="status" :data-phase="current.status.phase">
       {{ current.status.message }}
     </p>
