@@ -122,12 +122,16 @@ test('serial protocol probes with reads, and transmits each supported owner gest
 
 function fixture(t) {
   const board = { payload: payload(), requests: [], events: [], status: 0 }
-  const serial = { pet: async request => {
+  const serial = { pet: async (request, expectedSession) => {
     board.requests.push(request)
-    if (request.command) board.onWrite?.(request)
+    if (expectedSession && expectedSession !== (board.session ?? session)) return {state:'disconnected'}
+    if (request.command) {
+      board.onWrite?.(request)
+      if (board.lostReply) return {state:'unavailable'}
+    }
     const bytes = 'after' in request ? eventPage(board.events.slice(request.after,request.after+16),request.after) : board.payload
     if ('after' in request && board.events.length > request.after + 16) bytes[0] |= 2
-    return { state: 'ready', session, status: board.status, payload: bytes }
+    return { state: 'ready', session: board.session ?? session, status: board.status, payload: bytes }
   } }
   const mcp = loadModule('../electron/controller/petMcp.ts', {
     './serialPort': serial, [pathToCatalog]: catalog, './petCareGuide': guide
@@ -421,6 +425,31 @@ test('idle plans allow variable length, isolate invalid actions and wait briefly
     }
   })
 
+  await t.test('a lost action reply is read back once and never replayed across sessions', async () => {
+    for (const scenario of ['observed', 'unconfirmed', 'reconnected']) {
+      f.board.payload = payload(13)
+      f.board.lostReply = true
+      f.board.onWrite = () => {
+        if (scenario !== 'unconfirmed') f.board.payload = payload(13,{1:10})
+        if (scenario === 'reconnected') f.board.session = 'replacement-keyboard'
+      }
+      const start = f.board.requests.length
+      plan('blink','walk')
+      const status = await auto()
+      assert.deepEqual(f.board.requests.slice(start).map(r => r.command), [0,0,3,0])
+      if (scenario === 'observed') {
+        assert.match(status.message, /已回读键盘.*眨眼/)
+        assert.equal(ai.getPetAiActivity().queue?.next, '散步')
+      } else {
+        assert.match(status.message, /键盘未确认.*眨眼/)
+        assert.equal(ai.getPetAiActivity().queue, undefined)
+      }
+      f.board.session = undefined
+      f.board.onWrite = undefined
+      f.board.lostReply = false
+    }
+  })
+
   await t.test('offline variety follows room, energy, mood and device capabilities', async () => {
     providerFailure = 'offline'
     const vigorous = ['jump','run','binky']
@@ -576,9 +605,9 @@ test('owner inputs coalesce, interrupt stale plans and rearm a single idle round
   timer.fn()
   for (let i=0;i<200 && !waitingTouch;i++) await flush()
   assert.equal(observations.length,2)
-  assert.deepEqual(latest(),[{type:'head_petted'}])
+  assert.deepEqual(latest(),[{type:'head_petted',gesture:'cw'},{type:'head_petted',gesture:'ccw'}])
   assert(!f.board.requests.some(r => r.command > 0))
-  f.board.events.push([18,1,1,3])
+  f.board.events.push([18,2,1,3])
   await poll()
   assert.equal(observations.length,2)
   f.board.payload=payload(6)
@@ -713,17 +742,20 @@ test('owner inputs coalesce, interrupt stale plans and rearm a single idle round
     f.board.payload = payload(13)
     limitProvider = true
     const initialCalls = observations.length
-    const pats = new Set()
-    for (let i = 0; i < 5; i++) {
-      f.board.events.push([18,1,1,3])
-      await poll()
-      await runTimer()
-      const status = ai.getPetAiActivity()
-      assert.equal(status.source, '模型限流 · 本地回应')
-      pats.add(status.lastDecision)
+    for (const [gesture, preferred] of [[0,'面向主人发呆'],[1,'抱耳梳理'],[2,'舔毛']]) {
+      const pats = new Set()
+      for (let i = 0; i < 3; i++) {
+        f.board.events.push([18,gesture,1,3])
+        await poll()
+        await runTimer()
+        const status = ai.getPetAiActivity()
+        assert.equal(status.source, '模型限流 · 本地回应')
+        pats.add(status.lastDecision)
+      }
+      assert.deepEqual(pats, new Set([preferred,'眨眼']))
     }
+    assert.deepEqual(latest(), [{type:'head_petted',gesture:'tap'}])
     assert.equal(observations.length, initialCalls + 1)
-    assert.deepEqual(pats, new Set(['面向主人发呆','眨眼','抱耳梳理','舔毛']))
     ai.observePetOwnerCommand(session,12,0,payload(13,{16:0,19:10,29:2}))
     await runTimer()
     assert.equal(observations.length, initialCalls + 1)

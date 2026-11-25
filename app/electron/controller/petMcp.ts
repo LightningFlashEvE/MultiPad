@@ -332,7 +332,16 @@ export function createPetMcp(enabled: () => boolean = () => true,
         try {
           state = await command(opcode, value, expected)
         } catch (error) {
-          return { accepted, stoppedBefore: step.behavior, reason: error instanceof Error ? error.message : '设备未确认此步' }
+          const reason = error instanceof Error ? error.message : '设备未确认此步'
+          if (error instanceof Error && 'code' in error && (error.code === 'unavailable' || error.code === 'disconnected')) {
+            // A lost reply can follow a successful write. Only read back from the original session.
+            const observed = enabled() && !extra.signal.aborted && expected
+              ? await command(commands.state, 0, expected).catch(() => undefined) : undefined
+            const observedAction = observed?.active && observed.session === expected && state.action !== step.behavior &&
+              observed.action === step.behavior ? observed.action : undefined
+            return { accepted, attempted: step.behavior, confirmation: 'unknown', observedAction, reason }
+          }
+          return { accepted, stoppedBefore: step.behavior, reason }
         }
         accepted.push(step.behavior)
         onStepAccepted?.(step.behavior, accepted.length, steps.length)

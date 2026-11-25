@@ -8,7 +8,7 @@ import { z } from 'zod'
 import { actionTiming, createPetMcp, readPetEvents, validActionTiming } from './petMcp'
 import { defaultRabbitPersonality, personalityLimit, tokenPlanModels } from '../../src/utils/petPersonality'
 import { petActionLabels, playableActions, petScenes, petToys, timedPetActions, petMaxDurationSeconds, petRecoveredEnergy,
-  petFruitIds as fruits, petFruitLabels as fruitLabel } from '../../src/utils/petCatalog'
+  petHeadGestures, petFruitIds as fruits, petFruitLabels as fruitLabel } from '../../src/utils/petCatalog'
 
 const settingsSchema = z.object({
   apiUrl: z.string().trim().min(1).max(2048),
@@ -65,7 +65,7 @@ let status: Status = { phase: 'idle', message: '等待下一次决策' }
 
 let observedSession: string | null | undefined
 type OwnerInteraction =
-  | { type: 'head_petted' }
+  | { type: 'head_petted'; gesture?: typeof petHeadGestures[number] }
   | { type: 'fruit_queued'; fruit: typeof fruits[number] }
   | { type: 'toy_placed'; toy: 'carrot_toy' }
 interface Reaction { events: OwnerInteraction[]; session: string }
@@ -207,6 +207,7 @@ const rabbitRole = '你扮演 MultiPad 键盘上的垂耳兔。选择符合性�
   '精神低时可睡，恢复到够用就醒。饱食或精神偏低时少做剧烈动作。' +
   'recentActions 是键盘最近接收的动作。结合性格和场景，从可用动作中换换花样，如散步、梳耳、眺望或看主人。' +
   '心情好、吃饱且精力充足时偶尔蹦跳或跳兔子舞，活跃动作之间留出安静时间。可以继续休息。' +
+  '摸头事件中 tap 是轻点，cw 和 ccw 是顺、逆时针揉头。轻点可抬头看主人，揉头可梳耳、舔毛或眨眼。' +
   '主人投喂或给玩具时，优先留出时间吃东西或玩。rest 表示保留当前活动。只调用工具，不输出解释。'
 
 const actionTool = 'pet_perform_sequence'
@@ -347,6 +348,10 @@ const readState = async (client: Client) => stateSchema.parse(await callPet(clie
 const livelyActions: RabbitAction[] = ['run', 'jump', 'binky']
 let history: { session: string; actions: RabbitAction[] } | undefined
 
+const gestureResponses: Record<typeof petHeadGestures[number], RabbitAction[]> = {
+  tap: ['gaze_owner', 'blink'], cw: ['groom_ear', 'blink'], ccw: ['groom_fur', 'blink']
+}
+
 function localDecision(pet: z.infer<typeof stateSchema>, reaction: OwnerInteraction | undefined, recent: RabbitAction[]) {
   const actions = reaction ? pet.reactionBehaviors : pet.automaticBehaviors
   if (pet.stats && pet.stats.energy <= 25 && actions.includes('sleep')) {
@@ -356,7 +361,7 @@ function localDecision(pet: z.infer<typeof stateSchema>, reaction: OwnerInteract
   let candidates: RabbitAction[]
   if (reaction) {
     candidates = reaction.type === 'toy_placed' ? ['stand_watch', 'walk', 'blink', 'gaze_owner']
-      : reaction.type === 'head_petted' ? ['gaze_owner', 'blink', 'groom_ear', 'groom_fur']
+      : reaction.type === 'head_petted' ? (reaction.gesture ? gestureResponses[reaction.gesture] : ['gaze_owner', 'blink', 'groom_ear', 'groom_fur'])
       : ['blink', 'gaze_owner', 'stand_watch']
   } else {
     candidates = ['daydream', 'groom_fur', 'walk', 'groom_ear', 'blink', 'gaze_owner']
@@ -369,7 +374,7 @@ function localDecision(pet: z.infer<typeof stateSchema>, reaction: OwnerInteract
   if (!available.length) return undefined
   const oldest = Math.min(...available.map(action => recent.lastIndexOf(action)))
   const pool = available.filter(action => recent.lastIndexOf(action) === oldest)
-  const behavior = pool[Math.floor(Math.random() * pool.length)]
+  const behavior = reaction?.type === 'head_petted' && reaction.gesture ? pool[0] : pool[Math.floor(Math.random() * pool.length)]
   if (pet.generation >= 11 && behavior === 'daydream') return { behavior, durationSeconds: 25 }
   return { behavior }
 }
@@ -529,13 +534,24 @@ async function run(kind: 'auto' | 'connection' | 'blink', scheduled?: PlannedSte
       }
       // Once delivery starts, a later interaction must not replay this reaction.
       deliveringAction = true
-      const outcome = z.object({ accepted: z.array(z.string()) })
+      const outcome = z.object({ accepted: z.array(z.string()), confirmation: z.literal('unknown').optional(),
+        observedAction: z.string().optional(), reason: z.string().optional() })
         .parse(await callPet(client, actionTool, { steps: [{ behavior: action, durationSeconds, untilEnergy }],
           session: pet.session, interrupt }, controller.signal))
       if (!stillEnabled()) return
+      if (outcome.confirmation === 'unknown') {
+        if (outcome.observedAction === action) {
+          if (kind === 'auto') history = { session: pet.session, actions: [...recent, action].slice(-playableActions.length) }
+          setStatus({ phase: 'action', message: '已回读键盘，当前动作 · ' + label, lastDecision: label, source: '键盘回读' })
+        } else {
+          clearIdlePlan()
+          setStatus({ phase: 'idle', message: '键盘未确认 · ' + label + '，已停止本轮后续动作' })
+        }
+        return
+      }
       if (!outcome.accepted.length) {
         if (playBy !== undefined) releaseSkippedSlot(playBy - slotMs, durationSeconds)
-        setStatus({ phase: 'idle', message: '兔子状态已变化，已跳过' + label })
+        setStatus({ phase: 'idle', message: outcome.reason ? '已跳过' + label + ' · ' + outcome.reason : '兔子状态已变化，已跳过' + label })
         return
       }
       if (kind === 'auto') history = { session: pet.session, actions: [...recent, action].slice(-playableActions.length) }
@@ -586,7 +602,7 @@ function schedule(initialDelay?: number) {
 }
 
 function interactionLabel(event: OwnerInteraction) {
-  if (event.type === 'head_petted') return '摸头'
+  if (event.type === 'head_petted') return event.gesture === 'tap' ? '轻点兔头' : event.gesture === 'cw' ? '顺时针揉头' : event.gesture === 'ccw' ? '逆时针揉头' : '摸头'
   if (event.type === 'fruit_queued') return '投喂' + fruitLabel[event.fruit]
   return '放下胡萝卜玩具'
 }
@@ -596,16 +612,17 @@ function queueInteractions(session: string, incoming: OwnerInteraction[]) {
   const now = Date.now()
   nextIdleAt = now + intervalMs
   clearIdlePlan()
-  const heldTouch = !reaction && incoming.every(event => event.type === 'head_petted') &&
-    activeReaction?.session === session && activeReaction.events.at(-1)?.type === 'head_petted'
-  if (heldTouch) return
   const pending = reaction ?? (deliveringAction ? undefined : activeReaction)
   const events = pending?.session === session ? [...pending.events] : []
-  // A stream of encoder detents is one touch. Keep recent distinct inputs bounded by the device event window.
+  let previous = events.at(-1) ?? (activeReaction?.session === session ? activeReaction.events.at(-1) : undefined)
+  const initialCount = events.length
   for (const event of incoming) {
-    if (event.type === 'head_petted' && events.at(-1)?.type === event.type) events.pop()
+    if (event.type === 'head_petted' && (event.gesture === 'cw' || event.gesture === 'ccw') &&
+        previous?.type === 'head_petted' && previous.gesture === event.gesture) continue
     events.push(event)
+    previous = event
   }
+  if (events.length === initialCount) return
   const last = incoming[incoming.length - 1]
   reaction = { session, events: events.slice(-4) }
   if (autoRunning && !deliveringAction) {
@@ -646,7 +663,7 @@ function watchOwnerEvents(session: string | null | undefined) {
           const inputs: OwnerInteraction[] = []
           for (const e of page.events) {
             // The firmware records virtual pats as MCP. The built-in model cannot issue pats.
-            if (e.type === 'head_petted' && (e.source === 'physical' || e.source === 'mcp')) inputs.push({ type: 'head_petted' })
+            if (e.type === 'head_petted' && (e.source === 'physical' || e.source === 'mcp')) inputs.push({ type: 'head_petted', gesture: 'gesture' in e ? e.gesture : undefined })
             if (e.source !== 'physical') continue
             if (e.type === 'fruit_queued' && 'fruit' in e && e.fruit) inputs.push({ type: 'fruit_queued', fruit: e.fruit })
             if (e.type === 'toy_placed' && 'toy' in e && e.toy === 'carrot_toy') inputs.push({ type: 'toy_placed', toy: e.toy })
