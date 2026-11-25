@@ -1,6 +1,6 @@
 import { DEVICE_SCREEN_SIZES, type DeviceScreens } from '../../src/utils/deviceScreenFormat'
 import type { DeviceButtons } from '../../src/utils/deviceButtonState'
-import { isStatCommand, isStatValue, isHeadPetInput, isHutchPosition, petStateGeneration, petTimedActionCommand } from '../../src/utils/petCatalog'
+import { isStatCommand, isStatValue, isHeadPetInput, isHutchPosition, petStateGeneration, petTimedActionCommand, petLampCommand, petLampGeneration } from '../../src/utils/petCatalog'
 
 const REQUEST_MAGIC = Buffer.from([0xaa, 0xbb, 0xc1, 0x53])
 const RESPONSE_MAGIC = Buffer.from([0x4d, 0x50, 0x53, 1])
@@ -157,7 +157,7 @@ export default class ScreenReadback {
       if (this.petGeneration === undefined) {
         // Older boards answer an unknown generation with the 12-byte layout.
         // Try each known generation with reads before sending any mutation.
-        let requested = 11
+        let requested = petLampGeneration
         let probe = await this.petExchange(PET_CONTROL, requested, 0)
         while (probe.state === 'ready' && probe.status === STATUS_OK && probe.payload.length === 12 && requested > 2) {
           probe = await this.petExchange(PET_CONTROL, --requested, 0)
@@ -169,6 +169,8 @@ export default class ScreenReadback {
         if (!request.command) return probe
       }
       const { command, value } = request
+      if (command === petLampCommand && this.petGeneration < petLampGeneration) return { state: 'unsupported' }
+      if (command === petLampCommand && value !== 0 && value !== 1) return { state: 'unavailable' }
       if (command === petTimedActionCommand && this.petGeneration < 11) return { state: 'unsupported' }
       if (command === petTimedActionCommand && (!Number.isInteger(value) || value < 0 || value > 0x1fffff)) return { state: 'unavailable' }
       if (isStatCommand(command) && this.petGeneration < 10) return { state: 'unsupported' }

@@ -38,6 +38,7 @@ export interface PetState {
   activeToy: number
   toyPhase: number
   hutchPosition?: HutchPosition
+  pendantLamp?: boolean
   deployedToys?: readonly number[]
   toyDrop?: number
   foods?: readonly { id: number; x: number; y: number; stage: number }[]

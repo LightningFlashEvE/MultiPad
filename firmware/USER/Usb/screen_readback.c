@@ -232,21 +232,22 @@ void screen_readback_poll(void) {
         }
     } else if (screen == PET_STATE || screen == PET_CONTROL) {
         const uint8_t command = (uint8_t)offset, value = (uint8_t)(offset >> 8);
-        const bool decor_supported = requested_generation >= 4 && requested_generation <= 11;
+        const bool decor_supported = requested_generation >= 4 && requested_generation <= 12;
         const bool move_hutch = screen == PET_CONTROL && decor_supported && command == 14;
-        const bool timed_action = screen == PET_CONTROL && requested_generation == 11 && command == 27;
+        const bool timed_action = screen == PET_CONTROL && requested_generation >= 11 && requested_generation <= 12 && command == 27;
         if (length || (!timed_action && (move_hutch ? offset >> 25 : offset > UINT16_MAX)) || (screen == PET_STATE && offset)) {
             status = STATUS_INVALID;
         } else {
             if (screen == PET_CONTROL && offset) {
                 if (timed_action) status = pet_mode_play_timed(offset >> 8);
                 else if (move_hutch) status = pet_mode_move_hutch((offset >> 8) & 511, offset >> 17);
-                else if (command >= 23 && command <= 26 && (requested_generation < 10 || requested_generation > 11)) status = STATUS_INVALID;
+                else if (command == 28 && requested_generation != 12) status = STATUS_INVALID;
+                else if (command >= 23 && command <= 26 && (requested_generation < 10 || requested_generation > 12)) status = STATUS_INVALID;
                 else if (!decor_supported && (command == 14 || command == 15)) status = STATUS_INVALID;
-                else if (command == 22 && (requested_generation < 5 || requested_generation > 11 || (requested_generation == 5 && value > 4))) status = STATUS_INVALID;
+                else if (command == 22 && (requested_generation < 5 || requested_generation > 12 || (requested_generation == 5 && value > 4))) status = STATUS_INVALID;
                 else if (requested_generation < 7 && command == 3 && value >= PET_STAND_WATCH) status = STATUS_INVALID;
-                else if ((requested_generation < 8 || requested_generation > 11) && command == 3 && value == PET_BINKY) status = STATUS_INVALID;
-                else if ((requested_generation < 9 || requested_generation > 11) && command == 3 && value >= PET_GROOM_FUR) status = STATUS_INVALID;
+                else if ((requested_generation < 8 || requested_generation > 12) && command == 3 && value == PET_BINKY) status = STATUS_INVALID;
+                else if ((requested_generation < 9 || requested_generation > 12) && command == 3 && value >= PET_GROOM_FUR) status = STATUS_INVALID;
                 else if (requested_generation <= 3 && value == 1 && (command == 7 || command == 11 || command == 13))
                     status = pet_mode_control(15, 0); /* Former rabbit_hutch toy now visits the decoration. */
                 else if (command == 24 && value <= 100) status = pet_mode_control(command, 100 - value);
@@ -256,7 +257,7 @@ void screen_readback_poll(void) {
             PetAction action = pet_mode_action();
             pixels[1] = (requested_generation < 7 && action >= PET_STAND_WATCH) ||
                         (requested_generation < 8 && action == PET_BINKY) ||
-                        ((requested_generation < 9 || requested_generation > 11) && action >= PET_GROOM_FUR) ? PET_IDLE : action;
+                        ((requested_generation < 9 || requested_generation > 12) && action >= PET_GROOM_FUR) ? PET_IDLE : action;
             write_u16(pixels + 2, pet_mode_x());
             write_u32(pixels + 4, pet_mode_frames());
             pixels[8] = pet_mode_fruit();
@@ -264,7 +265,7 @@ void screen_readback_poll(void) {
             pixels[10] = pet_mode_season();
             pixels[11] = pet_mode_queue_depth();
             length = screen == PET_STATE ? 11 : 12;
-            if (screen == PET_CONTROL && requested_generation >= 2 && requested_generation <= 11) {
+            if (screen == PET_CONTROL && requested_generation >= 2 && requested_generation <= 12) {
                 const PetCare *care = pet_care_get();
                 pixels[12] = care->satiety;
                 pixels[13] = 100 - care->energy; /* USB control frames encode fatigue. */
@@ -277,7 +278,8 @@ void screen_readback_poll(void) {
                 length = 19;
                 if (requested_generation >= 3) {
                     memcpy(pixels + 19, care->bindings, PET_KEY_COUNT);
-                    pixels[27] = (care->follow_time ? 1u : 0u) | (pet_mode_is_bedtime() ? 2u : 0u);
+                    pixels[27] = (care->follow_time ? 1u : 0u) | (pet_mode_is_bedtime() ? 2u : 0u) |
+                                 (requested_generation >= 12 && care->pendant_lamp ? 4u : 0u);
                     pixels[28] = pet_mode_minute();
                     pixels[29] = care->placed[PET_GARDEN];
                     pixels[30] = care->placed[PET_NURSERY];
@@ -299,7 +301,7 @@ void screen_readback_poll(void) {
                             pixels[length++] = pet_mode_room_drop(other);
                             length += write_room_foods(pixels + length, other);
                             if (requested_generation == 7) pixels[length++] = 7;
-                            if (requested_generation == 11) {
+                            if (requested_generation >= 11) {
                                 write_u16(pixels + length, pet_mode_timed_remaining());
                                 length += 2;
                             }

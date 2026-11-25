@@ -14,7 +14,7 @@ enum { HUTCH_X_MIN = 41, HUTCH_X_MAX = 280, HUTCH_Y_MIN = 69, HUTCH_Y_MAX = 167 
 typedef struct {
     uint8_t satiety, energy, mood, affection, scene;
     uint8_t bindings[PET_KEY_COUNT];
-    bool follow_time;
+    bool follow_time, pendant_lamp;
     uint8_t placed[PET_SCENE_COUNT];
     uint16_t hutch_x;
     uint8_t hutch_y;
@@ -30,6 +30,7 @@ void pet_care_bind(uint8_t key, uint8_t item);
 void pet_care_set_toy(uint8_t scene, uint8_t toy);
 bool pet_care_move_hutch(uint16_t x, uint16_t y);
 void pet_care_follow_clock(bool follow);
+void pet_care_set_pendant_lamp(bool installed);
 void pet_care_tick(uint32_t elapsed_ms, bool sleeping, unsigned exertion, bool unattended);
 void pet_care_save(void);
 

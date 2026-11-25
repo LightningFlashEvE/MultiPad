@@ -329,16 +329,40 @@ export function drawSceneClock(ctx: CanvasRenderingContext2D, hour: number, minu
   rect(ctx, color, 31, 18, 2, 2)
 }
 
-export function tintNursery(ctx: CanvasRenderingContext2D, hour: number, season: number) {
+export function tintNursery(ctx: CanvasRenderingContext2D, hour: number, season: number, lampLit = false) {
   const seasonal = ['', '#ffdb82', '#dd975e', '#b6d7f1'][season]
   if (seasonal) rect(ctx, seasonal + '20', 0, 0, 320, 172)
-  if (hour >= 20 || hour < 6) rect(ctx, '#3f486a80', 0, 0, 320, 172)
+  if (lampLit) rect(ctx, '#ffdb9a20', 0, 0, 320, 172)
+  else if (hour >= 20 || hour < 6) rect(ctx, '#3f486a80', 0, 0, 320, 172)
   else if (hour === 6 || hour === 19) rect(ctx, '#3f486a40', 0, 0, 320, 172)
 }
 
 // Apply the same time and season lighting as the keyboard, leaving the window frame intact.
-export function drawNurseryLight(ctx: CanvasRenderingContext2D, hour: number, season: number) {
+export function drawNurseryLight(ctx: CanvasRenderingContext2D, hour: number, season: number, lampLit: boolean) {
+  if (!lampLit) { tintNursery(ctx, hour, season); return }
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(0, 0, 320, 172)
+  ctx.rect(96, 17, 88, 54)
+  ctx.clip('evenodd')
+  tintNursery(ctx, hour, season, true)
+  ctx.restore()
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(96, 17, 88, 54)
+  ctx.clip()
   tintNursery(ctx, hour, season)
+  ctx.restore()
+}
+
+export function drawPendantLamp(ctx: CanvasRenderingContext2D, lit: boolean) {
+  rect(ctx, '#86654c', 217, 0, 10, 3)
+  rect(ctx, '#86654c', 221, 3, 2, 13)
+  rect(ctx, '#9e6942', 217, 15, 10, 4)
+  rect(ctx, '#b98650', 213, 19, 18, 5)
+  rect(ctx, '#bb8c54', 209, 24, 26, 4)
+  rect(ctx, '#825737', 209, 28, 26, 2)
+  rect(ctx, lit ? '#ffedaa' : '#ccae83', 216, 28, 12, 5)
 }
 
 export function drawPetEffects(

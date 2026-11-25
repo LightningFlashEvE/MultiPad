@@ -48,7 +48,7 @@ typedef struct {
     PetFloorFood foods[PET_FLOOR_CAPACITY];
     uint8_t food_count, hour, minute, season, scene, visible_toy, using_toy, drop;
     uint8_t pat_kind, pat_phase;
-    bool bowl, patting;
+    bool bowl, patting, lamp_installed, lamp_lit;
 } PetFrame;
 
 static bool active;
@@ -519,7 +519,7 @@ void pet_mode_adjust_scene(int8_t direction_step, bool change_season) {
 }
 
 uint8_t pet_mode_control(uint8_t opcode, uint8_t value) {
-    enum { MODE = 1, FEED, PLAY, HOUR, SEASON, SCENE, DEPLOY_TOY, BIND_KEY, FOLLOW_CLOCK, PLAY_TOY = 11, TRIGGER_KEY, PLACE_IF_EMPTY, VISIT_HUTCH = 15, CLOCK_BASE = 16, PAT_HEAD = 22, SET_SATIETY, SET_ENERGY, SET_MOOD, SET_AFFECTION };
+    enum { MODE = 1, FEED, PLAY, HOUR, SEASON, SCENE, DEPLOY_TOY, BIND_KEY, FOLLOW_CLOCK, PLAY_TOY = 11, TRIGGER_KEY, PLACE_IF_EMPTY, VISIT_HUTCH = 15, CLOCK_BASE = 16, PAT_HEAD = 22, SET_SATIETY, SET_ENERGY, SET_MOOD, SET_AFFECTION, SET_PENDANT_LAMP = 28 };
     const uint32_t now = HAL_GetTick();
     if (opcode == MODE && value <= 1) {
         set_mode(value != 0, SOURCE_MCP, now);
@@ -538,6 +538,13 @@ uint8_t pet_mode_control(uint8_t opcode, uint8_t value) {
         return OK;
     }
     switch (opcode) {
+        case SET_PENDANT_LAMP:
+            if (value > 1) return INVALID;
+            if (pet_care_get()->pendant_lamp != (bool)value) {
+                pet_care_set_pendant_lamp(value != 0);
+                redraw_scene = true;
+            }
+            return OK;
         case PAT_HEAD:
             if (value == 5 || value == 6) {
                 if (!hand_on_encoder && head_pat_remaining(now) && head_pat_kind)
@@ -835,12 +842,17 @@ static uint16_t blend(uint16_t from, uint16_t to, uint8_t part, uint8_t total) {
     return red | green | blue;
 }
 
-static uint16_t nursery_light(uint16_t color) {
+static bool nursery_night(void) { return hour < 6 || hour >= 19; }
+
+static uint16_t nursery_tint(uint16_t color, bool lamp_lit) {
     static const uint16_t seasons[] = {0, HEX565(0xffdb82), HEX565(0xdd975e), HEX565(0xb6d7f1)};
     if (season) color = blend(color, seasons[season], 1, 8);
+    if (lamp_lit) return blend(color, HEX565(0xffdb9a), 1, 8);
     const uint8_t shade = hour < 6 || hour >= 20 ? 2 : hour == 6 || hour == 19 ? 1 : 0;
     return shade ? blend(color, HEX565(0x3f486a), shade, 4) : color;
 }
+
+static uint16_t nursery_light(uint16_t color) { return nursery_tint(color, frame.lamp_lit); }
 
 static int window_cx, window_cy;
 static bool window_night;
@@ -852,9 +864,9 @@ static void update_palette(void) {
         for (unsigned i = 0; i < 5; i++) {
             uint16_t a = window_hour_colors[hour * 5 + i];
             uint16_t b = window_hour_colors[((hour + 1) % 24) * 5 + i];
-            nursery_palette[window_materials[i]] = nursery_light(blend(a, b, minute, 60));
+            nursery_palette[window_materials[i]] = nursery_tint(blend(a, b, minute, 60), false);
         }
-        window_night = hour < 6 || hour >= 19;
+        window_night = nursery_night();
         int period = window_night ? 660 : 780;
         int t = (hour * 60 + minute + 1440 - (window_night ? 1140 : 360)) % 1440;
         window_cx = 99 + (80 * t + period / 2) / period;
@@ -955,13 +967,15 @@ static void begin_frame(uint32_t now) {
                       (x > last_x ? x : last_x) + DIRTY_MARGIN};
     const uint8_t scene = pet_care_get()->scene;
     const uint8_t using = toy_phase == TOY_USING ? active_toy->id : 0;
+    const bool lamp = scene == PET_NURSERY && pet_care_get()->pendant_lamp;
     PetFrame next = {
         .bottom = DIRTY_BOTTOM, .x = x, .y = action == PET_BINKY ? y - dance_lift(elapsed) : y,
         .hutch_x = pet_care_get()->hutch_x, .hutch_y = pet_care_get()->hutch_y,
         .direction = direction, .sprite = sprite_frame(action_clip(elapsed), elapsed),
         .action = action, .elapsed = elapsed, .hour = hour, .minute = minute, .season = season,
         .scene = scene, .visible_toy = pet_care_get()->placed[scene], .using_toy = using,
-        .drop = pet_mode_toy_drop(), .bowl = action == PET_EAT && !fruit && !active_toy
+        .drop = pet_mode_toy_drop(), .bowl = action == PET_EAT && !fruit && !active_toy,
+        .lamp_installed = lamp, .lamp_lit = lamp && nursery_night()
     };
     uint16_t remaining = head_pat_remaining(now);
     if (remaining) {
@@ -1189,7 +1203,7 @@ static void paint_window_sky(uint8_t *line, int row, int left, int right) {
         for (unsigned i = 0; i < sizeof(window_stars); i += 2) {
             int x0 = window_stars[i];
             if (row != window_stars[i+1] || x0 + 2 <= left || x0 >= right) continue;
-            paint_span(line, x0 < left ? left : x0, x0+2 > right ? right : x0+2, nursery_light(HEX565(0xfff0c6)));
+            paint_span(line, x0 < left ? left : x0, x0+2 > right ? right : x0+2, nursery_tint(HEX565(0xfff0c6), false));
         }
     }
     int dy = row - window_cy;
@@ -1199,8 +1213,19 @@ static void paint_window_sky(uint8_t *line, int row, int left, int right) {
         int dx = x - window_cx, d = dx * dx + dy * dy;
         if (d > (window_night ? 42 : 64) || (window_night && (dx-3)*(dx-3)+(dy+2)*(dy+2) <= 30)) continue;
         uint16_t c = window_night ? HEX565(0xffebc1) : d <= 40 ? HEX565(0xfff1bf) : HEX565(0xffd68e);
-        paint_span(line, x, x+1, nursery_light(c));
+        paint_span(line, x, x+1, nursery_tint(c, false));
     }
+}
+
+static void paint_pendant_lamp(uint8_t *line, uint16_t row) {
+    if (row >= 33) return;
+    paint_rect(line, row, 217, 0, 10, 3, HEX565(0x86654c));
+    paint_rect(line, row, 221, 3, 2, 13, HEX565(0x86654c));
+    paint_rect(line, row, 217, 15, 10, 4, HEX565(0x9e6942));
+    paint_rect(line, row, 213, 19, 18, 5, HEX565(0xb98650));
+    paint_rect(line, row, 209, 24, 26, 4, HEX565(0xbb8c54));
+    paint_rect(line, row, 209, 28, 26, 2, HEX565(0x825737));
+    paint_rect(line, row, 216, 28, 12, 5, frame.lamp_lit ? HEX565(0xffedaa) : HEX565(0xccae83));
 }
 
 static void paint_row(uint8_t *line, uint16_t row) {
@@ -1218,6 +1243,7 @@ static void paint_row(uint8_t *line, uint16_t row) {
         x_pos = end;
     }
     if (!nursery) paint_sky(line, row);
+    if (frame.lamp_installed) paint_pendant_lamp(line, row);
 
     if (nursery) {
         int shadow_y = frame.action == PET_BINKY ? GROUND : frame.y;

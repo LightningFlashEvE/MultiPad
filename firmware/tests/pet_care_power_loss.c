@@ -231,7 +231,19 @@ static void unattended_care_declines_slowly(void) {
     stats(63, 73, 68, 33);
 }
 
+static void pendant_lamp_persists(void) {
+    new_flash();
+    assert(!pet_care_get()->pendant_lamp);
+    pet_care_set_pendant_lamp(true);
+    pet_care_init(W25Q128);
+    assert(pet_care_get()->pendant_lamp);
+    pet_care_set_pendant_lamp(false);
+    pet_care_init(W25Q128);
+    assert(!pet_care_get()->pendant_lamp);
+}
+
 int main(void) {
+    pendant_lamp_persists();
     unattended_care_declines_slowly();
     exercise_charges_both_stats();
     actual_changes_survive_unplug();

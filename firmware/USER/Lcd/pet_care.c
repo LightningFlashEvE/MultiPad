@@ -95,6 +95,7 @@ void pet_care_init(uint16_t flash_id) {
             if (record[3] == 3) {
                 care.hutch_x = record[24] | record[25] << 8;
                 care.hutch_y = record[26];
+                care.pendant_lamp = record[28] == 1;
             }
             next_slot = (base + i / RECORD_BYTES + 1) % SLOTS;
         }
@@ -137,6 +138,13 @@ bool pet_care_move_hutch(uint16_t x, uint16_t y) {
         pet_care_save();
     }
     return true;
+}
+
+void pet_care_set_pendant_lamp(bool installed) {
+    if (care.pendant_lamp == installed) return;
+    care.pendant_lamp = installed;
+    dirty = true;
+    pet_care_save();
 }
 
 void pet_care_follow_clock(bool follow) {
@@ -283,6 +291,7 @@ static bool append_record(void) {
     record[25] = (uint8_t)(care.hutch_x >> 8);
     record[26] = care.hutch_y;
     record[27] = bond_ms / 60000u;
+    record[28] = care.pendant_lamp;
     uint16_t crc = crc16(record, sizeof(record));
     record[RECORD_BYTES-2] = (uint8_t)crc;
     record[RECORD_BYTES-1] = (uint8_t)(crc >> 8);

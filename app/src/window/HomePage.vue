@@ -25,7 +25,7 @@ import PetDecorationPanel from '../components/screenPage/PetDecorationPanel.vue'
 import { createPetItemPreview, previewCare } from '../components/screenPage/petItemPreview'
 import PerformanceDisplay from '../components/screenPage/PerformanceDisplay.vue'
 import { petParameters, petParameterContent, petValue, petSeasons, petStats, type HutchPosition, type PetParameter, type PetState } from '../components/screenPage/petDisplay'
-import { invertPetEnergy, petActions, petActionLabels, petScenes, petSceneLabels, petRoomItems, petItems, petStateGeneration, isHutchPosition, defaultHutchPosition } from '../utils/petCatalog'
+import { invertPetEnergy, petActions, petActionLabels, petScenes, petSceneLabels, petRoomItems, petItems, petStateGeneration, petLampCommand, petLampGeneration, petLampInstalledFlag, isHutchPosition, defaultHutchPosition } from '../utils/petCatalog'
 
 const router = useRouter()
 const win = window as any
@@ -58,6 +58,7 @@ let pendingClock: boolean | undefined
 let nextClockRetry = 0
 const currentToy = computed(() => petRoomItems.find(item => item.wireId === petState.value.activeToy))
 let offlineHutch: HutchPosition = { ...defaultHutchPosition }
+let offlineLamp = false
 type ParamPair = [PetParameter, PetParameter]
 const petParameterIds = ref<[ParamPair, ParamPair]>([['satiety','energy'], ['mood','affection']])
 const petImages = ref(['', ''])
@@ -79,7 +80,7 @@ watch(petLinked, linked => {
     bindings.value = undefined
     bedtime.value = false
     Object.assign(petState.value, { active: false, stats: { ...(petState.value.stats ?? previewCare) }, activeToy: 0, toyPhase: 0, action: 1,
-      deployedToys: [0, 0], foods: [], toyDrop: 100, queue: 0, fruit: 0, headPatRemaining: 0, hutchPosition: { ...offlineHutch } })
+      deployedToys: [0, 0], foods: [], toyDrop: 100, queue: 0, fruit: 0, headPatRemaining: 0, hutchPosition: { ...offlineHutch }, pendantLamp: offlineLamp })
   }
 })
 
@@ -122,6 +123,7 @@ function applyPetReply(reply: { session?: string; payload: Uint8Array }) {
     stats: p.length >= 19 ? { satiety: p[12], energy: invertPetEnergy(p[13]), mood: p[14], affection: p[15] } : undefined,
     scene: p.length >= 19 ? p[16] : 0,
     activeToy: p[17] ?? 0, toyPhase: p[18] ?? 0,
+    pendantLamp: generation.value >= petLampGeneration && Boolean(p[27] & petLampInstalledFlag),
     hutchPosition: generation.value >= 4 ? { x: p[decorationOffset] | p[decorationOffset + 1] << 8, y: p[decorationOffset + 2] } : undefined,
     rabbitY: generation.value >= 4 ? p[decorationOffset + 3] : undefined,
     headPatRemaining: generation.value >= 5 ? p[decorationOffset + 4] * 10 : undefined,
@@ -300,6 +302,10 @@ async function interactWithPet(command: number, value: number) {
         win.myApi.storageMenu('petHutchPreview', JSON.stringify(offlineHutch))
         interactionNotice.value = '已保存预览中的兔窝位置。'
       }
+      if (!previewError && command === petLampCommand) {
+        offlineLamp = value === 1
+        win.myApi.storageMenu('petPendantLampPreview', JSON.stringify(offlineLamp))
+      }
     }
     interacting.value = false
     return applied
@@ -318,6 +324,10 @@ async function interactWithPet(command: number, value: number) {
       applyPetReply(result)
       applied = !stat || petState.value.stats?.[stat.id] === value
       if (stat) interactionNotice.value = applied ? '键盘已保存' + stat.label + '。' : '键盘尚未确认该数值。'
+      if (command === petLampCommand) {
+        applied = petState.value.pendantLamp === (value === 1)
+        interactionNotice.value = applied ? (value ? '已安装挂灯。' : '已收起挂灯。') : '键盘尚未确认挂灯设置。'
+      }
       if (command === 14) {
         const position = petState.value.hutchPosition
         interactionNotice.value = position && (position.x | (position.y << 9)) === value
@@ -464,6 +474,8 @@ onMounted(async () => {
       if (!petLinked.value) petState.value.hutchPosition = { ...offlineHutch }
     }
   } catch { /* Use the default layout for a new local preview. */ }
+  offlineLamp = await win.myApi.getMenu('petPendantLampPreview').catch(() => undefined) === 'true'
+  if (!petLinked.value) petState.value.pendantLamp = offlineLamp
   try {
     const savedScene = JSON.parse(await win.myApi.getMenu('petSceneSettings') || 'null')
     followClock.value = savedScene?.followClock === true
@@ -977,6 +989,7 @@ const showAppInfo = () => {
             :save="interactWithPet" />
           <PetDecorationPanel v-else-if="petTab === 'decor'" :state="petState" :connected="petLinked" :generation="generation"
             :busy="interacting || (conState && !petLinked)" @enter="interactWithPet(6, 1)"
+            @lamp="installed => interactWithPet(petLampCommand, Number(installed))"
             @move="p => interactWithPet(14, p.x | (p.y << 9))" @rest="interactWithPet(15, 0)" @inspect="interactWithPet(3, 14)" />
           <PetItemsPanel v-else-if="petTab === 'items'" :selected="selectedItem" :bindings="bindings" :generation="generation"
             :connected="petLinked" :busy="interacting" :occupied="!!currentToy" :scene="petState.scene"

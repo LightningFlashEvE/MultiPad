@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { drawCarrotToy, drawGarden, drawPetEffects, drawNursery, drawNurseryHutch, drawNurseryLight, drawSceneClock, tintNursery, type PetAction } from './petScene'
+import { drawCarrotToy, drawGarden, drawPetEffects, drawNursery, drawNurseryHutch, drawNurseryLight, drawPendantLamp, drawSceneClock, tintNursery, type PetAction } from './petScene'
 import { bitePosition, drawRabbit, drawRabbitHeadPat, rabbitAtlasUrl } from './petAnimation'
 import { patPhase } from './petHeadPat'
 import itemsUrl from '../../assets/pet/items.png'
 import type { HutchPosition, PetState } from './petDisplay'
-import { binkyMotion, defaultHutchPosition, hutchBounds, petActions, petSceneLabels, petScenes } from '../../utils/petCatalog'
+import { binkyMotion, defaultHutchPosition, hutchBounds, petActions, petLampIsLit, petSceneLabels, petScenes } from '../../utils/petCatalog'
 
 const props = defineProps<{ state: PetState; connected: boolean; editableDecoration?: boolean; decorationBusy?: boolean }>()
 const emit = defineEmits<{ moveHutch: [position: HutchPosition] }>()
@@ -133,19 +133,22 @@ onMounted(() => {
     }
     const nursery = petScenes[scene] === 'nursery'
     const liveNurseryLight = nursery && (!props.connected || props.state.minute !== undefined)
-    const lighting = liveNurseryLight ? (season * 24 + hour) * 60 + (props.state.minute ?? 0) : -1
+    const lampInstalled = nursery && props.state.pendantLamp === true
+    const lampLit = lampInstalled && petLampIsLit(hour)
+    const lighting = liveNurseryLight ? ((season * 24 + hour) * 60 + (props.state.minute ?? 0)) * 2 + Number(lampInstalled) : -1
     if (lastScene !== scene || lastLighting !== lighting) {
       if (nursery) {
         drawNursery(context!, liveNurseryLight ? hour : 12, liveNurseryLight ? props.state.minute ?? 0 : 0)
         hutchContext.clearRect(205, 73, hutch.width, hutch.height)
         drawNurseryHutch(hutchContext)
         if (liveNurseryLight) {
-          drawNurseryLight(context!, hour, season)
+          drawNurseryLight(context!, hour, season, lampLit)
           hutchContext.save()
           hutchContext.globalCompositeOperation = 'source-atop'
-          tintNursery(hutchContext, hour, season)
+          tintNursery(hutchContext, hour, season, lampLit)
           hutchContext.restore()
         }
+        if (lampInstalled) drawPendantLamp(context!, lampLit)
       } else drawGarden(context!)
       lastScene = scene
       lastLighting = lighting

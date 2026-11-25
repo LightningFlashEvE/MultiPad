@@ -1,6 +1,6 @@
 import type { PetState } from './petDisplay'
 import { isStatValue, petStats, binkyChance, binkyDuration, binkyMotion, defaultHutchPosition, isHutchPosition,
-  petCareGraceMs, petUnattendedDecayMs, petDaydreamMs, petGazeOwnerMs, petAutoSleepIdleMs, petAutoSleepEnergy, petRecoveredEnergy } from '../../utils/petCatalog'
+  petCareGraceMs, petUnattendedDecayMs, petLampCommand, petDaydreamMs, petGazeOwnerMs, petAutoSleepIdleMs, petAutoSleepEnergy, petRecoveredEnergy } from '../../utils/petCatalog'
 
 export const previewCare = { satiety: 65, energy: 75, mood: 70, affection: 35 }
 type Food = { id: number; x: number; droppedAt: number }
@@ -275,6 +275,11 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
       const before = bondDeclining(pet.stats!)
       pet.stats![stat.id] = value
       if (before !== bondDeclining(pet.stats!)) bondMs = 0
+    } else if (command === petLampCommand) {
+      if (value !== 0 && value !== 1) return '无法识别挂灯设置。'
+      pet.pendantLamp = value === 1
+      update()
+      return ''
     } else if (command === 22) {
       if (value < 0 || value > 23 || value === 7 || !Number.isInteger(value)) return '无法识别摸头手势。'
       if (value === 5 || value === 6) {

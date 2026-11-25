@@ -8,7 +8,7 @@ import SerialConnect from './serialPort'
 import { petCareGuide, petServerInstructions } from './petCareGuide'
 import type { PetRequest } from './screenReadback'
 import { invertPetEnergy, petActions, playableActions, petScenes, petRoomItems, petToyIds, petToyPhases, petFruitIds as fruits,
-  petItems, toysForScene, petStateGeneration, petFoodStages, petHeadGestures, petDecorations, hutchBounds, timedPetActions, petMaxDurationSeconds, petTimedActionCommand, petAutoSleepEnergy, petRecoveredEnergy } from '../../src/utils/petCatalog'
+  petItems, toysForScene, petStateGeneration, petFoodStages, petHeadGestures, petDecorations, hutchBounds, timedPetActions, petMaxDurationSeconds, petTimedActionCommand, petLampCommand, petLampGeneration, petLampInstalledFlag, petLampIsLit, petAutoSleepEnergy, petRecoveredEnergy } from '../../src/utils/petCatalog'
 
 const seasons = ['spring', 'summer', 'autumn', 'winter'] as const
 const sources = ['automatic', 'physical', 'mcp'] as const
@@ -67,6 +67,7 @@ function decodeState(payload: Buffer, session?: string) {
   })
   const other = scene === 'garden' ? 'nursery' : 'garden'
   const flags = payload[endOfFoods + 7]
+  const lampInstalled = Boolean(payload[27] & petLampInstalledFlag)
   return {
     session,
     generation,
@@ -86,6 +87,7 @@ function decodeState(payload: Buffer, session?: string) {
     toyPhase: visitingHutch || visitingTable ? 'idle' : phase,
     activeDecoration: visitingTable ? 'nursery_table' : visitingHutch ? 'rabbit_hutch' : null,
     decorationPhase: generation >= 4 ? (visitingTable || visitingHutch ? phase : 'idle') : null,
+    pendantLamp: generation >= petLampGeneration ? { installed: lampInstalled, lit: lampInstalled && petLampIsLit(payload[9]) } : null,
     hutchPosition: generation >= 4 ? { x: payload.readUInt16LE(endOfFoods), y: payload[endOfFoods + 2] } : null,
     timedRemainingSeconds: generation >= 11 ? payload.readUInt16LE(payload.length - 5) : null,
     actionAgeMs: generation >= 8 ? payload.readUInt16LE(payload.length - 3) : null,
@@ -431,8 +433,15 @@ export function createPetMcp(enabled: () => boolean = () => true,
       ({ id, label, description, position: state.hutchPosition, bounds: hutchBounds })) : []
     const table = selected === 'nursery' && state.generation >= 7
       ? [{ id: 'nursery_table', label: '玩具桌', description: '走到木桌右侧，搭着桌沿看桌上的玩具。', movable: false, position: { x: 82, y: 93 } }] : []
-    return { scene: selected, decorations: [...entries, ...table] }
+    const lamp = selected === 'nursery' && state.pendantLamp
+      ? [{ id: 'pendant_lamp', label: '挂灯', movable: false, position: { x: 222, y: 0 }, ...state.pendantLamp }] : []
+    return { scene: selected, decorations: [...entries, ...table, ...lamp] }
   }))
+
+  server.registerTool('pet_set_pendant_lamp', {
+    description: '安装或收起宝宝房的挂灯。安装后 19:00 至次日 06:00 自动照亮房间。',
+    inputSchema: { installed: z.boolean() }
+  }, ({ installed }) => result(() => command(petLampCommand, Number(installed))))
 
   server.registerTool('pet_move_decoration', {
     description: '移动宝宝房的兔窝。坐标是 320×172 画面中兔窝底边中心的位置，键盘保存设置。',

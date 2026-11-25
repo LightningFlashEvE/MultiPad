@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { defaultHutchPosition, hutchBounds, isHutchPosition } from '../../utils/petCatalog'
+import { defaultHutchPosition, hutchBounds, isHutchPosition, petLampGeneration, petLampIsLit } from '../../utils/petCatalog'
 import PetDisplay from './PetDisplay.vue'
 import type { HutchPosition, PetState } from './petDisplay'
 
 const props = defineProps<{ state: PetState; connected: boolean; generation: number; busy: boolean }>()
-const emit = defineEmits<{ enter: []; move: [position: HutchPosition]; rest: []; inspect: [] }>()
+const emit = defineEmits<{ enter: []; move: [position: HutchPosition]; rest: []; inspect: []; lamp: [installed: boolean] }>()
 const supported = computed(() => !props.connected || props.generation >= 4)
+const lampSupported = computed(() => !props.connected || props.generation >= petLampGeneration)
+const lampStatus = computed(() => props.state.pendantLamp && petLampIsLit(props.state.hour) ? '已点亮' : '白天关闭')
 const canEdit = computed(() => supported.value && props.state.scene === 1 && !props.busy)
 const position = computed(() => props.state.hutchPosition ?? defaultHutchPosition)
 const x = ref<number | string>(position.value.x)
@@ -52,6 +54,16 @@ function save() {
         <h3 v-if="!connected || generation >= 7">玩具桌</h3>
         <button v-if="!connected || generation >= 7" type="button" :disabled="busy || !!state.fruit || !!state.activeToy"
           @click="emit('inspect')">去桌边看看</button>
+        <div class="lamp-setting">
+          <h3>挂灯</h3>
+          <p v-if="!lampSupported">升级键盘固件后可安装挂灯。</p>
+          <template v-else>
+            <p>19:00–次日 06:00 自动点亮宝宝房。<template v-if="state.pendantLamp"> 当前{{ lampStatus }}。</template></p>
+            <button type="button" :disabled="busy" @click="emit('lamp', !state.pendantLamp)">
+              {{ state.pendantLamp ? '收起挂灯' : '安装挂灯' }}
+            </button>
+          </template>
+        </div>
         <p v-if="!connected">离线布置会保存在本机。</p>
       </template>
     </section>
@@ -70,6 +82,7 @@ input { width:100%; display:block; margin:3px 0 8px; }
 button { font-size:12px; }
 button:enabled { cursor:pointer; }
 button:disabled { opacity:.55; }
+.lamp-setting { margin-top:12px; }
 .decor-actions { display:flex; flex-wrap:wrap; gap:5px; }
 @media(max-width:500px) { .decoration-panel { grid-template-columns:1fr; } }
 </style>

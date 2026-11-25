@@ -90,6 +90,12 @@ $env:MULTIPAD_PET_MCP_TOKEN = [guid]::NewGuid().ToString('N')
 
 宿主通过 `pet_get_state` 读实况并筛选候选，通过 `pet_get_events` 识别互动。两者由宿主调用。独立的 MCP 客户端可按上方工具表调用读取或管理接口；第 11 代的 `pet_play_action` 和 `pet_perform_sequence` 均接受上述时间参数。
 
+## 宝宝房挂灯
+
+在上位机的「宠物设置 → 装饰布置」进入宝宝房，选择「安装挂灯」。挂灯固定在房间上方，可随时收起。装好后按场景时间于 19:00 自动点亮，次日 06:00 熄灭。灯只照亮室内，窗外仍显示夜色。安装状态由键盘保存。挂灯需要第 12 代固件。
+
+MCP 可调用 `pet_set_pendant_lamp({"installed":true})` 安装，通过 `pet_get_state.pendantLamp` 查询 `installed` 和 `lit`，也可在 `pet_list_decorations({"scene":"nursery"})` 中查看。
+
 ## 从 LLM 读取事件
 
 第五代固件支持观察主人摸头。在养宠模式下，轻按并松开大旋钮会轻拍兔子，按住后转动则会顺着旋转方向抚摸。桌面大旋钮可以模拟这两类操作。每次轻按或转过一格，键盘产生 `head_petted`，`encoder` 为 3，`gesture` 为 `tap`、`cw` 或 `ccw`。`source` 为 `physical` 表示实体旋钮，为 `mcp` 表示软件模拟。MCP 客户端可在 `pet_get_state.headPet` 读取方向与剩余毫秒数；一轮摸头结束后 `remainingMs` 为 0、`gesture` 为 `null`。旧固件的 `headPet` 为 `null`。

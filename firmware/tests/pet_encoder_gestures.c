@@ -168,6 +168,33 @@ static void table_and_food_positions(void) {
     }
 }
 
+static void pendant_lamp_brightens_only_the_room_at_night(void) {
+    assert(pet_mode_control(6, 1) == 0);
+    assert(pet_mode_control(4, 20) == 0);
+    advance(150);
+    const uint16_t dark_wall = lcd[45][10], night_window = lcd[28][124];
+    assert(pet_mode_control(28, 2) == 3);
+    assert(pet_mode_control(28, 1) == 0);
+    advance(150);
+    const uint16_t lit_bulb = lcd[31][222];
+    assert(lcd[45][10] > dark_wall && lcd[28][124] == night_window);
+
+    assert(pet_mode_control(4, 6) == 0);
+    advance(150);
+    const uint16_t unlit_bulb = lcd[31][222], dawn_wall = lcd[45][10];
+    assert(unlit_bulb != lit_bulb);
+    assert(pet_mode_control(4, 18) == 0);
+    advance(150);
+    assert(lcd[31][222] == unlit_bulb);
+    assert(pet_mode_control(4, 19) == 0);
+    advance(150);
+    assert(lcd[31][222] == lit_bulb);
+    assert(pet_mode_control(4, 6) == 0);
+    assert(pet_mode_control(28, 0) == 0);
+    advance(150);
+    assert(lcd[45][10] == dawn_wall && lcd[31][222] != unlit_bulb);
+}
+
 static void dance_and_window(void) {
     assert(pet_mode_control(3, PET_BINKY) == 0);
     const int origin = pet_mode_x(), facing = (pet_mode_room_flags() & 1) ? 1 : -1;
@@ -194,6 +221,7 @@ int main(void) {
     concurrent_activities();
     table_and_food_positions();
     dance_and_window();
+    pendant_lamp_brightens_only_the_room_at_night();
     const PetAction grooming[] = {PET_GROOM_FUR, PET_GROOM_EAR};
     for (unsigned i = 0; i < 2; ++i) {
         int x = pet_mode_x(), affection = pet_care_get()->affection;

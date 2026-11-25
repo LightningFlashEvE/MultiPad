@@ -34,7 +34,7 @@ function payload(generation = 4, fields = {}, foodIds = [], headPet = [0, 0]) {
   p.set([246,0,142,139,...headPet], endOfFoods)
   if (generation >= 7) p[p.length - 1] = generation
   for (const [i,v] of Object.entries(fields)) p[Number(i)] = v
-  return p.subarray(0, [0, 12, 19, endOfFoods, endOfFoods + 4, endOfFoods + 6, endOfFoods + 10, endOfFoods + 11, p.length, p.length, p.length, p.length][generation])
+  return p.subarray(0, [0, 12, 19, endOfFoods, endOfFoods + 4, endOfFoods + 6, endOfFoods + 10, endOfFoods + 11, p.length, p.length, p.length, p.length, p.length][generation])
 }
 function eventPage(events, after = 0) {
   const p = Buffer.alloc(1 + events.length * 12)
@@ -51,7 +51,7 @@ test('serial protocol probes with reads, and transmits each supported owner gest
   const { default: ScreenReadback } = loadModule('../electron/controller/screenReadback.ts', {
     [pathToCatalog]: catalog, '../../src/utils/deviceScreenFormat': { DEVICE_SCREEN_SIZES: [] }
   })
-  for (const generation of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]) {
+  for (const generation of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
     const writes = []
     const reader = new ScreenReadback(async request => {
       const requested = request.readUInt32LE(6), offset = request.readUInt32LE(11)
@@ -79,7 +79,7 @@ test('serial protocol probes with reads, and transmits each supported owner gest
         const reply = await reader.readPet({ command: 22, value: input })
         assert.equal(reply.state, generation >= 5 ? 'ready' : 'unsupported')
       }
-      assert.deepEqual(writes.filter(p=>!p.offset).map(p=>p.requested), [11,10,9,8,7,6,5,4,3,2].filter(g=>g>=generation))
+      assert.deepEqual(writes.filter(p=>!p.offset).map(p=>p.requested), [12,11,10,9,8,7,6,5,4,3,2].filter(g=>g>=generation))
       const mutations = writes.filter(p=>p.offset).map(p=>p.offset)
       assert.deepEqual(mutations, generation >= 5 ? [0,1,2,3,4].map(v=>22|(v<<8)) : [])
       for (const value of [16, 17])
@@ -88,8 +88,13 @@ test('serial protocol probes with reads, and transmits each supported owner gest
         assert.equal((await reader.readPet({command:cmd, value:75})).state, generation >= 10 ? 'ready' : 'unsupported')
       if (generation >= 10) assert.equal((await reader.readPet({command:23,value:101})).state, 'unavailable')
       const timing = 2 | (180 << 5) | (68 << 14)
-      assert.equal((await reader.readPet({command:27, value:timing})).state, generation === 11 ? 'ready' : 'unsupported')
-      if (generation === 11) assert.equal(writes.at(-1).offset, 27 | (timing << 8))
+      assert.equal((await reader.readPet({command:27, value:timing})).state, generation >= 11 ? 'ready' : 'unsupported')
+      if (generation >= 11) assert.equal(writes.at(-1).offset, 27 | (timing << 8))
+      assert.equal((await reader.readPet({ command: 28, value: 1 })).state, generation >= 12 ? 'ready' : 'unsupported')
+      if (generation === 12) {
+        assert.equal(writes.at(-1).offset, 28 | (1 << 8))
+        assert.equal((await reader.readPet({ command: 28, value: 2 })).state, 'unavailable')
+      }
       if (generation === 5) assert.equal((await reader.readPet({command:22,value:5})).state, 'unsupported')
     } finally {
       reader.close()
@@ -142,6 +147,23 @@ test('an MCP client discovers the offline care guide and generation-specific act
   f.board.payload = payload(2, {17:1,18:2})
   const old = (await f.call('pet_get_state')).availableNow
   assert.equal(old.feed,false);assert.deepEqual(old.actions,[]);assert.deepEqual(old.scenes,['nursery'])
+})
+
+test('the nursery lamp reports installation and switches at dusk and dawn', async t => {
+  const f = fixture(t)
+  await f.start()
+  f.board.payload = payload(11)
+  assert.equal((await f.call('pet_get_state')).pendantLamp, null)
+  f.board.payload = payload(12, { 27: 4 })
+  for (const [hour, lit] of [[5, true], [6, false], [18, false], [19, true]]) {
+    f.board.payload[9] = hour
+    assert.deepEqual((await f.call('pet_get_state')).pendantLamp, { installed: true, lit })
+  }
+  const nursery = await f.call('pet_list_decorations', { scene: 'nursery' })
+  assert(nursery.decorations.some(item => item.id === 'pendant_lamp' && item.installed && item.lit && !item.movable))
+  await f.call('pet_set_pendant_lamp', { installed: false })
+  assert.equal(f.board.requests.at(-1).command, 28)
+  assert.equal(f.board.requests.at(-1).value, 0)
 })
 
 test('live availability follows floor capacity, satiety, rest, toy drop and work mode', async t => {
