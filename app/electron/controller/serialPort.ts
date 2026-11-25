@@ -185,6 +185,13 @@ export default class SerialConnect {
     return { state: 'busy' }
   }
 
+  static async readWorkLayout() {
+    if (!this.port?.isOpen) return { state: 'disconnected' as const }
+    if (!this.screenReadback) return { state: 'unsupported' as const }
+    if (this.upgrading || !this.configuring || this.liveOledTask) return { state: 'busy' as const }
+    return this.screenReadback.readWorkLayout()
+  }
+
   static async performance(menu: number, metrics?: number[]) {
     if (!this.port?.isOpen) return 'disconnected'
     if (!this.performanceSupported || !this.screenReadback) return 'unsupported'

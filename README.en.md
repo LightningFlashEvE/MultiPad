@@ -38,7 +38,7 @@ Select **工作模式** (Work) at the top of the Windows app. You can also hold 
 | Color display | Choose an image or **电脑性能监测** (PC performance monitor) for CPU, memory, and system drive usage. |
 | Two OLEDs | Configure each display for the current layer with an image, custom text, time, date, date and time, or API data. |
 
-Click **发送到键盘** (Send to keypad) to transfer the enabled layers and their display settings over USB. Live PC metrics and dynamic OLED updates require the Windows app to stay connected over USB and compatible firmware.
+Saved Work mode key and display settings sync over USB. Edits saved offline sync when the keyboard reconnects in Work mode. Live PC metrics and dynamic OLED updates require the Windows app to stay connected over USB and compatible firmware.
 
 ## Living with the rabbit
 

@@ -2,13 +2,13 @@
 import WindowTitle from '../components/tools/WindowTitle.vue'
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import PopBox from '../components/tools/PopBox.vue'
-import ProgressBox from '../components/homePage/ProgressBox.vue'
 import AppInfo from '../components/homePage/AppInfo.vue'
 import ContextMenu from '../views/contextMenu.vue'
 import { useRouter } from 'vue-router'
 import { useConfigStore } from '../stores/configStore'
 import { useMenuStore } from '../stores/menuStore'
-import { parseMenuConfig, testConnection, sendMenu, sendColorScreen, sendOledScreen, sendConfigData, loadMenu, resetData } from '../utils/dataHandle'
+import { parseMenuConfig, testConnection, loadMenu, resetData } from '../utils/dataHandle'
+import { sendWorkConfiguration, workLayerPayload, type WorkLayer } from '../utils/workConfigSync'
 // import { setItem, getItem } from '@/utils/storage'
 import { XBox } from 'ilx1-x-box'
 import { renderDeviceScreens, type DeviceScreens } from '../utils/deviceScreenFormat'
@@ -482,15 +482,22 @@ onMounted(async () => {
       pendingScene.set(6, offlineBackground)
     }
   } catch { /* Use the device scene or the default preview. */ }
+  try {
+    const saved = JSON.parse(await win.myApi.getMenu('pendingWorkLayers') || '[]')
+    if (Array.isArray(saved)) pendingWorkLayers.value = [...new Set(saved.filter(index => Number.isInteger(index) && index >= 0 && index < 10))]
+  } catch { /* A missing queue starts empty. */ }
+  workSyncReady = true
   // 连接硬件
   conState.value = await testConnection()
+  scheduleWorkSync()
   refreshDeviceScreens()
   screenPoll = setInterval(refreshDeviceScreens, 1800)
   buttonPoll = setInterval(refreshDeviceButtons, 45)
   liveScreens.tick()
   liveTimer = setInterval(() => {
     if (appMode.value === 'work' && hasPerformanceScreens()) void samplePerformance()
-    liveScreens.tick()
+    if (workSyncTimer === undefined && pendingWorkLayers.value.length) void syncWorkConfig()
+    else liveScreens.tick()
   }, 1500)
   if (hasPerformanceScreens()) void samplePerformance()
   refreshPetDevice()
@@ -524,8 +531,9 @@ onMounted(async () => {
           configStore.menuConfig[menu] = { ...saved, screenConfig }
         }
         closeStorage()
-        if (screen === 0 && frame.content?.mode === 'performance') void samplePerformance()
-        liveScreens.tick()
+        if (screen === 0 && frame.content?.mode === 'performance')
+          void samplePerformance().then(() => liveScreens.tick())
+        else liveScreens.tick()
         return
       }
       // 同步信息
@@ -565,6 +573,8 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener('focus', refreshPetDevice)
   clearInterval(liveTimer)
+  clearTimeout(workSyncTimer)
+  workSyncReady = false
   clearInterval(petTimer)
   previewWorld.reset()
   clearInterval(screenPoll)
@@ -627,6 +637,8 @@ const titleClick = async () => {
   liveScreens.tick()
   refreshDeviceScreens()
   refreshPetDevice()
+  nextWorkAttempt = 0
+  scheduleWorkSync()
 }
 
 
@@ -692,54 +704,83 @@ const updateFirmware = async () => {
     refreshDeviceScreens()
   }
 }
-// 发送最终数据
-const sendFinalData = async () => {
-  if (progressShow.value || firmwareUpdating.value) return
-  const curMenu = configStore.curMenu
-  configStore.setProgressMes(0)
+const pendingWorkLayers = ref<number[]>([])
+const workSyncFailed = ref(false)
+let workSyncReady = false
+let workSyncTimer: ReturnType<typeof setTimeout> | undefined
+let nextWorkAttempt = 0
+
+function savePendingWorkLayers() {
+  win.myApi.storageMenu('pendingWorkLayers', JSON.stringify(pendingWorkLayers.value))
+}
+
+function scheduleWorkSync() {
+  if (!workSyncReady || !pendingWorkLayers.value.length) return
+  clearTimeout(workSyncTimer)
+  workSyncTimer = setTimeout(() => {
+    workSyncTimer = undefined
+    void syncWorkConfig()
+  }, 400)
+}
+
+const workLayerSignature = (layer: WorkLayer) => JSON.stringify(workLayerPayload(layer))
+watch(() => JSON.stringify(configStore.menuConfig), (current, previous) => {
+  if (!workSyncReady) return
+  win.myApi.storageMenu('configData', current)
+  const before: WorkLayer[] = JSON.parse(previous)
+  const after: WorkLayer[] = JSON.parse(current)
+  const changed = after.flatMap((layer, index) => workLayerSignature(layer) !== workLayerSignature(before[index]) ? [index] : [])
+  if (!changed.length) return
+  pendingWorkLayers.value = [...new Set([...pendingWorkLayers.value, ...changed])]
+  savePendingWorkLayers()
+  workSyncFailed.value = false
+  nextWorkAttempt = 0
+  scheduleWorkSync()
+})
+watch(appMode, mode => { if (mode === 'work') scheduleWorkSync() })
+
+async function syncWorkConfig() {
+  if (!workSyncReady || progressShow.value || firmwareUpdating.value || !pendingWorkLayers.value.length ||
+    appMode.value !== 'work' || petState.value.active || Date.now() < nextWorkAttempt) {
+    liveScreens.tick()
+    return
+  }
+  const layers: WorkLayer[] = JSON.parse(JSON.stringify(configStore.menuConfig))
+  const changed = [...pendingWorkLayers.value]
   progressShow.value = true
   let ownsTransfer = false
   try {
     await Promise.all([screenReadTask, buttonReadTask, petTask, liveScreens.wait()])
     conState.value = await win.myApi.connectHardware()
     if (!conState.value) {
-      XBox.popMes('硬件已经断开连接')
+      nextWorkAttempt = Date.now() + 5000
       return
     }
     await win.myApi.setDeviceConfiguring(true)
     ownsTransfer = true
-    await sendMenu()
-    const activeCount = configStore.activeMenu.filter(Boolean).length
-    let count = 0
-    for (let i = 0; i < 10; i++) {
-      if (!configStore.activeMenu[i]) continue
-      setMenu(i)
-      await sendConfigData()
-      count += 3
-      configStore.setProgressMes(Math.ceil((count / activeCount) * 10))
-      await sendOledScreen()
-      count += 3
-      configStore.setProgressMes(Math.ceil((count / activeCount) * 10))
-      await sendColorScreen()
-      count += 4
-      configStore.setProgressMes(Math.ceil((count / activeCount) * 10))
+    const previous = await win.myApi.readWorkLayout()
+    if (previous.state !== 'ready' && previous.state !== 'unsupported') throw Error('未能读取键盘配置层')
+    const expected = await sendWorkConfiguration(layers, changed, previous.state === 'ready' ? previous : undefined,
+      bytes => win.myApi.sendData(bytes))
+    if (previous.state === 'ready') {
+      const confirmed = await win.myApi.readWorkLayout()
+      if (confirmed.state !== 'ready' || expected.some((value, index) => value !== confirmed.bytes[index]))
+        throw Error('键盘未确认配置层')
     }
-    configStore.setProgressMes(100)
-    await win.myApi.setDeviceConfiguring(false)
-    ownsTransfer = false
-    if (hasDynamicScreens()) {
-      const live = await win.myApi.liveOled().catch(() => undefined)
-      if (live?.state === 'unsupported') XBox.popMes('当前固件需要升级后才能自动刷新小屏')
-    }
-    await new Promise((resolve) => setTimeout(resolve, 110))
+    pendingWorkLayers.value = pendingWorkLayers.value.filter(index => !changed.includes(index) ||
+      workLayerSignature(layers[index]) !== workLayerSignature(configStore.menuConfig[index]))
+    savePendingWorkLayers()
+    workSyncFailed.value = false
+    deviceScreens.value = undefined
   } catch (error) {
     console.error(error)
-    XBox.popMes('发送中断，请检查 USB 连接后重试')
+    workSyncFailed.value = true
+    nextWorkAttempt = Date.now() + 5000
   } finally {
     if (ownsTransfer) await win.myApi.setDeviceConfiguring(false).catch(() => {})
-    if (configStore.curMenu !== curMenu) setMenu(curMenu)
     progressShow.value = false
     liveScreens.tick()
+    refreshDeviceScreens()
   }
 }
 
@@ -779,7 +820,7 @@ const openScreenPage = (curScreen: number) => {
   createWindow(`/screen?screen=${curScreen}&menu=${configStore.curMenu}`)
 }
 
-const deviceScreens = shallowRef<{ generation: number; images: string[] }>()
+const deviceScreens = shallowRef<{ generation: number; menu: number; images: string[] }>()
 let screenPoll: ReturnType<typeof setInterval> | undefined
 let screenReadTask: Promise<void> | undefined
 
@@ -790,6 +831,7 @@ async function readDeviceScreens() {
     if (result.state === 'ready') {
       deviceScreens.value = {
         generation: result.generation,
+        menu: result.menu,
         images: renderDeviceScreens(result.pixels)
       }
     } else if (result.state !== 'unchanged') {
@@ -808,7 +850,8 @@ function refreshDeviceScreens() {
 }
 
 const screenPreviews = computed(() => {
-  if (conState.value && deviceScreens.value) return deviceScreens.value.images
+  if (conState.value && deviceScreens.value?.menu === configStore.curMenu + 1 &&
+    !pendingWorkLayers.value.includes(configStore.curMenu)) return deviceScreens.value.images
   return configStore.screenData.map((saved, screen) => {
     const baseData = liveScreens.current(configStore.curMenu, screen, saved)?.frame?.baseData ?? saved.baseData
     return baseData ? `data:image/png;base64,${baseData}` : ''
@@ -919,7 +962,7 @@ const showAppInfo = () => {
           <span class="screen-image">
             <PetDisplay v-if="appMode === 'pet' && index === 0" :state="petState" :connected="petLinked && petState.active" />
             <img v-else-if="appMode === 'pet' && index && petImages[index - 1]" :src="petImages[index - 1]" alt="" />
-            <PerformanceDisplay v-else-if="appMode === 'work' && !(conState && deviceScreens) && index === 0 && configStore.screenData[0].content?.mode === 'performance'"
+            <PerformanceDisplay v-else-if="appMode === 'work' && index === 0 && configStore.screenData[0].content?.mode === 'performance'"
               :values="performanceValues" />
             <img v-else-if="appMode === 'work' && screenPreviews[index]" :src="screenPreviews[index]" alt="" />
           </span>
@@ -930,8 +973,9 @@ const showAppInfo = () => {
           {{ petNotice || interactionNotice || (petLinked && petState.active ? '键盘养宠模式已同步' : '本机宠物预览') }}
         </div>
         <div v-else class="layer-actions">
-          <button id="send-box" type="button" :disabled="progressShow || firmwareUpdating"
-            @click="sendFinalData">发送到键盘</button>
+          <span v-if="pendingWorkLayers.length" class="work-sync-status" role="status">
+            {{ progressShow ? '正在同步' : workSyncFailed ? '同步中断，正在重试' : conState ? '等待同步' : '连接后自动同步' }}
+          </span>
           <div id="menu-box" role="group" aria-label="本机配置层">
             <button class="layer-arrow" type="button" title="上一层" aria-label="上一层"
               @click="menuChange(0)"></button>
@@ -1043,7 +1087,6 @@ const showAppInfo = () => {
         </template>
       </form>
     </dialog>
-    <ProgressBox v-if="progressShow" />
   </div>
 </template>
 
@@ -1268,19 +1311,7 @@ const showAppInfo = () => {
   gap: 8px;
 }
 
-#home-content #send-box {
-  min-height: 36px;
-  padding: 0 12px;
-  border-radius: 8px;
-  background: #244c49;
-  color: #fff;
-  font-size: 14px;
-  font-weight: 600;
-  white-space: nowrap;
-
-  &:hover:not(:disabled) { background: #32645e; }
-  &:disabled { background: #506a68; }
-}
+.work-sync-status { font-size: 12px; }
 
 #menu-box {
   display: flex;
