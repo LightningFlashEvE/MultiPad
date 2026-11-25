@@ -78,6 +78,7 @@ const performancePreview = ref<{ menu: number; values: number[] }>()
 const performanceUnavailable = ref(false)
 const petDialog = ref<HTMLDialogElement>()
 const petSettingsBody = ref<HTMLDivElement>()
+const petSettingsTitle = ref<HTMLHeadingElement>()
 const petScreen = ref(0)
 const petTab = ref<'scene' | 'items' | 'decor' | 'shop' | 'ai' | 'stats'>('scene')
 watch(petTab, () => { if (petSettingsBody.value) petSettingsBody.value.scrollTop = 0 })
@@ -418,6 +419,7 @@ function configurePetScreen(screen: number, key?: number) {
   petTab.value = key === undefined ? 'scene' : 'items'
   if (key !== undefined) selectedItem.value = bindings.value?.[key] || 1
   petDialog.value?.showModal()
+  petSettingsTitle.value?.focus()
 }
 
 function setPetParameter(row: number, event: Event) {
@@ -1174,7 +1176,7 @@ const showAppInfo = () => {
     <dialog ref="petDialog" class="pet-dialog settings-dialog" :class="{ 'param-dialog': petScreen > 0 }" aria-labelledby="pet-dialog-title">
       <form method="dialog">
         <header>
-          <h2 id="pet-dialog-title">{{ petScreen === 0 ? '宠物设置' : screenLabels[petScreen] + ' · 宠物参数' }}</h2>
+          <h2 id="pet-dialog-title" ref="petSettingsTitle" tabindex="-1">{{ petScreen === 0 ? '宠物设置' : screenLabels[petScreen] + ' · 宠物参数' }}</h2>
           <button type="submit" class="settings-button">完成</button>
         </header>
           <nav v-if="petScreen === 0" class="pet-tabs" aria-label="宠物设置">

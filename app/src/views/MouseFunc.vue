@@ -105,155 +105,44 @@ const commit = () => {
 </script>
 
 <template>
-  <div id="mouse-func-content">
-    <div class="div1"></div>
-    <div class="div2">
-      <input
-        type="number"
-        placeholder="左"
-        v-model.number="mouseEvent.mouseLeft"
-      />
-    </div>
-    <div class="div3">
-      <input
-        type="number"
-        placeholder="右"
-        v-model.number="mouseEvent.mouseRight"
-      />
-    </div>
-    <div class="div4">
-      <input
-        type="number"
-        placeholder="下"
-        v-model.number="mouseEvent.mouseDown"
-      />
-    </div>
-    <div class="div5">
-      <input
-        type="number"
-        placeholder="上"
-        v-model.number="mouseEvent.mouseUp"
-      />
-    </div>
-    <div
-      class="div6"
-      :class="{ isSelect: mouseArray[0].isSelect }"
-      @click="mouseArray[0].isSelect = !mouseArray[0].isSelect"
-    >
-      {{ mouseArray[0].eventName }}
-    </div>
-    <div class="div7">
-      <input
-        type="number"
-        placeholder="向上滚动"
-        v-model.number="mouseEvent.rollUp"
-      />
-      <span
-        :class="{ isSelect: mouseArray[1].isSelect }"
-        @click="mouseArray[1].isSelect = !mouseArray[1].isSelect"
-        >{{ mouseArray[1].eventName }}</span
-      >
-      <input
-        type="number"
-        placeholder="向下滚动"
-        v-model.number="mouseEvent.rollDown"
-      />
-    </div>
-    <div
-      class="div8"
-      :class="{ isSelect: mouseArray[2].isSelect }"
-      @click="mouseArray[2].isSelect = !mouseArray[2].isSelect"
-    >
-      {{ mouseArray[2].eventName }}
-    </div>
-    <div
-      class="div9"
-      @click="commit"
-    >
-      确认
-    </div>
-    <!-- <div id="commit-box">确认</div> -->
-  </div>
+  <form id="mouse-func-content" @submit.prevent="commit">
+    <h3>鼠标控制</h3>
+    <fieldset>
+      <legend>移动距离</legend>
+      <div class="fields">
+        <label>向左<input v-model.number="mouseEvent.mouseLeft" class="settings-field" type="number" min="0" max="255"></label>
+        <label>向右<input v-model.number="mouseEvent.mouseRight" class="settings-field" type="number" min="0" max="255"></label>
+        <label>向上<input v-model.number="mouseEvent.mouseUp" class="settings-field" type="number" min="0" max="255"></label>
+        <label>向下<input v-model.number="mouseEvent.mouseDown" class="settings-field" type="number" min="0" max="255"></label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>滚轮</legend>
+      <div class="fields">
+        <label>向上滚动<input v-model.number="mouseEvent.rollUp" class="settings-field" type="number" min="0" max="255"></label>
+        <label>向下滚动<input v-model.number="mouseEvent.rollDown" class="settings-field" type="number" min="0" max="255"></label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>点击</legend>
+      <div class="choices">
+        <button v-for="item in mouseArray" :key="item.eventId" class="settings-button" type="button"
+          :aria-pressed="item.isSelect" @click="item.isSelect = !item.isSelect">{{ item.eventName }}</button>
+      </div>
+    </fieldset>
+    <div class="actions"><button type="submit" class="settings-button is-primary">确认</button></div>
+  </form>
 </template>
 
 <style lang="scss" scoped>
-.isSelect {
-  color: rgb(219, 141, 141) !important;
-  @include global.style_common(null, rgba($color: #494c54, $alpha: 1) !important, 2px solid rgba(217, 224, 226, 1));
-}
-#mouse-func-content {
-  @include global.wh(600px, 600px, 600px, 600px);
-  @include global.ab_center;
-  z-index: 66;
-  @include global.style_common(50%, rgba(255, 255, 255, 1));
-  @include global.grid_config(repeat(8, 1fr), repeat(8, 1fr), 15px, 16px);
-  padding: 25px;
-  @include global.font_config(1.4em, rgba(255, 255, 255, 1));
-  div {
-    @include global.style_common(39px, rgba($color: #494c54, $alpha: 1));
-    cursor: pointer;
-  }
-  input {
-    @include global.full_wh;
-    background: rgba(255, 255, 255, 0);
-    outline: none;
-    border: none;
-    text-align: center;
-    @include global.font_config(35px, rgba(255, 255, 255, 1));
-    overflow: hidden !important;
-  }
-
-  .div1 {
-    grid-area: 2 / 2 / 8 / 8;
-    @include global.style_common(50%, rgba(255, 255, 255, 1), null, 0 0 0 2px #494c54);
-  }
-  .div2 {
-    grid-area: 4 / 1 / 6 / 3;
-  }
-  .div3 {
-    grid-area: 4 / 7 / 6 / 9;
-  }
-  .div4 {
-    grid-area: 7 / 4 / 9 / 6;
-  }
-  .div5 {
-    grid-area: 1 / 4 / 3 / 6;
-  }
-  .div6 {
-    grid-area: 3 / 3 / 5 / 4;
-    @include global.flex_center;
-    text-align: center;
-  }
-  .div7 {
-    grid-area: 3 / 4 / 6 / 6;
-    @include global.flex_config(1, space-between);
-    overflow: hidden;
-    @include global.style_common(null, rgba(255, 255, 255, 1), 1.5px solid #494c54);
-    input {
-      @include global.wh(100%, 30%);
-      background: rgba(255, 255, 255, 1);
-      outline: none;
-      text-align: center;
-      @include global.font_config(18px, rgba(51, 51, 51, 1));
-    }
-    span {
-      @include global.wh(100%, 30%);
-      background: rgba($color: #494c54, $alpha: 1);
-      color: rgba(255, 255, 255, 1);
-      @include global.flex_center;
-    }
-  }
-  .div8 {
-    grid-area: 3 / 6 / 5 / 7;
-    @include global.flex_center;
-    text-align: center;
-  }
-  .div9 {
-    grid-area: 6 / 4 / 7 / 6;
-    background: rgba(210, 168, 169, 0.8);
-    @include global.flex_center;
-    @include global.font_config(20px, rgba(255, 255, 255, 1));
-    cursor: pointer;
-  }
-}
+#mouse-func-content { width:min(500px,90%); padding:16px; }
+h3 { margin-bottom:10px; font-size:15px; }
+fieldset { min-width:0; margin:0 0 10px; padding:0; border:0; }
+legend { margin-bottom:5px; font-weight:650; font-size:13px; color:var(--settings-ink); }
+.fields,.choices { display:grid; gap:7px; }
+.fields { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.choices { grid-template-columns:repeat(3,minmax(0,1fr)); }
+label { display:grid; gap:3px; font-size:12px; color:var(--settings-muted); }
+.choices button[aria-pressed=true] { color:var(--settings-accent); background:var(--settings-selected); border-color:var(--settings-input-line); }
+.actions { display:flex; justify-content:flex-end; }
 </style>

@@ -101,10 +101,11 @@ watch(
   padding:16px;
   background:var(--settings-canvas);
 }
-.key-config-main { display:grid; grid-template-rows:minmax(115px,.75fr) auto; gap:14px; min-width:0; }
+.key-config-main { display:flex; flex-direction:column; min-width:0; align-self:start; border-radius:10px; background:var(--settings-surface); }
+.key-config-main > section + section { border-top:1px solid var(--settings-line); border-top-left-radius:0; border-top-right-radius:0; }
 .key-section { min-width:0; padding:14px; border-radius:10px; background:var(--settings-surface); }
 .key-section h2 { margin:0 0 10px; font-size:14px; font-weight:650; color:var(--settings-ink); }
-.mapping { display:flex; flex-direction:column; min-height:0; }
+.mapping { display:flex; flex-direction:column; min-height:110px; }
 .function-section { display:flex; flex-direction:column; min-height:0; }
 #func-position { position:absolute; inset:0; background:#1c2e2873; z-index:88; }
 #func-position :deep(.function-editor) {
@@ -122,7 +123,6 @@ watch(
   color:var(--settings-ink);
 }
 #func-position :deep(.function-editor #commit-box),
-#func-position :deep(#mouse-func-content .div9),
 #func-position :deep(#comp-delay-content .div4) {
   border:0;
   border-radius:8px;
@@ -131,7 +131,6 @@ watch(
   font-size:14px;
 }
 #func-position :deep(#menu-func-content > div:not(#commit-box)),
-#func-position :deep(#mouse-func-content > div:not(.div9)),
 #func-position :deep(#comp-special),
 #func-position :deep(#delay-config-box) {
   border-radius:8px;
@@ -139,12 +138,7 @@ watch(
   color:var(--settings-ink);
   box-shadow:none;
 }
-#func-position :deep(#mouse-func-content input:not(.div7 input)) { color:var(--settings-ink); font-size:20px; }
-#func-position :deep(#mouse-func-content .div7) { border-color:var(--settings-input-line); }
-#func-position :deep(#mouse-func-content .div7 span) { background:var(--settings-accent); }
-#func-position :deep(#mouse-func-content) { height:min(465px, calc(100% - 36px)); }
-#func-position :deep(#menu-func-content .isSelect),
-#func-position :deep(#mouse-func-content .isSelect) {
+#func-position :deep(#menu-func-content .isSelect) {
   background:var(--settings-selected) !important;
   color:var(--settings-accent) !important;
   border-color:var(--settings-input-line) !important;
@@ -163,6 +157,5 @@ watch(
 }
 @media(max-width:620px) {
   #key-config-content { grid-template-columns:1fr; gap:10px; padding:12px; }
-  .key-config-main { gap:10px; }
 }
 </style>

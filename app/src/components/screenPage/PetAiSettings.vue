@@ -90,17 +90,17 @@ const test = (kind: 'connection' | 'blink') => run(async () => { current.value =
     <label v-if="modelChoice === 'custom'">自定义模型名
       <input v-model.trim="model" class="settings-field" placeholder="支持工具调用的模型名" maxlength="200" autocomplete="off">
     </label>
-    <label :class="{ wide: modelChoice !== 'custom' }">API Key
+    <label>API Key
       <input v-model="apiKey" class="settings-field" type="password" maxlength="4096" autocomplete="new-password" :placeholder="current?.hasKey ? '已加密保存，留空沿用' : '填写模型服务的 Key'">
     </label>
+    <label class="activation" :class="{ wide: modelChoice === 'custom' }">
+      <input v-model="enabled" type="checkbox"> 启用兔子自主动作
+    </label>
     <label class="wide">兔子的角色设定
-      <textarea v-model="personality" class="settings-field" rows="3" :maxlength="personalityLimit" :placeholder="defaultRabbitPersonality"></textarea>
+      <textarea v-model="personality" class="settings-field" rows="2" :maxlength="personalityLimit" :placeholder="defaultRabbitPersonality"></textarea>
     </label>
     <button v-if="personality !== defaultRabbitPersonality" class="reset-personality wide" type="button"
       @click="personality = defaultRabbitPersonality">恢复默认性格</button>
-    <label class="activation wide">
-      <input v-model="enabled" type="checkbox"> 启用兔子自主动作
-    </label>
     <div class="actions wide">
       <button type="button" class="settings-button is-primary" :disabled="localOperation || !dirty || !apiUrl || !model" @click="save">保存配置</button>
       <button type="button" class="settings-button" :disabled="localOperation || current?.running || dirty || !current?.hasKey" @click="test('connection')">测试连接</button>
@@ -122,7 +122,7 @@ const test = (kind: 'connection' | 'blink') => run(async () => { current.value =
 .pet-ai label { display:grid; gap:4px; align-content:start; font-size:13px; font-weight:600; }
 .pet-ai textarea { resize: vertical; }
 .reset-personality { justify-self:start; border:0; padding:0; background:transparent; color:#2c665b; cursor:pointer; }
-.pet-ai .activation { display: flex; align-items: center; }
+.pet-ai .activation { display:flex; min-height:34px; align-items:center; align-self:end; }
 .actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .activation input { accent-color:var(--settings-accent); }
 .status { padding:8px; border-radius:6px; background:var(--settings-group); }

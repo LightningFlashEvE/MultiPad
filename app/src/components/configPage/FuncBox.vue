@@ -76,7 +76,7 @@ const funcArray = reactive([
 <style lang="scss" scoped>
 #func-content { min-height:0; flex:1; }
 ul { list-style:none; display:grid; gap:5px; padding:2px; }
-.func-option { display:block; width:100%; padding:9px 10px; border:0; border-radius:8px; background:var(--settings-canvas); color:var(--settings-ink); font:inherit; text-align:left; cursor:pointer; }
+.func-option { display:block; width:100%; padding:6px 9px; border:0; border-radius:8px; background:var(--settings-canvas); color:var(--settings-ink); font:inherit; text-align:left; cursor:pointer; }
 .func-option:hover { background:var(--settings-selected); }
 .func-option strong, .func-option small { display:block; }
 .func-option strong { font-size:13px; font-weight:650; }
