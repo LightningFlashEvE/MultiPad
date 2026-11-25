@@ -346,9 +346,10 @@ function petContent(index: number) {
   return petParameterContent(petParameterIds.value[index], petState.value)
 }
 
-watch(() => JSON.stringify([appMode.value, petContent(0), petContent(1)]),
+watch(() => JSON.stringify([appMode.value, petLinked.value, petState.value.active, petContent(0), petContent(1)]),
   async (_current, _previous, onCleanup) => {
     if (appMode.value !== 'pet') return
+    if (petLinked.value && petState.value.active) liveScreens.refreshPet()
     let stale = false
     onCleanup(() => { stale = true })
     const images = await Promise.all([renderScreenContent(petContent(0)), renderScreenContent(petContent(1))])
@@ -369,7 +370,6 @@ function setPetParameter(row: number, event: Event) {
   if (pair[1 - row] === selected) pair[1 - row] = pair[row]
   pair[row] = selected
   win.myApi.storageMenu('petScreenParameters', JSON.stringify(petParameterIds.value))
-  liveScreens.tick()
 }
 
 function useItem(id: number) {
@@ -565,6 +565,7 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener('focus', refreshPetDevice)
   clearInterval(liveTimer)
+  liveScreens.cancelPetRefresh()
   clearInterval(petTimer)
   previewWorld.reset()
   clearInterval(screenPoll)
