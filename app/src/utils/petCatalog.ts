@@ -12,12 +12,14 @@ export const petLampCommand = 28
 export const petLampGeneration = 12
 export const petLampInstalledFlag = 4
 export const petWarehouseGeneration = 13
-export const petWarehouseBytes = 16
+export const petWarehouseBytes = 17
 export const petBuySnackCommand = 31
 export const petSnackPack = 5
 export const petSnackPrice = 10
 export const petMaxStock = 99
 export const petMaxCoins = 9999
+export const petOwnedCarrot = 1
+export const petStarterItems = 15
 export const petLampIsLit = (hour: number) => hour < 6 || hour >= 19
 export const petMaxDurationSeconds = 300
 
@@ -57,20 +59,20 @@ export const petFruitLabels: Record<typeof petFruitIds[number], string> = {
 export const hutchBounds = { minX: 41, maxX: 280, minY: 69, maxY: 167 } as const
 export const defaultHutchPosition = { x: 246, y: 142 } as const
 export const petFurniture = [
-  { id: 'hutch', label: '兔窝', command: 14, generation: 4, bounds: hutchBounds, position: defaultHutchPosition,
+  { id: 'hutch', label: '兔窝', command: 14, generation: 4, ownedFlag: 2, bounds: hutchBounds, position: defaultHutchPosition,
     offset: { x: -41, y: -69 }, size: { width: 81, height: 74 } },
-  { id: 'table', label: '玩具桌', command: 29, generation: petWarehouseGeneration,
+  { id: 'table', label: '玩具桌', command: 29, generation: petWarehouseGeneration, ownedFlag: 4,
     bounds: { minX: 91, maxX: 244, minY: 70, maxY: 155 }, position: { x: 98, y: 116 },
     offset: { x: -91, y: -50 }, size: { width: 76, height: 61 } },
-  { id: 'lamp', label: '挂灯', command: 30, generation: petWarehouseGeneration,
+  { id: 'lamp', label: '挂灯', command: 30, generation: petWarehouseGeneration, ownedFlag: 8,
     bounds: { minX: 13, maxX: 307, minY: 0, maxY: 92 }, position: { x: 222, y: 0 },
     offset: { x: -13, y: 0 }, size: { width: 26, height: 33 } }
 ] as const
 export type PetFurniture = typeof petFurniture[number]
 export type PetFurnitureId = PetFurniture['id']
 export type PetPosition = { x: number; y: number }
-export type PetWarehouse = { coins: number; snacks: number[] }
-export const newPetWarehouse = (): PetWarehouse => ({ coins: 100, snacks: petFruitIds.map(() => 8) })
+export type PetWarehouse = { coins: number; snacks: number[]; owned: number }
+export const newPetWarehouse = (): PetWarehouse => ({ coins: 100, snacks: petFruitIds.map(() => 8), owned: petStarterItems })
 
 export function furniturePositionValid(item: PetFurniture, x: number, y: number) {
   const { minX, maxX, minY, maxY } = item.bounds
@@ -78,14 +80,14 @@ export function furniturePositionValid(item: PetFurniture, x: number, y: number)
 }
 
 export function readPetWarehouse(p: Uint8Array, generation: number) {
-  if (generation !== petWarehouseGeneration) return undefined
+  if (generation !== petWarehouseGeneration || p.length <= petWarehouseBytes) return undefined
   const at = p.length - 1 - petWarehouseBytes
   const word = (offset: number) => p[at + offset] | (p[at + offset + 1] << 8)
   const table = { x: word(0), y: p[at + 2] }
   const lamp = { x: word(3), y: p[at + 5] }
-  const warehouse = { coins: word(6), snacks: Array.from(p.subarray(at + 8, at + 16)) }
+  const warehouse = { coins: word(6), snacks: Array.from(p.subarray(at + 8, at + 16)), owned: p[at + 16] }
   if (!furniturePositionValid(petFurniture[1], table.x, table.y) || !furniturePositionValid(petFurniture[2], lamp.x, lamp.y) ||
-      warehouse.coins > petMaxCoins || warehouse.snacks.length !== petFruitIds.length ||
+      warehouse.coins > petMaxCoins || warehouse.owned > petStarterItems || warehouse.snacks.length !== petFruitIds.length ||
       warehouse.snacks.some(count => count > petMaxStock)) return undefined
   return { warehouse, table, lamp }
 }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { petItems, type PetWarehouse } from '../../utils/petCatalog'
+import { petItems, petOwnedCarrot, type PetWarehouse } from '../../utils/petCatalog'
 
 const props = defineProps<{
   selected: number
@@ -26,8 +26,10 @@ const selectedItem = computed(() => petItems.find(item => item.itemId === props.
 const independentHutch = computed(() => !props.connected || props.generation >= 4)
 const groups = computed(() => [
   { title: '零食', entries: petItems.filter(item => item.kind === 'fruit') },
-  { title: '玩具', entries: petItems.filter(item => item.kind === 'toy' || (!independentHutch.value && item.kind === 'decoration')) },
-])
+  { title: '玩具', entries: petItems.filter(item =>
+    item.kind === 'toy' && (!props.warehouse || Boolean(props.warehouse.owned & petOwnedCarrot)) ||
+    !independentHutch.value && item.kind === 'decoration') },
+].filter(group => group.entries.length))
 const available = computed(() => !props.connected || props.generation >= selectedItem.value.minGeneration)
 const placement = computed(() => !props.connected || props.generation >= 3)
 const targetScene = computed(() => selectedItem.value.id === 'rabbit_hutch' ? 1 : props.scene)

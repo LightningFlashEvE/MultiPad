@@ -12,6 +12,7 @@ enum { PET_CARE_GRACE_MS = 300000, PET_UNATTENDED_DECAY_MS = 120000 };
 enum { HUTCH_X_MIN = 41, HUTCH_X_MAX = 280, HUTCH_Y_MIN = 69, HUTCH_Y_MAX = 167 };
 enum { PET_SNACKS = 8, PET_MAX_STOCK = 99, PET_MAX_COINS = 9999, PET_SNACK_PRICE = 10, PET_SNACK_PACK = 5 };
 enum { PET_TABLE = 0, PET_LAMP = 1 };
+enum { PET_OWN_CARROT = 1, PET_OWN_HUTCH = 2, PET_OWN_TABLE = 4, PET_OWN_LAMP = 8, PET_STARTER_ITEMS = 15 };
 
 typedef struct {
     uint8_t satiety, energy, mood, affection, scene;
@@ -21,7 +22,7 @@ typedef struct {
     uint16_t hutch_x;
     uint8_t hutch_y;
     uint16_t table_x, lamp_x, coins;
-    uint8_t table_y, lamp_y, stock[PET_SNACKS];
+    uint8_t table_y, lamp_y, stock[PET_SNACKS], owned_items;
 } PetCare;
 
 void pet_care_init(uint16_t flash_id);

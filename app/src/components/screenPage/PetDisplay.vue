@@ -15,6 +15,7 @@ const canvas = ref<HTMLCanvasElement>()
 const dragging = ref<{ id: PetFurnitureId; position: HutchPosition }>()
 const handles = computed(() => !props.editableDecoration || props.state.scene !== 1 ? [] :
   petFurniture.filter(item => (props.decorationGeneration ?? petWarehouseGeneration) >= item.generation &&
+    (!props.state.warehouse || Boolean(props.state.warehouse.owned & item.ownedFlag)) &&
     (item.id !== 'lamp' || props.state.pendantLamp)))
 let grab: { item: PetFurniture; pointerId: number; x: number; y: number; target: HTMLElement } | undefined
 

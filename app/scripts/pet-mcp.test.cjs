@@ -27,13 +27,13 @@ const guide = loadModule('../electron/controller/petCareGuide.ts', { [pathToCata
 function payload(generation = 4, fields = {}, foodIds = [], headPet = [0, 0]) {
   const endOfFoods = 33 + foodIds.length * 6
   const p = Buffer.alloc(endOfFoods + 10 + (generation >= 11 ? 5 : generation >= 8 ? 3 : Number(generation === 7))
-    + (generation === 13 ? 16 : 0))
+    + (generation === 13 ? 17 : 0))
   p.set([1,0,78,0,0,0,0,0,0,12,1,0,65,24,68,45,1,0,0])
   p[31] = 100
   p[32] = foodIds.length
   foodIds.forEach((id, i) => p.set([id,41+i*34,0,129,0,1],33+i*6))
   p.set([246,0,142,139,...headPet], endOfFoods)
-  if (generation === 13) p.set([98,0,116,222,0,0,100,0,8,8,8,8,8,8,8,8], p.length - 17)
+  if (generation === 13) p.set([98,0,116,222,0,0,100,0,8,8,8,8,8,8,8,8,15], p.length - 18)
   if (generation >= 7) p[p.length - 1] = generation
   for (const [i,v] of Object.entries(fields)) p[Number(i)] = v
   return p.subarray(0, [0, 12, 19, endOfFoods, endOfFoods + 4, endOfFoods + 6, endOfFoods + 10, endOfFoods + 11][generation] ?? p.length)

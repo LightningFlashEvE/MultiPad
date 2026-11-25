@@ -11,7 +11,7 @@ static const PetCare initial_care = {
     .satiety = 65, .energy = 75, .mood = 70, .affection = 35,
     .bindings = {1,2,3,4,5,6,7,8}, .hutch_x = 246, .hutch_y = 142,
     .table_x = 98, .table_y = 116, .lamp_x = 222, .lamp_y = 0,
-    .coins = 100, .stock = {8,8,8,8,8,8,8,8}
+    .coins = 100, .stock = {8,8,8,8,8,8,8,8}, .owned_items = PET_STARTER_ITEMS
 };
 static PetCare care;
 /* Pending changes can accumulate while a failed page program is retried.
@@ -58,7 +58,7 @@ static bool valid(const uint8_t *record, unsigned bytes) {
     if (bytes == RECORD_BYTES) {
         if (!valid_furniture_position(PET_TABLE, record[30] | record[31] << 8, record[32]) ||
             !valid_furniture_position(PET_LAMP, record[33] | record[34] << 8, record[35]) ||
-            (record[36] | record[37] << 8) > PET_MAX_COINS) return false;
+            (record[36] | record[37] << 8) > PET_MAX_COINS || record[46] > PET_STARTER_ITEMS) return false;
         for (unsigned i = 0; i < PET_SNACKS; i++)
             if (record[38 + i] > PET_MAX_STOCK) return false;
     }
@@ -117,6 +117,7 @@ void pet_care_init(uint16_t flash_id) {
                 care.lamp_y = record[35];
                 care.coins = record[36] | record[37] << 8;
                 memcpy(care.stock, record + 38, PET_SNACKS);
+                care.owned_items = record[46];
             }
             next_slot = (base + (i + bytes + RECORD_BYTES - 1) / RECORD_BYTES) % SLOTS;
         }
@@ -357,6 +358,7 @@ static bool append_record(void) {
     record[36] = (uint8_t)care.coins;
     record[37] = (uint8_t)(care.coins >> 8);
     memcpy(record + 38, care.stock, PET_SNACKS);
+    record[46] = care.owned_items;
     uint16_t crc = crc16(record, sizeof(record));
     record[RECORD_BYTES-2] = (uint8_t)crc;
     record[RECORD_BYTES-1] = (uint8_t)(crc >> 8);

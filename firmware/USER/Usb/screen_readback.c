@@ -360,7 +360,8 @@ void screen_readback_poll(void) {
                                     pixels[length + 5] = care->lamp_y;
                                     write_u16(pixels + length + 6, care->coins);
                                     memcpy(pixels + length + 8, care->stock, PET_SNACKS);
-                                    length += 8 + PET_SNACKS;
+                                    pixels[length + 8 + PET_SNACKS] = care->owned_items;
+                                    length += 9 + PET_SNACKS;
                                 }
                                 pixels[length++] = requested_generation;
                             }

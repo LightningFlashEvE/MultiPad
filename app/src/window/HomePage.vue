@@ -28,7 +28,7 @@ import PerformanceDisplay from '../components/screenPage/PerformanceDisplay.vue'
 import { petParameters, petParameterContent, petValue, petSeasons, petStats, type HutchPosition, type PetParameter, type PetState } from '../components/screenPage/petDisplay'
 import { invertPetEnergy, petActions, petActionLabels, petScenes, petSceneLabels, petRoomItems, petItems, petStateGeneration, petLampCommand, petLampGeneration, petLampInstalledFlag, isHutchPosition, defaultHutchPosition } from '../utils/petCatalog'
 import { furniturePositionValid, newPetWarehouse, petBuySnackCommand, petFruitIds, petFruitLabels, petFurniture, petMaxCoins, petMaxStock,
-  petSnackPack, petSnackPrice, petWarehouseBytes, readPetWarehouse, type PetFurnitureId, type PetPosition } from '../utils/petCatalog'
+  petSnackPack, petSnackPrice, petStarterItems, petWarehouseBytes, readPetWarehouse, type PetFurnitureId, type PetPosition } from '../utils/petCatalog'
 
 const router = useRouter()
 const win = window as any
@@ -543,7 +543,8 @@ onMounted(async () => {
     if (saved && Number.isInteger(saved.coins) && saved.coins >= 0 && saved.coins <= petMaxCoins &&
         Array.isArray(saved.snacks) && saved.snacks.length === petFruitIds.length &&
         saved.snacks.every((n: number) => Number.isInteger(n) && n >= 0 && n <= petMaxStock)) {
-      offlineWarehouse.value = { coins: saved.coins, snacks: saved.snacks }
+      const owned = Number.isInteger(saved.owned) && saved.owned >= 0 && saved.owned <= petStarterItems ? saved.owned : petStarterItems
+      offlineWarehouse.value = { coins: saved.coins, snacks: saved.snacks, owned }
     }
   } catch { /* Retain starter inventory. */ }
   try {
@@ -1160,7 +1161,7 @@ const showAppInfo = () => {
             :stats="petState.stats" :connected="petLinked" :supported="!petLinked || generation >= 10"
             :busy="interacting || progressShow || firmwareUpdating || (conState && !petLinked)"
             :save="interactWithPet" />
-          <PetDecorationPanel v-else-if="petTab === 'decor'" :state="petState" :connected="petLinked" :generation="generation"
+          <PetDecorationPanel v-else-if="petTab === 'decor'" :state="petState" :connected="petLinked" :generation="generation" :warehouse="warehouse"
             :busy="interacting || (conState && !petLinked)" @enter="interactWithPet(6, 1)"
             @lamp="installed => interactWithPet(petLampCommand, Number(installed))"
             @move="moveFurniture" @rest="interactWithPet(15, 0)" @inspect="interactWithPet(3, 14)" />

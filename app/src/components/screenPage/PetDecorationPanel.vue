@@ -1,21 +1,22 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { furniturePositionValid, petFurniture, petLampGeneration, petLampIsLit, petWarehouseGeneration,
-  type PetFurnitureId, type PetPosition } from '../../utils/petCatalog'
+import { petFurniture, petLampGeneration, petLampIsLit, petWarehouseGeneration,
+  type PetFurnitureId, type PetPosition, type PetWarehouse } from '../../utils/petCatalog'
 import PetDisplay from './PetDisplay.vue'
 import type { PetState } from './petDisplay'
 
-const props = defineProps<{ state: PetState; connected: boolean; generation: number; busy: boolean }>()
+const props = defineProps<{ state: PetState; connected: boolean; generation: number; busy: boolean; warehouse?: PetWarehouse }>()
 const emit = defineEmits<{ enter: []; move: [id: PetFurnitureId, position: PetPosition]; rest: []; inspect: []; lamp: [installed: boolean] }>()
 const selected = ref<PetFurnitureId>('hutch')
-const item = computed(() => petFurniture.find(item => item.id === selected.value) ?? petFurniture[0])
+const owned = computed(() => petFurniture.filter(item => !props.warehouse || Boolean(props.warehouse.owned & item.ownedFlag)))
+const item = computed(() => owned.value.find(item => item.id === selected.value) ?? owned.value[0])
 const supportedGeneration = computed(() => props.connected ? props.generation : petWarehouseGeneration)
-const installed = computed(() => selected.value !== 'lamp' || props.state.pendantLamp)
-const canMove = computed(() => supportedGeneration.value >= item.value.generation && props.state.scene === 1 && !props.busy)
-const position = computed(() => (selected.value === 'hutch' ? props.state.hutchPosition :
-  selected.value === 'table' ? props.state.tablePosition : props.state.lampPosition) ?? item.value.position)
+const installed = computed(() => item.value?.id !== 'lamp' || props.state.pendantLamp)
+const canMove = computed(() => item.value && supportedGeneration.value >= item.value.generation && props.state.scene === 1 && !props.busy)
+const position = computed(() => (item.value?.id === 'hutch' ? props.state.hutchPosition :
+  item.value?.id === 'table' ? props.state.tablePosition : props.state.lampPosition) ?? item.value?.position)
 function resetPosition() {
-  if (canMove.value && installed.value && furniturePositionValid(item.value, item.value.position.x, item.value.position.y)) {
+  if (item.value && canMove.value && installed.value) {
     emit('move', item.value.id, item.value.position)
   }
 }
@@ -25,36 +26,38 @@ function resetPosition() {
   <div class="decoration-panel">
     <aside aria-label="拥有的家具">
       <h3>我的家具</h3>
-      <button v-for="furniture in petFurniture" :key="furniture.id" type="button" class="owned-item"
-        :aria-pressed="selected === furniture.id" @click="selected = furniture.id">
+      <button v-for="furniture in owned" :key="furniture.id" type="button" class="owned-item"
+        :aria-pressed="item?.id === furniture.id" @click="selected = furniture.id">
         {{ furniture.label }}
         <small>{{ furniture.id === 'lamp' && !state.pendantLamp ? '已收起' : '已摆放' }}</small>
       </button>
     </aside>
     <section class="room">
       <PetDisplay :state="state" :connected="connected && state.active" editable-decoration
-        :decoration-generation="supportedGeneration" :decoration-busy="busy" :selected-furniture="selected"
+        :decoration-generation="supportedGeneration" :decoration-busy="busy" :selected-furniture="item?.id"
         @move-furniture="(id, p) => emit('move', id, p)" @select-furniture="id => selected = id" />
+      <template v-if="item">
       <h3>{{ item.label }}</h3>
       <template v-if="state.scene !== 1">
         <p>进入宝宝房摆放家具。</p>
         <button type="button" :disabled="busy || supportedGeneration < 2" @click="emit('enter')">进入宝宝房</button>
       </template>
       <template v-else>
-        <p v-if="selected === 'lamp'">19:00–次日 06:00 自动照亮房间。<template v-if="state.pendantLamp">
+        <p v-if="item.id === 'lamp'">19:00–次日 06:00 自动照亮房间。<template v-if="state.pendantLamp">
           当前{{ petLampIsLit(state.hour) ? '已点亮' : '关闭' }}。</template></p>
         <p v-if="installed && supportedGeneration >= item.generation">直接拖动{{ item.label }}，松开保存。也可用方向键微调。</p>
         <p v-else-if="supportedGeneration < item.generation">升级键盘固件后可移动{{ item.label }}。</p>
         <div class="actions">
           <button v-if="installed" type="button"
-            :disabled="!canMove || (position.x === item.position.x && position.y === item.position.y)" @click="resetPosition">恢复默认</button>
-          <button v-if="selected === 'hutch'" type="button" :disabled="busy || !!state.fruit || supportedGeneration < 4"
+            :disabled="!canMove || (position?.x === item.position.x && position?.y === item.position.y)" @click="resetPosition">恢复默认</button>
+          <button v-if="item.id === 'hutch'" type="button" :disabled="busy || !!state.fruit || supportedGeneration < 4"
             @click="emit('rest')">去兔窝小憩</button>
-          <button v-if="selected === 'table'" type="button" :disabled="busy || !!state.fruit || !!state.activeToy || supportedGeneration < 7"
+          <button v-if="item.id === 'table'" type="button" :disabled="busy || !!state.fruit || !!state.activeToy || supportedGeneration < 7"
             @click="emit('inspect')">去桌边看看</button>
-          <button v-if="selected === 'lamp'" type="button" :disabled="busy || supportedGeneration < petLampGeneration"
+          <button v-if="item.id === 'lamp'" type="button" :disabled="busy || supportedGeneration < petLampGeneration"
             @click="emit('lamp', !state.pendantLamp)">{{ state.pendantLamp ? '收起挂灯' : '安装挂灯' }}</button>
         </div>
+      </template>
       </template>
     </section>
   </div>
