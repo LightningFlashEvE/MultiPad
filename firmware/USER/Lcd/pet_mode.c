@@ -19,6 +19,7 @@ enum {
     RECOVERED_ENERGY = 70,
     ENCODER_HOLD_MS = 1200,
     HEAD_PAT_MS = 1200,
+    RUB_REWARD_MS = 3000,
     GROUND = 139,
     WALK_MIN = 46,
     WALK_MAX = 274,
@@ -99,7 +100,7 @@ static PetFloor *current_floor(void) { return &floors[pet_care_get()->scene]; }
 static bool encoder_down, encoder_rotated, encoder_toggled, encoder_claimed, encoder_cancelled;
 static uint32_t encoder_since;
 static bool head_pat_active;
-static uint32_t head_pat_started, head_pat_last;
+static uint32_t head_pat_started, head_pat_last, head_pat_reward_at;
 static uint8_t head_pat_kind, rub_index;
 static bool hand_on_encoder;
 static bool unattended(uint32_t now) { return now - last_owner_input >= PET_CARE_GRACE_MS; }
@@ -419,10 +420,12 @@ uint8_t pet_mode_pat_phase(void) {
 }
 
 static void pat_head(uint8_t kind, uint8_t source, bool reward, uint32_t now) {
-    if (!head_pat_remaining(now)) {
-        head_pat_started = now;
-        if (reward) pet_care_adjust(0, 0, 0, 1);
+    const bool continuing_rub = kind && head_pat_kind && head_pat_remaining(now);
+    if (reward || (continuing_rub && now - head_pat_reward_at >= RUB_REWARD_MS)) {
+        pet_care_adjust(0, 0, 0, 1);
+        head_pat_reward_at = now;
     }
+    if (reward || !head_pat_remaining(now)) head_pat_started = now;
     head_pat_active = true;
     if (kind) {
         if (reward) rub_index = 2;

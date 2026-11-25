@@ -103,6 +103,26 @@ test('head strokes overlay bedtime and late detents of the same press earn no ex
   assert.equal(state.stats.satiety, 100)
 })
 
+test('separate taps and prolonged active rubs earn affection while holding still does not', () => {
+  const { world, state, tick } = preview()
+  world.use(22, 0)
+  tick(180)
+  world.use(22, 0)
+  assert.equal(state.stats.affection, 37)
+
+  world.use(22, 1)
+  for (let i = 0; i < 6; i++) {
+    tick(500)
+    world.use(22, 6)
+  }
+  assert.equal(state.stats.affection, 38)
+  world.use(22, 10)
+  assert.equal(state.stats.affection, 39)
+  tick(100)
+  world.use(22, 11)
+  assert.equal(state.stats.affection, 39)
+})
+
 test('an alert rabbit stays awake and a held stroke freezes its route to the hutch', () => {
   const {world, state, tick, sleeping} = preview()
   state.stats.energy = 100

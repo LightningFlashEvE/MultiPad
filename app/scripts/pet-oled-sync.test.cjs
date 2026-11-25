@@ -19,6 +19,7 @@ test('a pet value change retries a busy OLED and sends the latest frames without
   let secondScreenBusy = true
   let value = 42
   let mask = 0
+  let colorWrites = 0
 
   runInNewContext(source, {
     exports, Date, JSON, Promise, Number, Map, Uint8Array,
@@ -51,7 +52,7 @@ test('a pet value change retries a busy OLED and sends the latest frames without
 
   const config = () => ({ content: { mode: 'pet', rows: [{ value }] } })
   const screens = exports.createLiveScreens(() => [undefined, config(), config()], () => paused,
-    () => true, () => {}, async () => {}, () => true)
+    () => true, () => {}, async () => { colorWrites++ }, () => true)
 
   screens.refreshPet()
   value = 43
@@ -67,4 +68,16 @@ test('a pet value change retries a busy OLED and sends the latest frames without
   }
   assert.deepEqual(writes, [[1, 43], [2, 43]])
   assert.equal(timers.length, 0)
+  assert.equal(colorWrites, 0)
+  assert.equal(screens.petRefreshPending(), false)
+
+  paused = true
+  value = 44
+  screens.refreshPet()
+  assert.equal(screens.petRefreshPending(), true)
+  paused = false
+  screens.flushPetRefresh()
+  await screens.wait()
+  assert.deepEqual(writes.slice(-2), [[1, 44], [2, 44]])
+  assert.equal(screens.petRefreshPending(), false)
 })

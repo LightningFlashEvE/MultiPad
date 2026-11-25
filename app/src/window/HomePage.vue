@@ -215,7 +215,8 @@ function refreshPetDevice() {
   showOfflineTime()
   if (!conState.value && appMode.value === 'pet') previewWorld.start()
   else previewWorld.pause()
-  if (petTask || !conState.value || progressShow.value || firmwareUpdating.value) return
+  if (petTask || !conState.value || progressShow.value || firmwareUpdating.value ||
+      appMode.value === 'pet' && !requestedMode && liveScreens.petRefreshPending()) return
   petTask = (async () => {
     const status = await win.myApi.petAction(0)
     if (status.state === 'busy') return
@@ -275,7 +276,10 @@ function refreshPetDevice() {
         }
       }
     }
-  })().catch(() => { petLinked.value = false }).finally(() => { petTask = undefined })
+  })().catch(() => { petLinked.value = false }).finally(() => {
+    petTask = undefined
+    liveScreens.flushPetRefresh()
+  })
 }
 
 function saveSceneSettings() {
@@ -394,6 +398,7 @@ async function interactWithPet(command: number, value: number) {
   })().catch(() => { interactionNotice.value = '未能同步宠物操作。' }).finally(() => {
     petTask = undefined
     interacting.value = false
+    liveScreens.flushPetRefresh()
   })
   await petTask
   return applied
@@ -683,8 +688,13 @@ onMounted(async () => {
   if (hasPerformanceScreens()) void samplePerformance()
   refreshPetDevice()
   petTimer = setInterval(refreshPetDevice, 700)
+  let lastPetMotionPoll = 0
   petMotionTimer = setInterval(() => {
-    if (petLinked.value && petState.value.active && petState.value.action === 6) refreshPetDevice()
+    if (!petLinked.value || !petState.value.active) return
+    const now = Date.now()
+    if (petState.value.action !== 6 && now - lastPetMotionPoll < 240) return
+    lastPetMotionPoll = now
+    refreshPetDevice()
   }, 120)
   window.addEventListener('focus', refreshPetDevice)
   // 主页面监听
@@ -1121,7 +1131,7 @@ async function readDeviceButtons() {
   const smallKnobReleased = ((heldButtons.value | result.pressed) & smallKnob2) && !(result.held & smallKnob2)
   heldButtons.value = result.held
   if (generation.value >= 6 && appMode.value === 'pet' &&
-      (knobWasHeld || (result.held & knobMask) || smallKnobReleased)) refreshPetDevice()
+      (knobWasHeld || (result.held & knobMask) || (result.pressed & (knobMask | 0xff)) || smallKnobReleased)) refreshPetDevice()
   for (let index = 0; index < 11; index++) {
     const bit = 1 << index
     if (!(result.pressed & bit)) continue
@@ -1136,7 +1146,7 @@ async function readDeviceButtons() {
 }
 
 function refreshDeviceButtons() {
-  if (!conState.value || buttonSyncUnsupported || progressShow.value || firmwareUpdating.value || petTask || buttonReadTask) return
+  if (!conState.value || buttonSyncUnsupported || progressShow.value || firmwareUpdating.value || petTask || buttonReadTask || liveScreens.petRefreshPending()) return
   buttonReadTask = readDeviceButtons().catch(clearButtonHighlights).finally(() => { buttonReadTask = undefined })
 }
 

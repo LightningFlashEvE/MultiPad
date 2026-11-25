@@ -24,6 +24,7 @@ export function createLiveScreens(
   let running: Promise<void> | undefined
   let nextReconnect = 0
   let petRefreshQueued = false
+  let sendingPetRefresh = false
   let petRefreshDeadline = 0
   let petRetry: ReturnType<typeof setTimeout> | undefined
 
@@ -50,7 +51,7 @@ export function createLiveScreens(
     }
 
     const menu = Math.max(0, device.menu - 1)
-    if (device.menu && !paused()) await updateColor(device.menu)
+    if (device.menu && !sendingPetRefresh && !paused()) await updateColor(device.menu)
     await Promise.all([1, 2].map(async screen => {
       const config = getScreens(menu)?.[screen]?.content
       if (!config || config.mode === 'text') return
@@ -112,14 +113,16 @@ export function createLiveScreens(
       retryPetRefresh()
       return
     }
-    const urgent = petRefreshQueued
+    sendingPetRefresh = petRefreshQueued
     petRefreshQueued = false
     running = update().then(retry => {
-      if (retry && urgent) petRefreshQueued = true
+      if (retry && sendingPetRefresh) petRefreshQueued = true
     }).catch(() => {
       displayed.clear()
+      if (sendingPetRefresh) petRefreshQueued = true
     }).finally(() => {
       running = undefined
+      sendingPetRefresh = false
       retryPetRefresh()
     })
   }
@@ -131,8 +134,16 @@ export function createLiveScreens(
       petRefreshDeadline = Date.now() + 900
       tick()
     },
+    flushPetRefresh() {
+      if (!petRefreshQueued || paused() || running) return
+      clearTimeout(petRetry)
+      petRetry = undefined
+      tick()
+    },
+    petRefreshPending: () => allowUnconfiguredMenu() &&
+      (sendingPetRefresh || petRefreshQueued && Date.now() < petRefreshDeadline),
     cancelPetRefresh() {
-      petRefreshQueued = false
+      petRefreshQueued = sendingPetRefresh = false
       petRefreshDeadline = 0
       clearTimeout(petRetry)
       petRetry = undefined
