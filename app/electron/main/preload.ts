@@ -111,6 +111,7 @@ contextBridge.exposeInMainWorld('myApi', {
   readWorkLayout: () => ipcRenderer.invoke('device-work-layout'),
   setDeviceConfiguring: (enabled: boolean) => ipcRenderer.invoke('device-configuring', enabled),
   pcPerformance: () => ipcRenderer.invoke('pc-performance'),
+  pcPerformancePreview: (menu: number) => ipcRenderer.invoke('pc-performance-preview', menu),
   livePerformance: (menu: number, metrics?: number[]) => ipcRenderer.invoke('live-performance', menu, metrics),
   petAction: (command: number, value = 0) => ipcRenderer.invoke('pet-action', command, value),
   getPetAiActivity: () => ipcRenderer.invoke('pet-ai-activity-get'),

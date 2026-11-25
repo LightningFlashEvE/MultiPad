@@ -7,6 +7,7 @@
 #include "pet_care.h"
 #include "usbd_cdc_if.h"
 #include <string.h>
+#include "performance_labels.inc"
 
 enum {
     REQUEST_SIZE = 17,
@@ -26,6 +27,7 @@ enum {
     STATUS_EMPTY,
     STATUS_STALE,
     STATUS_INVALID,
+    PERFORMANCE_TIMEOUT_MS = 7000,
 };
 
 static const uint8_t request_magic[] = {0xaa, 0xbb, 0xc1, 0x53};
@@ -40,35 +42,70 @@ static uint32_t generation;
 static uint16_t held_buttons;
 static uint16_t pressed_buttons;
 static uint8_t performance_menu;
+static uint8_t performance_sample_menu;
 static uint32_t performance_updated;
 static uint8_t last_metrics[3];
 
 static void clear_performance(void) {
+    performance_sample_menu = 0;
     if (!performance_menu) return;
     performance_menu = 0;
     if (!pet_mode_is_active()) restore_menu_color();
 }
 
+static void draw_performance_glyph(uint16_t x, uint16_t y, uint8_t size, const uint32_t *rows,
+                                   uint16_t foreground, uint16_t background) {
+    static uint8_t pixels[24 * 24 * 2];
+    uint8_t *pixel = pixels;
+    for (uint8_t row = 0; row < size; row++) {
+        for (uint8_t col = 0; col < size; col++) {
+            uint16_t color = (rows[row] & (1u << col)) ? foreground : background;
+            *pixel++ = (uint8_t)(color >> 8);
+            *pixel++ = (uint8_t)color;
+        }
+    }
+    lcd_show_pic_index(x, y, size, size, pixels, 0);
+}
+
 static void show_performance(const uint8_t *metrics, bool first) {
-    static const char *labels[] = {"CPU", "MEM", "DISK"};
-    const uint16_t background = 0x1106, track = 0x29ca, accent = 0x575a;
+    static const uint8_t label_offsets[] = {0, 3, 5, 8};
+    static const uint16_t accents[] = {0x5f18, 0x85df, 0xedf0};
+    const uint16_t background = 0x1106, panel = 0x1968, track = 0x324c;
     if (first) {
         lcd_fill(0, 0, 320, 172, background, 0);
-        lcd_show_string(14, 10, (const uint8_t *)"PC PERFORMANCE", WHITE, background, 24, 0, 0);
+        for (uint8_t glyph = 0; glyph < sizeof(performance_labels_24) / sizeof(performance_labels_24[0]); glyph++)
+            draw_performance_glyph(14 + glyph * 24, 10, 24, performance_labels_24[glyph], 0xf7bf, background);
     }
     for (uint8_t i = 0; i < 3; i++) {
-        if (!first && last_metrics[i] == metrics[i]) continue;
-        const uint16_t y = 50 + 36 * i;
+        const uint16_t y = 43 + 40 * i;
+        const uint16_t accent = accents[i];
+        if (first) {
+            lcd_fill(12, y - 4, 308, y + 30, panel, 0);
+            lcd_fill(12, y - 4, 15, y + 30, accent, 0);
+            for (uint8_t glyph = label_offsets[i]; glyph < label_offsets[i + 1]; glyph++)
+                draw_performance_glyph(25 + (glyph - label_offsets[i]) * 16, y + 5, 16,
+                                       performance_labels_16[glyph], 0xf7bf, panel);
+        } else if (last_metrics[i] == metrics[i]) continue;
+
         uint8_t value[8];
-        if (metrics[i] == 255) snprintf((char *)value, sizeof(value), "   --");
-        else snprintf((char *)value, sizeof(value), "%4u%%", (unsigned)metrics[i]);
-        lcd_show_string(14, y, (const uint8_t *)labels[i], WHITE, background, 16, 0, 0);
-        lcd_show_string(262, y, value, WHITE, background, 16, 0, 0);
-        lcd_fill(66, y + 3, 254, y + 13, track, 0);
+        if (metrics[i] == 255) snprintf((char *)value, sizeof(value), "  --");
+        else snprintf((char *)value, sizeof(value), "%3u%%", (unsigned)metrics[i]);
+        lcd_show_string(250, y, value, accent, panel, 24, 0, 0);
+        lcd_fill(82, y + 10, 235, y + 19, track, 0);
         if (metrics[i] > 0 && metrics[i] <= 100)
-            lcd_fill(66, y + 3, 66 + 188 * metrics[i] / 100, y + 13, accent, 0);
+            lcd_fill(82, y + 10, 82 + 153 * metrics[i] / 100, y + 19, accent, 0);
     }
-    memcpy(last_metrics, metrics, sizeof(last_metrics));
+}
+
+void screen_readback_restore_work_color(void) {
+    if (performance_sample_menu && performance_sample_menu == active_menu && !pixels_dirty &&
+        HAL_GetTick() - performance_updated < PERFORMANCE_TIMEOUT_MS) {
+        show_performance(last_metrics, true);
+        performance_menu = active_menu;
+        return;
+    }
+    performance_menu = performance_sample_menu = 0;
+    restore_menu_color();
 }
 
 void button_readback_record(uint8_t index, bool down) {
@@ -136,7 +173,7 @@ bool screen_readback_receive(const uint8_t *data, uint32_t length) {
 
 void screen_readback_applied(uint8_t menu) {
     active_menu = menu;
-    performance_menu = 0;
+    performance_menu = performance_sample_menu = 0;
     pixels_dirty = false;
     generation++;
 }
@@ -161,8 +198,9 @@ static void send_response(void) {
 }
 
 void screen_readback_poll(void) {
-    if (performance_menu && (pet_mode_is_active() || HAL_GetTick() - performance_updated >= 7000))
-        clear_performance();
+    const bool pet_active = pet_mode_is_active();
+    if (pet_active) performance_menu = 0;
+    if (performance_sample_menu && HAL_GetTick() - performance_updated >= PERFORMANCE_TIMEOUT_MS) clear_performance();
     if ((!request_pending && !response_size) || !CDC_TransmitReady_FS()) return;
     if (response_size) {
         send_response();
@@ -184,15 +222,19 @@ void screen_readback_poll(void) {
             status = STATUS_INVALID;
         } else if (!offset) {
             clear_performance();
-        } else if (offset != active_menu || pixels_dirty || pet_mode_is_active()) {
+        } else if (offset != active_menu || pixels_dirty) {
             status = STATUS_STALE;
         } else if ((metrics[0] > 100 && metrics[0] != 255) ||
                    (metrics[1] > 100 && metrics[1] != 255) ||
                    (metrics[2] > 100 && metrics[2] != 255)) {
             status = STATUS_INVALID;
         } else {
-            show_performance(metrics, !performance_menu);
-            performance_menu = (uint8_t)offset;
+            if (!pet_active) {
+                show_performance(metrics, !performance_menu);
+                performance_menu = (uint8_t)offset;
+            }
+            memcpy(last_metrics, metrics, sizeof(last_metrics));
+            performance_sample_menu = (uint8_t)offset;
             performance_updated = HAL_GetTick();
         }
     } else if (screen == BUTTON_STATE) {

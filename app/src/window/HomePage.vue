@@ -62,6 +62,7 @@ type ParamPair = [PetParameter, PetParameter]
 const petParameterIds = ref<[ParamPair, ParamPair]>([['satiety','energy'], ['mood','affection']])
 const petImages = ref(['', ''])
 const performanceValues = ref<number[]>([])
+const performancePreview = ref<{ menu: number; values: number[] }>()
 const performanceUnavailable = ref(false)
 const petDialog = ref<HTMLDialogElement>()
 const petScreen = ref(0)
@@ -207,11 +208,20 @@ function refreshPetDevice() {
     const actualMode = status.payload[0] ? 'pet' : 'work'
     if (requestedMode && actualMode !== requestedMode) {
       const target = requestedMode
+      if (target === 'work' && hasPerformanceScreens()) {
+        const device = await win.myApi.liveOled()
+        if (device.state === 'ready' && device.code === 0 && device.menu > 0 && device.menu <= 10) {
+          if (performanceValues.value.length !== 3) await samplePerformance()
+          await updatePerformanceColor(device.menu)
+        }
+        if (requestedMode !== target) return
+      }
       const result = await win.myApi.petAction(1, target === 'pet' ? 1 : 0)
       if (result.state === 'ready' && result.status === 0 && hasPetPayload(result.payload)) {
         if (requestedMode === target) requestedMode = undefined
         applyPetReply(result)
         if (target === 'pet') await syncClock()
+        else refreshDeviceScreens()
       }
       return
     }
@@ -495,7 +505,7 @@ onMounted(async () => {
   buttonPoll = setInterval(refreshDeviceButtons, 45)
   liveScreens.tick()
   liveTimer = setInterval(() => {
-    if (appMode.value === 'work' && hasPerformanceScreens()) void samplePerformance()
+    if (hasPerformanceScreens()) void samplePerformance()
     if (workSyncTimer === undefined && pendingWorkLayers.value.length) void syncWorkConfig()
     else liveScreens.tick()
   }, 1500)
@@ -519,21 +529,18 @@ onMounted(async () => {
       return
     }
     try {
+      if (objData.screenPerformance) {
+        const { menu, enabled } = objData.screenPerformance as { menu: number; enabled: boolean }
+        const existing = configStore.menuConfig[menu]?.screenConfig[0]
+        const { baseData = '', buffData = [] } = existing ?? {}
+        saveWorkScreen(menu, 0, { baseData, buffData, content: enabled ? { mode: 'performance' } : undefined })
+        return
+      }
       if (objData.screenFrame) {
         const { menu, screen, frame } = objData.screenFrame as { menu: number; screen: number; frame: ScreenFrame }
-        if (menu === configStore.curMenu) {
-          configStore.screenData[screen] = frame
-          storageCurMenu()
-        } else {
-          const saved = configStore.menuConfig[menu]
-          const screenConfig = [0, 1, 2].map(index => index === screen ? frame :
-            saved.screenConfig[index] ?? { baseData: '', buffData: [] })
-          configStore.menuConfig[menu] = { ...saved, screenConfig }
-        }
-        closeStorage()
-        if (screen === 0 && frame.content?.mode === 'performance')
-          void samplePerformance().then(() => liveScreens.tick())
-        else liveScreens.tick()
+        const current = configStore.menuConfig[menu]?.screenConfig[screen]
+        saveWorkScreen(menu, screen, screen === 0 && current?.content?.mode === 'performance'
+          ? { ...frame, content: current.content } : frame)
         return
       }
       // 同步信息
@@ -660,8 +667,30 @@ const firmwareUpdating = ref(false)
 const hasPerformanceScreens = () => configStore.menuConfig.some(menu => menu.screenConfig[0]?.content?.mode === 'performance')
 const hasDynamicScreens = () => appMode.value === 'pet' || configStore.menuConfig.some(menu => menu.screenConfig.some((screen: ScreenFrame) =>
   screen?.content && screen.content.mode !== 'text'))
-const samplePerformance = async () => { performanceValues.value = await win.myApi.pcPerformance().catch(() => []) }
+let previewRequest = 0
+async function refreshPerformancePreview(menu: number) {
+  const request = ++previewRequest
+  const values = await win.myApi.pcPerformancePreview(menu + 1).catch(() => [])
+  if (request === previewRequest) performancePreview.value = { menu, values }
+}
+const samplePerformance = async () => {
+  performanceValues.value = await win.myApi.pcPerformance().catch(() => [])
+  await refreshPerformancePreview(configStore.curMenu)
+}
 let performanceMenu = 0
+async function updatePerformanceColor(deviceMenu: number) {
+  const menu = deviceMenu - 1
+  const enabled = configStore.menuConfig[menu]?.screenConfig[0]?.content?.mode === 'performance'
+  if (enabled && performanceValues.value.length !== 3) return
+  if (!enabled && !performanceMenu) return
+  const result = await win.myApi.livePerformance(enabled ? deviceMenu : 0,
+    enabled ? [...performanceValues.value] : undefined)
+  if (result === 'ready' || result === 'unsupported') performanceUnavailable.value = result === 'unsupported'
+  if (result === 'ready') {
+    performanceMenu = enabled ? deviceMenu : 0
+    if (configStore.curMenu === menu) await refreshPerformancePreview(menu)
+  }
+}
 const liveScreens = createLiveScreens(menu => appMode.value === 'work' || !petState.value.active
   ? configStore.menuConfig[menu]?.screenConfig
   : [{ baseData: '', buffData: [] }, ...[0, 1].map(index => ({ baseData: '', buffData: [], content: petContent(index) }))],
@@ -673,15 +702,7 @@ const liveScreens = createLiveScreens(menu => appMode.value === 'work' || !petSt
       petSession = undefined
     }
   },
-  async menu => {
-    const enabled = appMode.value === 'work' && configStore.menuConfig[menu]?.screenConfig[0]?.content?.mode === 'performance'
-    if (enabled && performanceValues.value.length !== 3) return
-    if (!enabled && !performanceMenu) return
-    const result = await win.myApi.livePerformance(enabled ? menu + 1 : 0,
-      enabled ? [...performanceValues.value] : undefined)
-    if (result === 'ready' || result === 'unsupported') performanceUnavailable.value = result === 'unsupported'
-    if (result === 'ready') performanceMenu = enabled ? menu + 1 : 0
-  }, () => appMode.value === 'pet' && petState.value.active)
+  updatePerformanceColor, () => appMode.value === 'pet' && petState.value.active)
 const updateFirmware = async () => {
   if (firmwareUpdating.value || progressShow.value) return
   firmwareUpdating.value = true
@@ -818,6 +839,31 @@ const storageCurMenu = () => {
   
 }
 
+function saveWorkScreen(menu: number, screen: number, frame: ScreenFrame) {
+  if (!Number.isInteger(menu) || menu < 0 || menu >= 10 ||
+    !Number.isInteger(screen) || screen < 0 || screen >= 3) return
+  if (menu === configStore.curMenu) {
+    configStore.screenData[screen] = frame
+    storageCurMenu()
+  } else {
+    const saved = configStore.menuConfig[menu]
+    const screenConfig = [0, 1, 2].map(index => index === screen ? frame :
+      saved.screenConfig[index] ?? { baseData: '', buffData: [] })
+    configStore.menuConfig[menu] = { ...saved, screenConfig }
+  }
+  closeStorage()
+  if (screen === 0 && frame.content?.mode === 'performance') void samplePerformance().then(() => liveScreens.tick())
+  else liveScreens.tick()
+}
+
+const showingPerformance = computed(() => configStore.screenData[0].content?.mode === 'performance')
+
+function openPerformancePage() {
+  storageCurMenu()
+  closeStorage()
+  createWindow(`/performance?menu=${configStore.curMenu}`, { width: 510, height: 404, minWidth: 460, minHeight: 390 })
+}
+
 // 显示屏幕编辑
 const openScreenPage = (curScreen: number) => {
   if (appMode.value === 'pet') return configurePetScreen(curScreen)
@@ -851,7 +897,7 @@ async function readDeviceScreens() {
 }
 
 function refreshDeviceScreens() {
-  if (!conState.value || appMode.value === 'pet' || progressShow.value || firmwareUpdating.value || screenReadTask) return
+  if (!conState.value || appMode.value === 'pet' || petState.value.active || progressShow.value || firmwareUpdating.value || screenReadTask) return
   screenReadTask = readDeviceScreens().finally(() => { screenReadTask = undefined })
 }
 
@@ -952,6 +998,11 @@ const showAppInfo = () => {
             <button type="button" :aria-pressed="appMode === 'work'" :disabled="progressShow || firmwareUpdating" @click="setAppMode('work')">工作模式</button>
             <button type="button" :aria-pressed="appMode === 'pet'" :disabled="progressShow || firmwareUpdating" @click="setAppMode('pet')">养宠模式</button>
           </div>
+          <span v-if="appMode === 'work' && pendingWorkLayers.length" class="work-sync-status" role="status">
+            {{ progressShow ? '正在同步' : workSyncFailed ? '同步中断，正在重试' : conState ? '等待同步' : '连接后自动同步' }}
+          </span>
+          <span v-else-if="appMode === 'work' && performanceUnavailable && showingPerformance"
+            class="work-sync-status" role="status">性能监测需升级固件</span>
         </div>
       </template>
     </WindowTitle>
@@ -964,24 +1015,26 @@ const showAppInfo = () => {
       </div>
       <div class="screen-panel">
         <button v-for="(label, index) in screenLabels" :key="label" class="screen-card" type="button"
-          :title="appMode === 'pet' ? (index ? `设置${label}宠物参数` : '打开宠物设置') : `编辑${label}内容`" @click="openScreenPage(index)">
+          :title="appMode === 'pet' ? (index ? `设置${label}宠物参数` : '打开宠物设置') : (!index && showingPerformance ? '打开电脑性能监测' : `编辑${label}内容`)"
+          @click="appMode === 'work' && !index && showingPerformance ? openPerformancePage() : openScreenPage(index)">
           <span class="screen-image">
             <PetDisplay v-if="appMode === 'pet' && index === 0" :state="petState" :connected="petLinked && petState.active" />
             <img v-else-if="appMode === 'pet' && index && petImages[index - 1]" :src="petImages[index - 1]" alt="" />
-            <PerformanceDisplay v-else-if="appMode === 'work' && index === 0 && configStore.screenData[0].content?.mode === 'performance'"
-              :values="performanceValues" />
+            <PerformanceDisplay v-else-if="appMode === 'work' && index === 0 && showingPerformance"
+              :values="performancePreview?.menu === configStore.curMenu ? performancePreview.values : performanceValues" />
             <img v-else-if="appMode === 'work' && screenPreviews[index]" :src="screenPreviews[index]" alt="" />
           </span>
-          <span>{{ appMode === 'pet' ? (index ? petContent(index - 1).rows.map(row => row.label).join(' · ') : '宠物设置') : label }}</span>
+          <span>{{ appMode === 'pet' ? (index ? petContent(index - 1).rows.map(row => row.label).join(' · ') : '宠物设置') : (index ? label : showingPerformance ? '彩屏 · 性能监测' : '彩屏 · 图片') }}</span>
         </button>
         <PetAiActivity @step-accepted="refreshAfterAiStep" v-if="appMode === 'pet'" :session="petLinked && petState.active ? petSession : undefined" />
         <div v-if="appMode === 'pet'" class="mode-status" role="status">
           {{ petNotice || interactionNotice || (petLinked && petState.active ? '键盘养宠模式已同步' : '本机宠物预览') }}
         </div>
         <div v-else class="layer-actions">
-          <span v-if="pendingWorkLayers.length" class="work-sync-status" role="status">
-            {{ progressShow ? '正在同步' : workSyncFailed ? '同步中断，正在重试' : conState ? '等待同步' : '连接后自动同步' }}
-          </span>
+          <div class="display-entry-points" role="group" aria-label="彩屏设置">
+            <button type="button" @click="openScreenPage(0)">编辑图片</button>
+            <button type="button" :class="{ selected: showingPerformance }" @click="openPerformancePage">性能监测</button>
+          </div>
           <div id="menu-box" role="group" aria-label="本机配置层">
             <button class="layer-arrow" type="button" title="上一层" aria-label="上一层"
               @click="menuChange(0)"></button>
@@ -1007,8 +1060,6 @@ const showAppInfo = () => {
         :class="{ 'device-active': isDeviceButtonActive(10) }"
         @click.stop="openConfigWindow(10)">旋钮 3</button>
     </div>
-    <p v-if="appMode === 'work' && performanceUnavailable && configStore.screenData[0].content?.mode === 'performance'"
-      class="firmware-hint" role="status">彩屏性能监测需要升级键盘固件。</p>
     <dialog ref="petDialog" class="pet-dialog" :class="{ 'param-dialog': petScreen > 0 }">
       <form method="dialog">
         <header>
@@ -1101,7 +1152,6 @@ const showAppInfo = () => {
 .home-toolbar .mode-switch button { padding: 5px 7px; border: 0; border-radius: 6px; font-size: 13px; white-space: nowrap; color: #263d46; background: transparent; cursor: pointer; }
 .home-toolbar .mode-switch button[aria-pressed="true"] { color: white; background: #263d46; }
 .mode-status { grid-column: 1 / -1; align-self: center; font-size: 12px; color: #405058; }
-.firmware-hint { position: absolute; bottom: 0; left: 22px; margin: 0; font-size: 12px; }
 .pet-dialog { box-sizing: border-box; width: min(640px, 96%); max-height: calc(100vh - 28px); overflow: auto; margin: auto; padding: 18px; color: #24323a; border: 1px solid #aab7bd; border-radius: 14px; background: #f7fafb; }
 .pet-dialog.param-dialog { width: min(330px, 94%); }
 .pet-tabs { display:flex; flex-wrap:wrap; gap:4px; margin:0 0 14px; padding-bottom:8px; border-bottom:1px solid #d3dfdd; }
@@ -1317,7 +1367,21 @@ const showAppInfo = () => {
   gap: 8px;
 }
 
-.work-sync-status { font-size: 12px; }
+.display-entry-points {
+  display: flex;
+  gap: 4px;
+}
+#home-content .display-entry-points button {
+  padding: 6px;
+  border-radius: 6px;
+  background: #e9efed;
+  color: #273d45;
+  font-size: 11px;
+  white-space: nowrap;
+}
+#home-content .display-entry-points button:hover { background: #f6f9f8; }
+#home-content .display-entry-points button.selected { background: #214c49; color: #f0fcf8; }
+.work-sync-status { color: #324a54; font-size: 11px; font-weight: 500; }
 
 #menu-box {
   display: flex;

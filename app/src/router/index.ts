@@ -19,6 +19,10 @@ const router = createRouter({
       component: () => import('../window/ScreenEditorPage.vue')
     },
     {
+      path: '/performance',
+      component: () => import('../window/PerformancePage.vue')
+    },
+    {
       path: '/pet',
       component: () => import('../window/PetPreviewPage.vue')
     },
