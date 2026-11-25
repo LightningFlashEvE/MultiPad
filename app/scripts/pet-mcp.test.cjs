@@ -34,7 +34,7 @@ function payload(generation = 4, fields = {}, foodIds = [], headPet = [0, 0]) {
   p.set([246,0,142,139,...headPet], endOfFoods)
   if (generation >= 7) p[p.length - 1] = generation
   for (const [i,v] of Object.entries(fields)) p[Number(i)] = v
-  return p.subarray(0, [0, 12, 19, endOfFoods, endOfFoods + 4, endOfFoods + 6, endOfFoods + 10, endOfFoods + 11, p.length, p.length][generation])
+  return p.subarray(0, [0, 12, 19, endOfFoods, endOfFoods + 4, endOfFoods + 6, endOfFoods + 10, endOfFoods + 11, p.length, p.length, p.length][generation])
 }
 function eventPage(events) {
   const p = Buffer.alloc(1 + events.length * 12)
@@ -51,7 +51,7 @@ test('serial protocol probes with reads, and transmits each supported owner gest
   const { default: ScreenReadback } = loadModule('../electron/controller/screenReadback.ts', {
     [pathToCatalog]: catalog, '../../src/utils/deviceScreenFormat': { DEVICE_SCREEN_SIZES: [] }
   })
-  for (const generation of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
+  for (const generation of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
     const writes = []
     const reader = new ScreenReadback(async request => {
       const requested = request.readUInt32LE(6), offset = request.readUInt32LE(11)
@@ -79,11 +79,14 @@ test('serial protocol probes with reads, and transmits each supported owner gest
         const reply = await reader.readPet({ command: 22, value: input })
         assert.equal(reply.state, generation >= 5 ? 'ready' : 'unsupported')
       }
-      assert.deepEqual(writes.filter(p=>!p.offset).map(p=>p.requested), [9,8,7,6,5,4,3,2].filter(g=>g>=generation))
+      assert.deepEqual(writes.filter(p=>!p.offset).map(p=>p.requested), [10,9,8,7,6,5,4,3,2].filter(g=>g>=generation))
       const mutations = writes.filter(p=>p.offset).map(p=>p.offset)
       assert.deepEqual(mutations, generation >= 5 ? [0,1,2,3,4].map(v=>22|(v<<8)) : [])
       for (const value of [16, 17])
         assert.equal((await reader.readPet({command:3,value})).state, generation >= 9 ? 'ready' : 'unsupported')
+      for (const cmd of [23, 24, 25, 26])
+        assert.equal((await reader.readPet({command:cmd, value:75})).state, generation === 10 ? 'ready' : 'unsupported')
+      if (generation === 10) assert.equal((await reader.readPet({command:23,value:101})).state, 'unavailable')
       if (generation === 5) assert.equal((await reader.readPet({command:22,value:5})).state, 'unsupported')
     } finally {
       reader.close()
@@ -199,6 +202,8 @@ test('model sees its personality, the complete available event window and care s
   })
   t.after(()=>ai.stopPetAi())
   const cfg={apiUrl:'http://localhost:19377/v1',model:'fixture',apiKey:'secret-mcp-regression-key',personality:'胆小，喜欢在窝边观察主人。',enabled:false}
+  const activity = []
+  ai.startPetAi(value => activity.push(value))
   ai.savePetAi(cfg)
   nextTool='pet_feed'
   assert.equal((await ai.testPetAi('connection')).status.phase,'idle')
@@ -246,7 +251,12 @@ test('model sees its personality, the complete available event window and care s
     assert(!snapshot.automaticBehaviors.includes(behavior))
   assert(snapshot.keyBindings && snapshot.availableNow.moveDecorations)
   assert.deepEqual(f.board.requests.filter(r=>r.command>0).map(r=>r.value),[10,7])
+  assert(activity.some(a=>a.message.includes('1/2') && a.message.includes('眨眼') && a.session===session))
+  assert(activity.some(a=>a.message.includes('2/2') && a.message.includes('跳跃')))
+  assert.match(ai.getPetAiActivity().message,/最近决定.*跳跃/)
+  assert(!JSON.stringify(activity).includes(cfg.apiKey))
   f.board.onWrite=()=>{f.board.payload=payload(6,{},[],[120,1,4])}
   await auto()
   assert.deepEqual(f.board.requests.filter(r=>r.command>0).map(r=>r.value),[10,7,10])
+  assert.match(ai.getPetAiActivity().message,/已接收眨眼.*已跳过跳跃/)
 })

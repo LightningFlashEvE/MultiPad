@@ -12,8 +12,8 @@ import { setItem, getItem, delItem } from "../controller/storage"
 import { fileReadListener } from "../controller/fileRead"
 import { fetchScreenValue } from '../controller/screenApi'
 import { startPetMcp } from '../controller/petMcp'
-import { isHeadPetInput, isHutchPosition } from '../../src/utils/petCatalog'
-import { getPetAi, savePetAi, startPetAi, stopPetAi, testPetAi } from '../controller/petAi'
+import { isStatCommand, isStatValue, isHeadPetInput, isHutchPosition } from '../../src/utils/petCatalog'
+import { getPetAiActivity, getPetAi, savePetAi, startPetAi, stopPetAi, testPetAi } from '../controller/petAi'
 import type { IpcMainInvokeEvent, WebContents } from 'electron'
 
 // A detached Windows launcher can close its logging pipes while MultiPad is open.
@@ -99,9 +99,10 @@ ipcMain.handle('device-buttons', () => SerialConnect.readDeviceButtons())
 ipcMain.handle('pc-performance', () => readPcPerformance())
 ipcMain.handle('live-performance', (_event, menu, metrics) => SerialConnect.performance(menu, metrics))
 ipcMain.handle('pet-action', async (event, command, value) => {
-  if (!Number.isInteger(command) || command < 0 || (command > 15 && command !== 22) ||
+  if (!Number.isInteger(command) || command < 0 || (command > 15 && command !== 22 && !isStatCommand(command)) ||
       !Number.isInteger(value) || value < 0 || value > (command === 14 ? 0x1ffff : command === 10 ? 1439 : 255) ||
       (command === 14 && !isHutchPosition(value & 511, value >> 9)) || (command === 15 && value !== 0) ||
+      (isStatCommand(command) && !isStatValue(value)) ||
       (command === 22 && !isHeadPetInput(value)) ||
       (command === 8 && ((value >> 4) > 7 || (value & 15) > 10)) ||
       (command === 9 && value > 1) || (command === 12 && value > 7) ||
@@ -117,6 +118,10 @@ function fromHome(event: IpcMainInvokeEvent) {
     throw Error('请在 MultiPad 主窗口使用宠物设置')
   }
 }
+ipcMain.handle('pet-ai-activity-get', (event: IpcMainInvokeEvent) => {
+  fromHome(event)
+  return getPetAiActivity()
+})
 ipcMain.handle('pet-ai-get', (event: IpcMainInvokeEvent) => {
   fromHome(event)
   return getPetAi()
@@ -212,7 +217,9 @@ app.whenReady().then(() => {
   } catch (error) {
     console.error('MultiPad MCP startup failed', error)
   }
-  startPetAi()
+  startPetAi(activity => {
+    if (mainContents && !mainContents.isDestroyed()) mainContents.send('pet-ai-activity', activity)
+  })
   app.once('before-quit', stopPetAi)
   // 创建窗口
   createMainWindow()

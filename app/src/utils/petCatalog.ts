@@ -6,6 +6,20 @@ export const petActionLabels: Record<typeof petActions[number], string> = {
   run: '奔跑', jump: '跳跃', daydream: '做白日梦', flee: '受惊逃跑', blink: '眨眼',
   trip_angry: '绊脚生气', gaze_owner: '面向主人发呆', stand_watch: '站起来眺望', inspect_table: '趴桌边看看', binky: '兔子舞', groom_fur: '舔毛', groom_ear: '抱耳梳理'
 }
+export const petStats = [
+  { id: 'satiety', command: 23, label: '饱食度' },
+  { id: 'sleepiness', command: 24, label: '困意' },
+  { id: 'mood', command: 25, label: '心情值' },
+  { id: 'affection', command: 26, label: '好感度' }
+] as const
+
+export function isStatCommand(command: number) {
+  return Number.isInteger(command) && command >= 23 && command <= 26
+}
+export function isStatValue(value: number) {
+  return Number.isInteger(value) && value >= 0 && value <= 100
+}
+
 export const petScenes = ['garden', 'nursery'] as const
 export type PetScene = typeof petScenes[number]
 export const petSceneLabels: Record<typeof petScenes[number], string> = { garden: '花园', nursery: '宝宝房' }
@@ -68,7 +82,7 @@ export function petStateGeneration(p: Uint8Array) {
   if (p.length < 33 || p[32] > 8) return 0
   const endOfFoods = 33 + 6 * p[32]
   const roomEnd = endOfFoods + 10 + 6 * p[endOfFoods + 9]
-  const danceSupported = p.length === roomEnd + 3 && (p[roomEnd + 2] === 8 || p[roomEnd + 2] === 9)
+  const danceSupported = p.length === roomEnd + 3 && (p[roomEnd + 2] === 8 || p[roomEnd + 2] === 9 || p[roomEnd + 2] === 10)
   const tableSupported = danceSupported || p.length === roomEnd + 1 && p[roomEnd] === 7
   const layoutEnd = tableSupported ? roomEnd : p.length
   const tailLength = layoutEnd - endOfFoods

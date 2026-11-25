@@ -190,6 +190,11 @@ static void sector_rotation_survives_unplug(void) {
 int main(void) {
     actual_changes_survive_unplug();
     long_term_affection();
+    new_flash();
+    for (unsigned i = 0; i < 4; ++i) assert(pet_care_set_stat(i, i == 3 ? 100 : i));
+    assert(!pet_care_set_stat(4, 20) && !pet_care_set_stat(0, 101));
+    pet_care_init(W25Q128);
+    stats(0, 1, 2, 100);
     failed_writes_recover();
     sector_rotation_survives_unplug();
     puts("Pet care power-loss tests passed");

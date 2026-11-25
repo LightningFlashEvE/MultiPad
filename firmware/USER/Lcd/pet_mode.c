@@ -503,13 +503,17 @@ void pet_mode_adjust_scene(int8_t direction_step, bool change_season) {
 }
 
 uint8_t pet_mode_control(uint8_t opcode, uint8_t value) {
-    enum { MODE = 1, FEED, PLAY, HOUR, SEASON, SCENE, DEPLOY_TOY, BIND_KEY, FOLLOW_CLOCK, PLAY_TOY = 11, TRIGGER_KEY, PLACE_IF_EMPTY, VISIT_HUTCH = 15, CLOCK_BASE = 16, PAT_HEAD = 22 };
+    enum { MODE = 1, FEED, PLAY, HOUR, SEASON, SCENE, DEPLOY_TOY, BIND_KEY, FOLLOW_CLOCK, PLAY_TOY = 11, TRIGGER_KEY, PLACE_IF_EMPTY, VISIT_HUTCH = 15, CLOCK_BASE = 16, PAT_HEAD = 22, SET_SATIETY, SET_SLEEPINESS, SET_MOOD, SET_AFFECTION };
     const uint32_t now = HAL_GetTick();
     if (opcode == MODE && value <= 1) {
         set_mode(value != 0, SOURCE_MCP, now);
         return OK;
     }
     if (!active) return INACTIVE;
+    if (opcode >= SET_SATIETY && opcode <= SET_AFFECTION) {
+        if (value > 100) return INVALID;
+        return pet_care_set_stat(opcode - SET_SATIETY, value) ? OK : BUSY;
+    }
     if (opcode >= CLOCK_BASE && opcode <= CLOCK_BASE + 5) {
         const uint16_t minutes = ((opcode - CLOCK_BASE) << 8) | value;
         if (!pet_care_get()->follow_time || minutes >= 1440) return INVALID;

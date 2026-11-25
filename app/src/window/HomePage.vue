@@ -16,7 +16,9 @@ import type { DeviceButtons } from '../utils/deviceButtonState'
 import { createLiveScreens } from '../components/screenPage/liveScreens'
 import { renderScreenContent, type ScreenFrame } from '../components/screenPage/screenContent'
 import PetDisplay from '../components/screenPage/PetDisplay.vue'
+import PetStatSettings from '../components/screenPage/PetStatSettings.vue'
 import PetAiSettings from '../components/screenPage/PetAiSettings.vue'
+import PetAiActivity from '../components/homePage/PetAiActivity.vue'
 import PetHeadKnob from '../components/homePage/PetHeadKnob.vue'
 import PetItemsPanel from '../components/screenPage/PetItemsPanel.vue'
 import PetDecorationPanel from '../components/screenPage/PetDecorationPanel.vue'
@@ -63,7 +65,7 @@ const performanceValues = ref<number[]>([])
 const performanceUnavailable = ref(false)
 const petDialog = ref<HTMLDialogElement>()
 const petScreen = ref(0)
-const petTab = ref<'scene' | 'items' | 'decor' | 'ai'>('scene')
+const petTab = ref<'scene' | 'items' | 'decor' | 'ai' | 'stats'>('scene')
 const selectedItem = ref(1)
 const isSleeping = computed(() => bedtime.value || (petLinked.value && generation.value < 3 && petState.value.action === 2))
 const clockText = computed(() => [petState.value.hour, petState.value.minute ?? 0].map(n => String(n).padStart(2, '0')).join(':'))
@@ -271,14 +273,23 @@ async function interactWithPet(command: number, value: number) {
   if (interacting.value || progressShow.value || firmwareUpdating.value) return
   interacting.value = true
   interactionNotice.value = ''
+  const stat = petStats.find(entry => entry.command === command)
+  const session = petSession
+  let applied = false
   await petTask
+  if (stat && session !== petSession) {
+    interacting.value = false
+    interactionNotice.value = '键盘连接已变化，请重新确认数值。'
+    return false
+  }
   if (!petLinked.value) {
     if (conState.value) interactionNotice.value = petNotice.value || '等待读取键盘的宠物状态。'
     else if (command === 8) interactionNotice.value = '连接键盘后即可绑定道具。'
     else if (command === 6) previewWorld.changeScene(value)
     else {
       const previewError = previewWorld.use(command, value)
-      interactionNotice.value = previewError || '本机宠物预览'
+      applied = !previewError
+      interactionNotice.value = previewError || (stat ? '已更新本机预览。' : '本机宠物预览')
       if (!previewError && command === 14 && petState.value.hutchPosition) {
         offlineHutch = { ...petState.value.hutchPosition }
         win.myApi.storageMenu('petHutchPreview', JSON.stringify(offlineHutch))
@@ -286,7 +297,7 @@ async function interactWithPet(command: number, value: number) {
       }
     }
     interacting.value = false
-    return
+    return applied
   }
   petTask = (async () => {
     if (command === 7 && value === 1 && petState.value.scene !== 1) {
@@ -300,6 +311,8 @@ async function interactWithPet(command: number, value: number) {
     const result = await win.myApi.petAction(command, value)
     if (result.state === 'ready' && result.status === 0 && hasPetPayload(result.payload)) {
       applyPetReply(result)
+      applied = !stat || petState.value.stats?.[stat.id] === value
+      if (stat) interactionNotice.value = applied ? '键盘已保存' + stat.label + '。' : '键盘尚未确认该数值。'
       if (command === 14) {
         const position = petState.value.hutchPosition
         interactionNotice.value = position && (position.x | (position.y << 9)) === value
@@ -312,7 +325,8 @@ async function interactWithPet(command: number, value: number) {
           ? 'K' + (key + 1) + (item ? ' 已绑定' + petItems.find(entry => entry.itemId === item)?.label : ' 已解除道具绑定')
           : '键盘尚未确认此绑定。'
       }
-    } else if (command === 14) interactionNotice.value = '兔窝位置未保存，请检查键盘连接或稍后再试。'
+    } else if (stat) interactionNotice.value = '键盘未确认保存，请检查连接后重试。'
+    else if (command === 14) interactionNotice.value = '兔窝位置未保存，请检查键盘连接或稍后再试。'
     else interactionNotice.value = result.status === 4 || result.state === 'busy'
       ? '兔子正在忙，请稍后再试。' : '键盘未确认这次操作，请检查连接和当前场景。'
   })().catch(() => { interactionNotice.value = '未能同步宠物操作。' }).finally(() => {
@@ -320,6 +334,7 @@ async function interactWithPet(command: number, value: number) {
     interacting.value = false
   })
   await petTask
+  return applied
 }
 
 function petContent(index: number) {
@@ -904,6 +919,7 @@ const showAppInfo = () => {
           </span>
           <span>{{ appMode === 'pet' ? (index ? petContent(index - 1).rows.map(row => row.label).join(' · ') : '宠物设置') : label }}</span>
         </button>
+        <PetAiActivity v-if="appMode === 'pet'" :session="petLinked && petState.active ? petSession : undefined" />
         <div v-if="appMode === 'pet'" class="mode-status" role="status">
           {{ petNotice || interactionNotice || (petLinked && petState.active ? '键盘养宠模式已同步' : '本机宠物预览') }}
         </div>
@@ -945,10 +961,14 @@ const showAppInfo = () => {
         </header>
         <template v-if="petScreen === 0">
           <nav class="pet-tabs" aria-label="宠物设置">
-            <button v-for="tab in ([['scene','场景与作息'],['items','道具与按键'],['decor','装饰布置'],['ai','AI 控制']] as const)" :key="tab[0]"
+            <button v-for="tab in ([['scene','场景与作息'],['stats','属性数值'],['items','道具与按键'],['decor','装饰布置'],['ai','AI 控制']] as const)" :key="tab[0]"
               type="button" :aria-pressed="petTab === tab[0]" @click="petTab = tab[0]; interactionNotice = ''">{{ tab[1] }}</button>
           </nav>
           <PetAiSettings v-if="petTab === 'ai'" :device-ready="petLinked && petState.active" />
+          <PetStatSettings v-else-if="petTab === 'stats'" :key="petLinked ? petSession : 'preview'"
+            :stats="petState.stats" :connected="petLinked" :supported="!petLinked || generation >= 10"
+            :busy="interacting || progressShow || firmwareUpdating || (conState && !petLinked)"
+            :save="interactWithPet" />
           <PetDecorationPanel v-else-if="petTab === 'decor'" :state="petState" :connected="petLinked" :generation="generation"
             :busy="interacting || (conState && !petLinked)" @enter="interactWithPet(6, 1)"
             @move="p => interactWithPet(14, p.x | (p.y << 9))" @rest="interactWithPet(15, 0)" @inspect="interactWithPet(3, 14)" />
@@ -1029,7 +1049,7 @@ const showAppInfo = () => {
 .firmware-hint { position: absolute; bottom: 0; left: 22px; margin: 0; font-size: 12px; }
 .pet-dialog { box-sizing: border-box; width: min(640px, 96%); max-height: calc(100vh - 28px); overflow: auto; margin: auto; padding: 18px; color: #24323a; border: 1px solid #aab7bd; border-radius: 14px; background: #f7fafb; }
 .pet-dialog.param-dialog { width: min(330px, 94%); }
-.pet-tabs { display:flex; gap:4px; margin:0 0 14px; padding-bottom:8px; border-bottom:1px solid #d3dfdd; }
+.pet-tabs { display:flex; flex-wrap:wrap; gap:4px; margin:0 0 14px; padding-bottom:8px; border-bottom:1px solid #d3dfdd; }
 .pet-tabs button[aria-pressed=true] { color:#215447; background:#deede7; border-color:#73998e; }
 .scene-settings { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(0,1fr); gap:16px; }
 .scene-controls,.param-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; align-content:start; }

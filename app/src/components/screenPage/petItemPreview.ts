@@ -1,5 +1,5 @@
 import type { PetState } from './petDisplay'
-import { binkyChance, binkyDuration, binkyMotion, defaultHutchPosition, isHutchPosition } from '../../utils/petCatalog'
+import { isStatValue, petStats, binkyChance, binkyDuration, binkyMotion, defaultHutchPosition, isHutchPosition } from '../../utils/petCatalog'
 
 export const previewCare = { satiety: 65, sleepiness: 25, mood: 70, affection: 35 }
 type Food = { id: number; x: number; droppedAt: number }
@@ -246,7 +246,13 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     const pet = state()
     const hungry = pet.stats!.satiety < 90
     const room = rooms[pet.scene]
-    if (command === 22) {
+    const stat = petStats.find(entry => entry.command === command)
+    if (stat) {
+      if (!isStatValue(value)) return '请输入 0 至 100 的整数。'
+      const before = bondDirection(pet.stats!)
+      pet.stats![stat.id] = value
+      if (before !== bondDirection(pet.stats!)) bondMs = 0
+    } else if (command === 22) {
       if (value < 0 || value > 23 || value === 7 || !Number.isInteger(value)) return '无法识别摸头手势。'
       if (value === 5 || value === 6) {
         if (time < patUntil && pet.headPatKind) patUntil = time + (value === 5 ? 200 : 1200)
