@@ -842,14 +842,15 @@ static uint16_t blend(uint16_t from, uint16_t to, uint8_t part, uint8_t total) {
     return red | green | blue;
 }
 
+static uint8_t ambient_darkness;
+
 static bool nursery_night(void) { return hour < 6 || hour >= 19; }
 
 static uint16_t nursery_tint(uint16_t color, bool lamp_lit) {
     static const uint16_t seasons[] = {0, HEX565(0xffdb82), HEX565(0xdd975e), HEX565(0xb6d7f1)};
     if (season) color = blend(color, seasons[season], 1, 8);
     if (lamp_lit) return blend(color, HEX565(0xffdb9a), 1, 8);
-    const uint8_t shade = hour < 6 || hour >= 20 ? 2 : hour == 6 || hour == 19 ? 1 : 0;
-    return shade ? blend(color, HEX565(0x3f486a), shade, 4) : color;
+    return ambient_darkness ? blend(color, HEX565(0x3f486a), ambient_darkness, 100) : color;
 }
 
 static uint16_t nursery_light(uint16_t color) { return nursery_tint(color, frame.lamp_lit); }
@@ -858,6 +859,8 @@ static int window_cx, window_cy;
 static bool window_night;
 
 static void update_palette(void) {
+    ambient_darkness = (scene_darkness_by_hour[hour] * (60 - minute) +
+                        scene_darkness_by_hour[(hour + 1) % 24] * minute) / 60;
     if (pet_care_get()->scene == PET_NURSERY) {
         for (unsigned i = 0; i < sizeof(pet_palette) / sizeof(pet_palette[0]); i++)
             nursery_palette[i] = nursery_light(pet_palette[i]);
@@ -875,18 +878,18 @@ static void update_palette(void) {
     }
     const uint8_t start = hour / 3;
     const uint8_t end = (start + 1) % 8;
-    const uint8_t night = hour < 6 ? 6 - hour : hour > 18 ? hour - 18 : 0;
+    const uint8_t sky_progress = (hour % 3) * 60 + minute;
     /* The original garden stores its base sky color before the other bands. */
     static const uint8_t sky_entries[] = {2, 3, 1, 4};
     for (uint8_t index = 0; index < 4; index++) {
         scene_palette[sky_entries[index]] = blend(sky_at_hour[start][index],
-                                                  sky_at_hour[end][index], hour % 3, 3);
+                                                  sky_at_hour[end][index], sky_progress, 180);
     }
     scene_palette[6] = blend(scene_palette[3], HEX565(0xffeade), 3, 8);
     scene_palette[7] = blend(scene_palette[6], HEX565(0xfffbf1), 2, 8);
     for (uint8_t index = 8; index < 24; index++) {
         scene_palette[index] = blend(garden_at_season[season][index - 8],
-                                    HEX565(0x262446), night, 10);
+                                    HEX565(0x262446), ambient_darkness, 100);
     }
 }
 

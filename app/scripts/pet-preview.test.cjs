@@ -13,6 +13,16 @@ function compile(source) {
 const catalog = {}
 vm.runInNewContext(compile('../src/utils/petCatalog.ts'), { exports: catalog })
 const outputText = compile('../src/components/screenPage/petItemPreview.ts')
+const scene = {}
+vm.runInNewContext(compile('../src/components/screenPage/petScene.ts'), { exports: scene })
+
+test('ambient light changes within the hour and through midnight', () => {
+  assert.equal(scene.sceneDarkness(12, 0), 0)
+  assert(scene.sceneDarkness(6, 30) < scene.sceneDarkness(6, 0))
+  assert(scene.sceneDarkness(18, 30) > scene.sceneDarkness(18, 0))
+  assert(scene.sceneDarkness(18, 30) < scene.sceneDarkness(22, 0))
+  assert.equal(scene.sceneDarkness(23, 59), scene.sceneDarkness(0, 0))
+})
 
 function preview(satiety = 65) {
   let now = 0

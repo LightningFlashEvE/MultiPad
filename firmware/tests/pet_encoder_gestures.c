@@ -168,6 +168,32 @@ static void table_and_food_positions(void) {
     }
 }
 
+static void ambient_light_uses_manual_time_and_synced_minutes(void) {
+    assert(pet_mode_control(6, 1) == 0);
+    assert(pet_mode_control(4, 17) == 0);
+    advance(150);
+    const uint16_t daylight_wall = lcd[45][10], daylight_window = lcd[28][124];
+
+    assert(pet_mode_control(9, 1) == 0);
+    const uint16_t dusk = 17 * 60 + 30;
+    assert(pet_mode_control(16 + (dusk >> 8), dusk & 255) == 0);
+    advance(150);
+    const uint16_t dusk_wall = lcd[45][10];
+    assert(pet_mode_hour() == 17 && pet_mode_minute() == 30);
+    assert(dusk_wall < daylight_wall && lcd[28][124] != daylight_window);
+
+    assert(pet_mode_control(9, 0) == 0);
+    assert(pet_mode_control(4, 23) == 0);
+    advance(150);
+    assert(lcd[45][10] < dusk_wall);
+    assert(pet_mode_control(6, 0) == 0);
+    advance(150);
+    const uint16_t night_garden = lcd[150][10];
+    assert(pet_mode_control(4, 12) == 0);
+    advance(150);
+    assert(lcd[150][10] > night_garden);
+}
+
 static void pendant_lamp_brightens_only_the_room_at_night(void) {
     assert(pet_mode_control(6, 1) == 0);
     assert(pet_mode_control(4, 20) == 0);
@@ -222,6 +248,8 @@ int main(void) {
     table_and_food_positions();
     dance_and_window();
     pendant_lamp_brightens_only_the_room_at_night();
+    ambient_light_uses_manual_time_and_synced_minutes();
+    assert(pet_mode_control(6, 1) == 0);
     const PetAction grooming[] = {PET_GROOM_FUR, PET_GROOM_EAR};
     for (unsigned i = 0; i < 2; ++i) {
         int x = pet_mode_x(), affection = pet_care_get()->affection;
