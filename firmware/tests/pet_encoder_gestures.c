@@ -242,7 +242,7 @@ static void dance_and_window(void) {
     assert(pet_mode_control(4, 10) == 0);
     advance(150);
     const uint16_t sky = lcd[28][124], frame_colour = lcd[28][137];
-    assert(pet_mode_control(4, 18) == 0);
+    assert(pet_mode_control(4, 15) == 0);
     advance(150);
     assert(sky != lcd[28][124] && frame_colour == lcd[28][137]);
 }
