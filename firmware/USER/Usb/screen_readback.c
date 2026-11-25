@@ -285,7 +285,7 @@ void screen_readback_poll(void) {
                 if (timed_action) status = pet_mode_play_timed(offset >> 8);
                 else if (move_hutch) status = pet_mode_move_hutch((offset >> 8) & 511, offset >> 17);
                 else if (move_furniture) status = pet_mode_move_furniture(command - 29, (offset >> 8) & 511, offset >> 17);
-                else if (command >= 29 && command <= 31 && requested_generation != 13) status = STATUS_INVALID;
+                else if (command >= 29 && command <= 32 && requested_generation != 13) status = STATUS_INVALID;
                 else if (command == 28 && requested_generation < 12) status = STATUS_INVALID;
                 else if (command >= 23 && command <= 26 && (requested_generation < 10 || requested_generation > 13)) status = STATUS_INVALID;
                 else if (!decor_supported && (command == 14 || command == 15)) status = STATUS_INVALID;
@@ -325,6 +325,8 @@ void screen_readback_poll(void) {
                     memcpy(pixels + 19, care->bindings, PET_KEY_COUNT);
                     pixels[27] = (care->follow_time ? 1u : 0u) | (pet_mode_is_bedtime() ? 2u : 0u) |
                                  (requested_generation >= 12 && care->pendant_lamp ? 4u : 0u);
+                    if (requested_generation == 13)
+                        pixels[27] |= 8u | (pet_mode_lamp_is_lit() ? 16u : 0u);
                     pixels[28] = pet_mode_minute();
                     pixels[29] = care->placed[PET_GARDEN];
                     pixels[30] = care->placed[PET_NURSERY];

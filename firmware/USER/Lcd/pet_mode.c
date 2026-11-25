@@ -66,6 +66,7 @@ static PetFrame frame;
 static uint8_t pixels[LCD_WIDTH * SLICE_ROWS * 2];
 static uint16_t scene_palette[24];
 static uint8_t hour = 8, minute, season;
+static bool pendant_lit;
 static uint32_t clock_anchor;
 static uint16_t nursery_palette[sizeof(pet_palette) / sizeof(pet_palette[0])];
 static bool redraw_scene;
@@ -508,10 +509,31 @@ static void set_scene_value(uint8_t value, bool change_season, uint8_t source) {
     redraw_scene = true;
 }
 
+static bool nursery_night(void) { return hour < 6 || hour >= 19; }
+
+static void set_lamp_light(bool lit) {
+    if (pendant_lit == lit) return;
+    pendant_lit = lit;
+    redraw_scene = true;
+}
+
+bool pet_mode_lamp_is_lit(void) {
+    return pet_care_get()->pendant_lamp && pendant_lit;
+}
+
+bool pet_mode_toggle_lamp(void) {
+    if (!active || !pet_care_get()->pendant_lamp) return false;
+    set_lamp_light(!pendant_lit);
+    last_owner_input = HAL_GetTick();
+    return true;
+}
+
 static void set_time(uint16_t minutes, uint8_t source) {
+    const bool was_night = nursery_night();
     if (minute != minutes % 60) redraw_scene = true;
     minute = minutes % 60;
     set_scene_value(minutes / 60, false, source);
+    if (was_night != nursery_night()) set_lamp_light(nursery_night());
 }
 
 void pet_mode_cycle_background(int8_t step) {
@@ -533,7 +555,7 @@ void pet_mode_adjust_scene(int8_t direction_step, bool change_season) {
 
 uint8_t pet_mode_control(uint8_t opcode, uint8_t value) {
     if (opcode == 31) return active && pet_care_buy_snacks(value) ? OK : INVALID;
-    enum { MODE = 1, FEED, PLAY, HOUR, SEASON, SCENE, DEPLOY_TOY, BIND_KEY, FOLLOW_CLOCK, PLAY_TOY = 11, TRIGGER_KEY, PLACE_IF_EMPTY, VISIT_HUTCH = 15, CLOCK_BASE = 16, PAT_HEAD = 22, SET_SATIETY, SET_ENERGY, SET_MOOD, SET_AFFECTION, SET_PENDANT_LAMP = 28 };
+    enum { MODE = 1, FEED, PLAY, HOUR, SEASON, SCENE, DEPLOY_TOY, BIND_KEY, FOLLOW_CLOCK, PLAY_TOY = 11, TRIGGER_KEY, PLACE_IF_EMPTY, VISIT_HUTCH = 15, CLOCK_BASE = 16, PAT_HEAD = 22, SET_SATIETY, SET_ENERGY, SET_MOOD, SET_AFFECTION, SET_PENDANT_LAMP = 28, TOGGLE_PENDANT_LAMP = 32 };
     const uint32_t now = HAL_GetTick();
     if (opcode == MODE && value <= 1) {
         set_mode(value != 0, SOURCE_MCP, now);
@@ -556,9 +578,12 @@ uint8_t pet_mode_control(uint8_t opcode, uint8_t value) {
             if (value > 1) return INVALID;
             if (pet_care_get()->pendant_lamp != (bool)value) {
                 pet_care_set_pendant_lamp(value != 0);
+                set_lamp_light(value && nursery_night());
                 redraw_scene = true;
             }
             return OK;
+        case TOGGLE_PENDANT_LAMP:
+            return !value && pet_mode_toggle_lamp() ? OK : INVALID;
         case PAT_HEAD:
             if (value == 5 || value == 6) {
                 if (!hand_on_encoder && head_pat_remaining(now) && head_pat_kind)
@@ -858,8 +883,6 @@ static uint16_t blend(uint16_t from, uint16_t to, uint8_t part, uint8_t total) {
 
 static uint8_t ambient_darkness;
 
-static bool nursery_night(void) { return hour < 6 || hour >= 19; }
-
 static uint16_t nursery_tint(uint16_t color, bool lamp_lit) {
     static const uint16_t seasons[] = {0, HEX565(0xffdb82), HEX565(0xdd975e), HEX565(0xb6d7f1)};
     if (season) color = blend(color, seasons[season], 1, 8);
@@ -994,7 +1017,7 @@ static void begin_frame(uint32_t now) {
         .action = action, .elapsed = elapsed, .hour = hour, .minute = minute, .season = season,
         .scene = scene, .visible_toy = pet_care_get()->placed[scene], .using_toy = using,
         .drop = pet_mode_toy_drop(), .bowl = action == PET_EAT && !fruit && !active_toy,
-        .lamp_installed = lamp, .lamp_lit = lamp && nursery_night()
+        .lamp_installed = lamp, .lamp_lit = lamp && pet_mode_lamp_is_lit()
     };
     uint16_t remaining = head_pat_remaining(now);
     if (remaining) {
@@ -1355,7 +1378,10 @@ void pet_mode_poll(void) {
     if (pet_care_get()->follow_time && now - clock_anchor >= 60000u) {
         const uint32_t elapsed_minutes = (now - clock_anchor) / 60000u;
         clock_anchor += elapsed_minutes * 60000u;
-        set_time((hour * 60u + minute + elapsed_minutes) % 1440u, SOURCE_AUTOMATIC);
+        const uint16_t current_minute = hour * 60u + minute;
+        const uint16_t next_boundary = hour < 6 ? 360 : hour < 19 ? 1140 : 1800;
+        set_time((current_minute + elapsed_minutes) % 1440u, SOURCE_AUTOMATIC);
+        if (elapsed_minutes >= (uint32_t)(next_boundary - current_minute)) set_lamp_light(nursery_night());
     }
     if (head_pat_active && !head_pat_remaining(now)) head_pat_active = false;
     /* A pet-origin hold stays undecided until release so a late turn still strokes the rabbit. */

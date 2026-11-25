@@ -104,6 +104,9 @@ test('serial protocol probes with reads, and transmits each supported owner gest
         assert.equal((await reader.readPet({command:31,value:1})).state, 'ready')
         assert.equal((await reader.readPet({command:31,value:9})).state, 'unavailable')
         assert.equal(catalog.readPetWarehouse(payload(13), 13).warehouse.coins, 100)
+        assert.equal((await reader.readPet({command:32,value:0})).state, 'ready')
+        assert.equal(writes.at(-1).offset, 32)
+        assert.equal((await reader.readPet({command:32,value:1})).state, 'unavailable')
       }
       if (generation === 5) assert.equal((await reader.readPet({command:22,value:5})).state, 'unsupported')
     } finally {
@@ -111,6 +114,10 @@ test('serial protocol probes with reads, and transmits each supported owner gest
     }
   }
   for (const invalid of [[121,0],[1,3],[0,2]]) assert.equal(catalog.petStateGeneration(payload(5,{},[1],invalid)),0)
+  assert.equal(catalog.petLampState(4, 12).lit, false)
+  assert.equal(catalog.petLampState(4, 23).lit, true)
+  assert.equal(catalog.petLampState(4 | 8 | 16, 12).lit, true)
+  assert.equal(catalog.petLampState(4 | 8, 23).lit, false)
 })
 
 function fixture(t) {

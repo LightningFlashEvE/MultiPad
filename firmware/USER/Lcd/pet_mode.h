@@ -54,6 +54,8 @@ bool pet_mode_encoder_rotated(bool clockwise, bool pressed_detent);
 bool pet_mode_key_down(uint8_t key);
 void pet_mode_cycle_background(int8_t direction);
 void pet_mode_adjust_scene(int8_t direction, bool change_season);
+bool pet_mode_toggle_lamp(void);
+bool pet_mode_lamp_is_lit(void);
 void pet_mode_poll(void);
 
 /* USB diagnostics report the action, position and completed LCD frame count. */

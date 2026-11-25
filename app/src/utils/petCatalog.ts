@@ -10,8 +10,11 @@ export const petRecoveredEnergy = 70
 export const timedPetActions = ['sleep', 'daydream', 'gaze_owner', 'groom_fur', 'groom_ear'] as const
 export const petTimedActionCommand = 27
 export const petLampCommand = 28
+export const petToggleLampCommand = 32
 export const petLampGeneration = 12
 export const petLampInstalledFlag = 4
+const petLampManualFlag = 8
+const petLampLitFlag = 16
 export const petWarehouseGeneration = 13
 export const petWarehouseBytes = 17
 export const petBuySnackCommand = 31
@@ -22,6 +25,11 @@ export const petMaxCoins = 9999
 export const petOwnedCarrot = 1
 export const petStarterItems = 15
 export const petLampIsLit = (hour: number) => hour < 6 || hour >= 19
+export function petLampState(flags: number, hour: number) {
+  const installed = Boolean(flags & petLampInstalledFlag)
+  const manual = Boolean(flags & petLampManualFlag)
+  return { installed, manual, lit: installed && (manual ? Boolean(flags & petLampLitFlag) : petLampIsLit(hour)) }
+}
 export const petMaxDurationSeconds = 300
 
 export const petActions = ['idle', 'walk', 'sleep', 'eat', 'fall', 'fetch', 'run', 'jump', 'daydream', 'flee', 'blink', 'trip_angry', 'gaze_owner', 'stand_watch', 'inspect_table', 'binky', 'groom_fur', 'groom_ear'] as const

@@ -1,6 +1,6 @@
 import type { PetState } from './petDisplay'
 import { isStatValue, petStats, binkyChance, binkyDuration, binkyMotion, defaultHutchPosition, isHutchPosition, petFurniture,
-  petCareGraceMs, petUnattendedDecayMs, petSleepRecoveryMs, petLampCommand, petDaydreamMs, petGazeOwnerMs, petAutoSleepIdleMs, petAutoSleepEnergy, petRecoveredEnergy } from '../../utils/petCatalog'
+  petCareGraceMs, petUnattendedDecayMs, petSleepRecoveryMs, petLampCommand, petToggleLampCommand, petLampIsLit, petDaydreamMs, petGazeOwnerMs, petAutoSleepIdleMs, petAutoSleepEnergy, petRecoveredEnergy } from '../../utils/petCatalog'
 
 export const previewCare = { satiety: 65, energy: 75, mood: 70, affection: 35 }
 type Food = { id: number; x: number; droppedAt: number }
@@ -285,6 +285,13 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
     } else if (command === petLampCommand) {
       if (value !== 0 && value !== 1) return '无法识别挂灯设置。'
       pet.pendantLamp = value === 1
+      pet.pendantLampLit = pet.pendantLamp && petLampIsLit(pet.hour)
+      update()
+      return ''
+    } else if (command === petToggleLampCommand) {
+      if (value !== 0 || !pet.pendantLamp) return '先在装修里安装挂灯。'
+      pet.pendantLampLit = !(pet.pendantLampLit ?? petLampIsLit(pet.hour))
+      lastOwnerInput = time
       update()
       return ''
     } else if (command === 22) {

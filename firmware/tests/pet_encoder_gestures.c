@@ -288,6 +288,41 @@ static void pendant_lamp_brightens_only_the_room_at_night(void) {
     assert(lcd[45][10] == dawn_wall && lcd[31][222] != unlit_bulb);
 }
 
+static void lamp_manual_override_expires_at_clock_boundaries(void) {
+    assert(pet_mode_control(9, 0) == 0);
+    assert(pet_mode_control(4, 15) == 0 && pet_mode_control(28, 1) == 0);
+    assert(!pet_mode_lamp_is_lit());
+    encoder2_callback(ENCODER_DOWN);
+    encoder2_callback(ENCODER_UP);
+    assert(pet_mode_lamp_is_lit());
+    assert(pet_mode_control(4, 16) == 0 && pet_mode_lamp_is_lit());
+    assert(pet_mode_control(4, 19) == 0 && pet_mode_lamp_is_lit());
+    assert(pet_mode_control(4, 23) == 0 && pet_mode_lamp_is_lit());
+    assert(pet_mode_control(4, 0) == 0 && pet_mode_lamp_is_lit());
+    assert(pet_mode_control(4, 6) == 0 && !pet_mode_lamp_is_lit());
+
+    const uint8_t scene = pet_care_get()->scene;
+    encoder2_callback(ENCODER_DOWN);
+    encoder2_callback(UP_CLOCKWISE);
+    encoder2_callback(ENCODER_UP);
+    assert(!pet_mode_lamp_is_lit() && pet_care_get()->scene != scene);
+    assert(pet_mode_control(6, scene) == 0);
+
+    assert(pet_mode_control(9, 1) == 0);
+    assert(pet_mode_control(20, 115) == 0); /* 18:59 */
+    assert(!pet_mode_lamp_is_lit());
+    advance(60000);
+    assert(pet_mode_hour() == 19 && pet_mode_lamp_is_lit());
+    assert(pet_mode_control(32, 0) == 0 && !pet_mode_lamp_is_lit());
+    assert(pet_mode_control(17, 103) == 0); /* 05:59 */
+    assert(!pet_mode_lamp_is_lit());
+    assert(pet_mode_control(32, 0) == 0 && pet_mode_lamp_is_lit());
+    advance(60000);
+    assert(pet_mode_hour() == 6 && !pet_mode_lamp_is_lit());
+    assert(pet_mode_control(9, 0) == 0);
+    assert(pet_mode_control(28, 0) == 0 && pet_mode_control(32, 0) != 0);
+}
+
 static void dance_and_window(void) {
     assert(pet_mode_control(3, PET_BINKY) == 0);
     const int origin = pet_mode_x(), facing = (pet_mode_room_flags() & 1) ? 1 : -1;
@@ -368,6 +403,7 @@ int main(void) {
     table_and_food_positions();
     dance_and_window();
     pendant_lamp_brightens_only_the_room_at_night();
+    lamp_manual_override_expires_at_clock_boundaries();
     ambient_light_uses_manual_time_and_synced_minutes();
     assert(pet_mode_control(6, 1) == 0);
     const PetAction grooming[] = {PET_GROOM_FUR, PET_GROOM_EAR};

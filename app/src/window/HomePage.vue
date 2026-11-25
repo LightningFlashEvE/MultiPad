@@ -26,7 +26,8 @@ import PetShopPanel from '../components/screenPage/PetShopPanel.vue'
 import { createPetItemPreview, previewCare } from '../components/screenPage/petItemPreview'
 import PerformanceDisplay from '../components/screenPage/PerformanceDisplay.vue'
 import { petParameters, petParameterContent, petValue, petSeasons, petStats, type HutchPosition, type PetParameter, type PetState } from '../components/screenPage/petDisplay'
-import { invertPetEnergy, petActions, petActionLabels, petScenes, petSceneLabels, petRoomItems, petItems, petStateGeneration, petLampCommand, petLampGeneration, petLampInstalledFlag, isHutchPosition, defaultHutchPosition } from '../utils/petCatalog'
+import { invertPetEnergy, petActions, petActionLabels, petScenes, petSceneLabels, petRoomItems, petItems, petStateGeneration,
+  petLampCommand, petToggleLampCommand, petLampIsLit, petLampState, isHutchPosition, defaultHutchPosition } from '../utils/petCatalog'
 import { furniturePositionValid, newPetWarehouse, petBuySnackCommand, petFruitIds, petFruitLabels, petFurniture, petMaxCoins, petMaxStock,
   petSnackPack, petSnackPrice, petStarterItems, petWarehouseBytes, readPetWarehouse, type PetFurnitureId, type PetPosition } from '../utils/petCatalog'
 
@@ -62,6 +63,7 @@ let nextClockRetry = 0
 const currentToy = computed(() => petRoomItems.find(item => item.wireId === petState.value.activeToy))
 let offlineHutch: HutchPosition = { ...defaultHutchPosition }
 let offlineLamp = false
+let offlineLampLit: boolean | undefined
 const offlineWarehouse = ref(newPetWarehouse())
 const warehouse = computed(() => petLinked.value ? petState.value.warehouse : offlineWarehouse.value)
 const offlineFurniture = { table: { ...petFurniture[1].position }, lamp: { ...petFurniture[2].position } } as Record<'table' | 'lamp', PetPosition>
@@ -87,6 +89,12 @@ const previewWorld = createPetItemPreview(() => petState.value, value => { bedti
   saveWarehouse()
 })
 const hasPetPayload = (p?: Uint8Array) => p && petStateGeneration(p) !== 0
+watch(() => petState.value.hour, (hour, previous) => {
+  if (!petLinked.value && petLampIsLit(hour) !== petLampIsLit(previous)) {
+    offlineLampLit = offlineLamp && petLampIsLit(hour)
+    petState.value.pendantLampLit = offlineLampLit
+  }
+}, { flush: 'sync' })
 watch(petLinked, linked => {
   if (!linked) {
     generation.value = 0
@@ -94,7 +102,8 @@ watch(petLinked, linked => {
     bedtime.value = false
     Object.assign(petState.value, { active: false, stats: { ...(petState.value.stats ?? previewCare) }, activeToy: 0, toyPhase: 0, action: 1,
       deployedToys: [0, 0], foods: [], toyDrop: 100, queue: 0, fruit: 0, headPatRemaining: 0, hutchPosition: { ...offlineHutch },
-      tablePosition: offlineFurniture.table, lampPosition: offlineFurniture.lamp, pendantLamp: offlineLamp })
+      tablePosition: offlineFurniture.table, lampPosition: offlineFurniture.lamp, pendantLamp: offlineLamp,
+      pendantLampLit: offlineLampLit, pendantLampManual: undefined })
   }
 })
 
@@ -122,6 +131,7 @@ function applyPetReply(reply: { session?: string; payload: Uint8Array }) {
   petNotice.value = ''
   generation.value = petStateGeneration(p)
   const savedInventory = readPetWarehouse(p, generation.value)
+  const lamp = petLampState(p[27], p[9])
   const ageOffset = p.length - 3 - (savedInventory ? petWarehouseBytes : 0)
   const world = generation.value >= 3
   const decorationOffset = 33 + 6 * p[32]
@@ -139,7 +149,7 @@ function applyPetReply(reply: { session?: string; payload: Uint8Array }) {
     stats: p.length >= 19 ? { satiety: p[12], energy: invertPetEnergy(p[13]), mood: p[14], affection: p[15] } : undefined,
     scene: p.length >= 19 ? p[16] : 0,
     activeToy: p[17] ?? 0, toyPhase: p[18] ?? 0,
-    pendantLamp: generation.value >= petLampGeneration && Boolean(p[27] & petLampInstalledFlag),
+    pendantLamp: lamp.installed, pendantLampLit: lamp.lit, pendantLampManual: lamp.manual,
     tablePosition: savedInventory?.table, lampPosition: savedInventory?.lamp, warehouse: savedInventory?.warehouse,
     hutchPosition: generation.value >= 4 ? { x: p[decorationOffset] | p[decorationOffset + 1] << 8, y: p[decorationOffset + 2] } : undefined,
     rabbitY: generation.value >= 4 ? p[decorationOffset + 3] : undefined,
@@ -335,8 +345,10 @@ async function interactWithPet(command: number, value: number) {
       }
       if (!previewError && command === petLampCommand) {
         offlineLamp = value === 1
+        offlineLampLit = petState.value.pendantLampLit
         win.myApi.storageMenu('petPendantLampPreview', JSON.stringify(offlineLamp))
       }
+      if (!previewError && command === petToggleLampCommand) offlineLampLit = petState.value.pendantLampLit
     }
     interacting.value = false
     return applied
@@ -359,6 +371,7 @@ async function interactWithPet(command: number, value: number) {
         applied = petState.value.pendantLamp === (value === 1)
         interactionNotice.value = applied ? (value ? '已安装挂灯。' : '已收起挂灯。') : '键盘尚未确认挂灯设置。'
       }
+      if (command === petToggleLampCommand) interactionNotice.value = petState.value.pendantLampLit ? '已开灯。' : '已关灯。'
       if (command === 14) {
         const position = petState.value.hutchPosition
         interactionNotice.value = position && (position.x | (position.y << 9)) === value
@@ -416,6 +429,13 @@ function setPetParameter(row: number, event: Event) {
 function useItem(id: number) {
   const item = petItems.find(entry => entry.itemId === id)
   if (item) void triggerItem(item)
+}
+
+function togglePetLamp() {
+  const state = petState.value
+  if (!state.pendantLamp) { XBox.popMes('先在装修里安装挂灯。'); return }
+  if (petLinked.value && !state.pendantLampManual) { XBox.popMes('请升级键盘固件以手动开关挂灯。'); return }
+  void interactWithPet(petToggleLampCommand, 0)
 }
 
 function moveFurniture(id: PetFurnitureId, position: PetPosition) {
@@ -537,6 +557,7 @@ onMounted(async () => {
     }
   } catch { /* Use the default layout for a new local preview. */ }
   offlineLamp = await win.myApi.getMenu('petPendantLampPreview').catch(() => undefined) === 'true'
+  offlineLampLit = undefined
   if (!petLinked.value) petState.value.pendantLamp = offlineLamp
   try {
     const saved = JSON.parse(await win.myApi.getMenu('petWarehousePreview') || 'null')
@@ -1024,8 +1045,11 @@ async function readDeviceButtons() {
 
   const knobMask = 1 << 10
   const knobWasHeld = Boolean(heldButtons.value & knobMask)
+  const smallKnob2 = 1 << 9
+  const smallKnobReleased = ((heldButtons.value | result.pressed) & smallKnob2) && !(result.held & smallKnob2)
   heldButtons.value = result.held
-  if (generation.value >= 6 && appMode.value === 'pet' && (knobWasHeld || (result.held & knobMask))) refreshPetDevice()
+  if (generation.value >= 6 && appMode.value === 'pet' &&
+      (knobWasHeld || (result.held & knobMask) || smallKnobReleased)) refreshPetDevice()
   for (let index = 0; index < 11; index++) {
     const bit = 1 << index
     if (!(result.pressed & bit)) continue
@@ -1096,7 +1120,7 @@ const showAppInfo = () => {
         <button class="rotary" :class="{ 'device-active': isDeviceButtonActive(8) }"
           type="button" :title="appMode === 'pet' ? '宠物时间设置' : '配置旋钮 1'" @click.stop="appMode === 'pet' ? configurePetScreen(0) : openConfigWindow(8)">旋钮 1</button>
         <button class="rotary" :class="{ 'device-active': isDeviceButtonActive(9) }"
-          type="button" :title="appMode === 'pet' ? '宠物季节与场景' : '配置旋钮 2'" @click.stop="appMode === 'pet' ? configurePetScreen(0) : openConfigWindow(9)">旋钮 2</button>
+          type="button" :title="appMode === 'pet' ? '手动开关挂灯' : '配置旋钮 2'" @click.stop="appMode === 'pet' ? togglePetLamp() : openConfigWindow(9)">旋钮 2</button>
       </div>
       <div class="screen-panel">
         <button v-for="(label, index) in screenLabels" :key="label" class="screen-card" type="button"
@@ -1164,6 +1188,7 @@ const showAppInfo = () => {
           <PetDecorationPanel v-else-if="petTab === 'decor'" :state="petState" :connected="petLinked" :generation="generation" :warehouse="warehouse"
             :busy="interacting || (conState && !petLinked)" @enter="interactWithPet(6, 1)"
             @lamp="installed => interactWithPet(petLampCommand, Number(installed))"
+            @toggle-light="togglePetLamp"
             @move="moveFurniture" @rest="interactWithPet(15, 0)" @inspect="interactWithPet(3, 14)" />
           <PetShopPanel v-else-if="petTab === 'shop'" :warehouse="warehouse" :linked="petLinked"
             :busy="interacting || (conState && !petLinked)" @buy="buySnack" />
@@ -1208,7 +1233,7 @@ const showAppInfo = () => {
                 </select>
               </label>
               <p v-else class="clock-readout">场景时间 <time>{{ clockText }}</time></p>
-              <p class="knob-hint">小旋钮 1 调时间，小旋钮 2 调季节。<template v-if="!petLinked || generation >= 3">按住小旋钮 2 转动可切换背景。</template></p>
+              <p class="knob-hint">小旋钮 1 调时间，小旋钮 2 调季节。<template v-if="!petLinked || petState.pendantLampManual">按一下小旋钮 2 开关挂灯。</template><template v-if="!petLinked || generation >= 3">按住小旋钮 2 转动可切换背景。</template></p>
               <p v-if="petLinked && generation < 3">升级键盘固件即可启用跟随现实时间。</p>
               <p v-else-if="followClock">连接软件时校准为电脑本地时间。</p>
             </section>

@@ -6,12 +6,13 @@ import PetDisplay from './PetDisplay.vue'
 import type { PetState } from './petDisplay'
 
 const props = defineProps<{ state: PetState; connected: boolean; generation: number; busy: boolean; warehouse?: PetWarehouse }>()
-const emit = defineEmits<{ enter: []; move: [id: PetFurnitureId, position: PetPosition]; rest: []; inspect: []; lamp: [installed: boolean] }>()
+const emit = defineEmits<{ enter: []; move: [id: PetFurnitureId, position: PetPosition]; rest: []; inspect: []; lamp: [installed: boolean]; toggleLight: [] }>()
 const selected = ref<PetFurnitureId>('hutch')
 const owned = computed(() => petFurniture.filter(item => !props.warehouse || Boolean(props.warehouse.owned & item.ownedFlag)))
 const item = computed(() => owned.value.find(item => item.id === selected.value) ?? owned.value[0])
 const supportedGeneration = computed(() => props.connected ? props.generation : petWarehouseGeneration)
 const installed = computed(() => item.value?.id !== 'lamp' || props.state.pendantLamp)
+const lampLit = computed(() => props.state.pendantLampLit ?? petLampIsLit(props.state.hour))
 const canMove = computed(() => item.value && supportedGeneration.value >= item.value.generation && props.state.scene === 1 && !props.busy)
 const position = computed(() => (item.value?.id === 'hutch' ? props.state.hutchPosition :
   item.value?.id === 'table' ? props.state.tablePosition : props.state.lampPosition) ?? item.value?.position)
@@ -43,8 +44,8 @@ function resetPosition() {
         <button type="button" :disabled="busy || supportedGeneration < 2" @click="emit('enter')">进入宝宝房</button>
       </template>
       <template v-else>
-        <p v-if="item.id === 'lamp'">19:00–次日 06:00 自动照亮房间。<template v-if="state.pendantLamp">
-          当前{{ petLampIsLit(state.hour) ? '已点亮' : '关闭' }}。</template></p>
+        <p v-if="item.id === 'lamp'">19:00 自动开灯，06:00 自动关灯。<template v-if="state.pendantLamp">
+          当前{{ lampLit ? '已点亮' : '关闭' }}。</template></p>
         <p v-if="installed && supportedGeneration >= item.generation">直接拖动{{ item.label }}，松开保存。也可用方向键微调。</p>
         <p v-else-if="supportedGeneration < item.generation">升级键盘固件后可移动{{ item.label }}。</p>
         <div class="actions">
@@ -56,6 +57,8 @@ function resetPosition() {
             @click="emit('inspect')">去桌边看看</button>
           <button v-if="item.id === 'lamp'" type="button" :disabled="busy || supportedGeneration < petLampGeneration"
             @click="emit('lamp', !state.pendantLamp)">{{ state.pendantLamp ? '收起挂灯' : '安装挂灯' }}</button>
+          <button v-if="item.id === 'lamp' && state.pendantLamp && (!connected || state.pendantLampManual)"
+            type="button" :disabled="busy" @click="emit('toggleLight')">{{ lampLit ? '手动关灯' : '手动开灯' }}</button>
         </div>
       </template>
       </template>

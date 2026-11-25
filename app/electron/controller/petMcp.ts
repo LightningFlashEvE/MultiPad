@@ -8,7 +8,7 @@ import SerialConnect from './serialPort'
 import { petCareGuide, petServerInstructions } from './petCareGuide'
 import type { PetRequest } from './screenReadback'
 import { invertPetEnergy, petActions, playableActions, petScenes, petRoomItems, petToyIds, petToyPhases, petFruitIds as fruits,
-  petItems, toysForScene, petStateGeneration, petFoodStages, petHeadGestures, petDecorations, hutchBounds, timedPetActions, petMaxDurationSeconds, petTimedActionCommand, petLampCommand, petLampGeneration, petLampInstalledFlag, petLampIsLit, petAutoSleepEnergy, petRecoveredEnergy,
+  petItems, toysForScene, petStateGeneration, petFoodStages, petHeadGestures, petDecorations, hutchBounds, timedPetActions, petMaxDurationSeconds, petTimedActionCommand, petLampCommand, petLampGeneration, petLampState, petAutoSleepEnergy, petRecoveredEnergy,
   readPetWarehouse, petWarehouseBytes } from '../../src/utils/petCatalog'
 
 const seasons = ['spring', 'summer', 'autumn', 'winter'] as const
@@ -68,7 +68,7 @@ function decodeState(payload: Buffer, session?: string) {
   })
   const other = scene === 'garden' ? 'nursery' : 'garden'
   const flags = payload[endOfFoods + 7]
-  const lampInstalled = Boolean(payload[27] & petLampInstalledFlag)
+  const lamp = petLampState(payload[27], payload[9])
   const inventory = readPetWarehouse(payload, generation)
   const timingTail = payload.length - (inventory ? petWarehouseBytes : 0)
   return {
@@ -90,7 +90,7 @@ function decodeState(payload: Buffer, session?: string) {
     toyPhase: visitingHutch || visitingTable ? 'idle' : phase,
     activeDecoration: visitingTable ? 'nursery_table' : visitingHutch ? 'rabbit_hutch' : null,
     decorationPhase: generation >= 4 ? (visitingTable || visitingHutch ? phase : 'idle') : null,
-    pendantLamp: generation >= petLampGeneration ? { installed: lampInstalled, lit: lampInstalled && petLampIsLit(payload[9]) } : null,
+    pendantLamp: generation >= petLampGeneration ? { installed: lamp.installed, lit: lamp.lit } : null,
     hutchPosition: generation >= 4 ? { x: payload.readUInt16LE(endOfFoods), y: payload[endOfFoods + 2] } : null,
     tablePosition: inventory?.table ?? null,
     lampPosition: inventory?.lamp ?? null,

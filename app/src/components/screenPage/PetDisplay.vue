@@ -157,8 +157,8 @@ onMounted(() => {
     const nursery = petScenes[scene] === 'nursery'
     const minute = props.state.minute ?? 0
     const lampInstalled = nursery && props.state.pendantLamp === true
-    const lampLit = lampInstalled && petLampIsLit(hour)
-    const lighting = ((season * 24 + hour) * 60 + minute) * 2 + Number(lampInstalled)
+    const lampLit = lampInstalled && (props.state.pendantLampLit ?? petLampIsLit(hour))
+    const lighting = ((season * 24 + hour) * 60 + minute) * 4 + Number(lampInstalled) * 2 + Number(lampLit)
     if (lastScene !== scene || lastLighting !== lighting) {
       if (nursery) {
         drawNursery(context!, hour, minute)
