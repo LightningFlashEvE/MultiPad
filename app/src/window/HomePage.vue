@@ -769,6 +769,12 @@ async function syncWorkConfig() {
       nextWorkAttempt = Date.now() + 5000
       return
     }
+    const mode = await win.myApi.petAction(0)
+    if (mode.state === 'ready' && mode.status === 0 && hasPetPayload(mode.payload) && mode.payload[0]) {
+      applyPetReply(mode)
+      return
+    }
+    if (mode.state === 'busy' || mode.state === 'disconnected') return
     await win.myApi.setDeviceConfiguring(true)
     ownsTransfer = true
     const previous = await win.myApi.readWorkLayout()

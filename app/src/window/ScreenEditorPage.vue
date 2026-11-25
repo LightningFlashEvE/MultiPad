@@ -156,7 +156,7 @@ const generate = async (commit: boolean) => {
         </template>
         <label v-else-if="mode === 'text'">显示文字<textarea v-model="text" rows="2" maxlength="50" placeholder="最多显示两行" required :disabled="busy" /></label>
         <p v-if="mode === 'performance'" class="screen-hint">显示 CPU 使用率、内存占用率和系统盘容量占用率。保存后自动同步。实时显示需要配套固件、USB 连接和正在运行的 MultiPad。</p>
-        <p v-else-if="mode !== 'text'" class="screen-hint">首次设置后，请在主页面点击「发送」。动态显示需要支持该功能的固件、USB 连接和正在运行的 MultiPad。</p>
+        <p v-else-if="mode !== 'text'" class="screen-hint">保存后自动同步。动态显示需要支持该功能的固件、USB 连接和正在运行的 MultiPad。</p>
         <p v-if="error" class="screen-error" role="alert">{{ error }}</p>
         <div class="screen-actions">
           <button type="button" @click="close">取消</button>
