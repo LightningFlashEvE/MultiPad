@@ -7,6 +7,7 @@
 #include "pet_care.h"
 #include "usbd_cdc_if.h"
 #include <string.h>
+#include "performance_labels.inc"
 
 enum {
     REQUEST_SIZE = 17,
@@ -26,6 +27,7 @@ enum {
     STATUS_EMPTY,
     STATUS_STALE,
     STATUS_INVALID,
+    PERFORMANCE_TIMEOUT_MS = 7000,
 };
 
 static const uint8_t request_magic[] = {0xaa, 0xbb, 0xc1, 0x53};
@@ -40,35 +42,70 @@ static uint32_t generation;
 static uint16_t held_buttons;
 static uint16_t pressed_buttons;
 static uint8_t performance_menu;
+static uint8_t performance_sample_menu;
 static uint32_t performance_updated;
 static uint8_t last_metrics[3];
 
 static void clear_performance(void) {
+    performance_sample_menu = 0;
     if (!performance_menu) return;
     performance_menu = 0;
     if (!pet_mode_is_active()) restore_menu_color();
 }
 
+static void draw_performance_glyph(uint16_t x, uint16_t y, uint8_t size, const uint32_t *rows,
+                                   uint16_t foreground, uint16_t background) {
+    static uint8_t pixels[24 * 24 * 2];
+    uint8_t *pixel = pixels;
+    for (uint8_t row = 0; row < size; row++) {
+        for (uint8_t col = 0; col < size; col++) {
+            uint16_t color = (rows[row] & (1u << col)) ? foreground : background;
+            *pixel++ = (uint8_t)(color >> 8);
+            *pixel++ = (uint8_t)color;
+        }
+    }
+    lcd_show_pic_index(x, y, size, size, pixels, 0);
+}
+
 static void show_performance(const uint8_t *metrics, bool first) {
-    static const char *labels[] = {"CPU", "MEM", "DISK"};
-    const uint16_t background = 0x1106, track = 0x29ca, accent = 0x575a;
+    static const uint8_t label_offsets[] = {0, 3, 5, 8};
+    static const uint16_t accents[] = {0x5f18, 0x85df, 0xedf0};
+    const uint16_t background = 0x1106, panel = 0x1968, track = 0x324c;
     if (first) {
         lcd_fill(0, 0, 320, 172, background, 0);
-        lcd_show_string(14, 10, (const uint8_t *)"PC PERFORMANCE", WHITE, background, 24, 0, 0);
+        for (uint8_t glyph = 0; glyph < sizeof(performance_labels_24) / sizeof(performance_labels_24[0]); glyph++)
+            draw_performance_glyph(14 + glyph * 24, 10, 24, performance_labels_24[glyph], 0xf7bf, background);
     }
     for (uint8_t i = 0; i < 3; i++) {
-        if (!first && last_metrics[i] == metrics[i]) continue;
-        const uint16_t y = 50 + 36 * i;
+        const uint16_t y = 43 + 40 * i;
+        const uint16_t accent = accents[i];
+        if (first) {
+            lcd_fill(12, y - 4, 308, y + 30, panel, 0);
+            lcd_fill(12, y - 4, 15, y + 30, accent, 0);
+            for (uint8_t glyph = label_offsets[i]; glyph < label_offsets[i + 1]; glyph++)
+                draw_performance_glyph(25 + (glyph - label_offsets[i]) * 16, y + 5, 16,
+                                       performance_labels_16[glyph], 0xf7bf, panel);
+        } else if (last_metrics[i] == metrics[i]) continue;
+
         uint8_t value[8];
-        if (metrics[i] == 255) snprintf((char *)value, sizeof(value), "   --");
-        else snprintf((char *)value, sizeof(value), "%4u%%", (unsigned)metrics[i]);
-        lcd_show_string(14, y, (const uint8_t *)labels[i], WHITE, background, 16, 0, 0);
-        lcd_show_string(262, y, value, WHITE, background, 16, 0, 0);
-        lcd_fill(66, y + 3, 254, y + 13, track, 0);
+        if (metrics[i] == 255) snprintf((char *)value, sizeof(value), "  --");
+        else snprintf((char *)value, sizeof(value), "%3u%%", (unsigned)metrics[i]);
+        lcd_show_string(250, y, value, accent, panel, 24, 0, 0);
+        lcd_fill(82, y + 10, 235, y + 19, track, 0);
         if (metrics[i] > 0 && metrics[i] <= 100)
-            lcd_fill(66, y + 3, 66 + 188 * metrics[i] / 100, y + 13, accent, 0);
+            lcd_fill(82, y + 10, 82 + 153 * metrics[i] / 100, y + 19, accent, 0);
     }
-    memcpy(last_metrics, metrics, sizeof(last_metrics));
+}
+
+void screen_readback_restore_work_color(void) {
+    if (performance_sample_menu && performance_sample_menu == active_menu && !pixels_dirty &&
+        HAL_GetTick() - performance_updated < PERFORMANCE_TIMEOUT_MS) {
+        show_performance(last_metrics, true);
+        performance_menu = active_menu;
+        return;
+    }
+    performance_menu = performance_sample_menu = 0;
+    restore_menu_color();
 }
 
 void button_readback_record(uint8_t index, bool down) {
@@ -136,7 +173,7 @@ bool screen_readback_receive(const uint8_t *data, uint32_t length) {
 
 void screen_readback_applied(uint8_t menu) {
     active_menu = menu;
-    performance_menu = 0;
+    performance_menu = performance_sample_menu = 0;
     pixels_dirty = false;
     generation++;
 }
@@ -161,8 +198,9 @@ static void send_response(void) {
 }
 
 void screen_readback_poll(void) {
-    if (performance_menu && (pet_mode_is_active() || HAL_GetTick() - performance_updated >= 7000))
-        clear_performance();
+    const bool pet_active = pet_mode_is_active();
+    if (pet_active) performance_menu = 0;
+    if (performance_sample_menu && HAL_GetTick() - performance_updated >= PERFORMANCE_TIMEOUT_MS) clear_performance();
     if ((!request_pending && !response_size) || !CDC_TransmitReady_FS()) return;
     if (response_size) {
         send_response();
@@ -184,15 +222,19 @@ void screen_readback_poll(void) {
             status = STATUS_INVALID;
         } else if (!offset) {
             clear_performance();
-        } else if (offset != active_menu || pixels_dirty || pet_mode_is_active()) {
+        } else if (offset != active_menu || pixels_dirty) {
             status = STATUS_STALE;
         } else if ((metrics[0] > 100 && metrics[0] != 255) ||
                    (metrics[1] > 100 && metrics[1] != 255) ||
                    (metrics[2] > 100 && metrics[2] != 255)) {
             status = STATUS_INVALID;
         } else {
-            show_performance(metrics, !performance_menu);
-            performance_menu = (uint8_t)offset;
+            if (!pet_active) {
+                show_performance(metrics, !performance_menu);
+                performance_menu = (uint8_t)offset;
+            }
+            memcpy(last_metrics, metrics, sizeof(last_metrics));
+            performance_sample_menu = (uint8_t)offset;
             performance_updated = HAL_GetTick();
         }
     } else if (screen == BUTTON_STATE) {
@@ -232,21 +274,25 @@ void screen_readback_poll(void) {
         }
     } else if (screen == PET_STATE || screen == PET_CONTROL) {
         const uint8_t command = (uint8_t)offset, value = (uint8_t)(offset >> 8);
-        const bool decor_supported = requested_generation >= 4 && requested_generation <= 11;
+        const bool decor_supported = requested_generation >= 4 && requested_generation <= 13;
         const bool move_hutch = screen == PET_CONTROL && decor_supported && command == 14;
-        const bool timed_action = screen == PET_CONTROL && requested_generation == 11 && command == 27;
-        if (length || (!timed_action && (move_hutch ? offset >> 25 : offset > UINT16_MAX)) || (screen == PET_STATE && offset)) {
+        const bool move_furniture = screen == PET_CONTROL && requested_generation == 13 && (command == 29 || command == 30);
+        const bool timed_action = screen == PET_CONTROL && requested_generation >= 11 && requested_generation <= 13 && command == 27;
+        if (length || (!timed_action && ((move_hutch || move_furniture) ? offset >> 25 : offset > UINT16_MAX)) || (screen == PET_STATE && offset)) {
             status = STATUS_INVALID;
         } else {
             if (screen == PET_CONTROL && offset) {
                 if (timed_action) status = pet_mode_play_timed(offset >> 8);
                 else if (move_hutch) status = pet_mode_move_hutch((offset >> 8) & 511, offset >> 17);
-                else if (command >= 23 && command <= 26 && (requested_generation < 10 || requested_generation > 11)) status = STATUS_INVALID;
+                else if (move_furniture) status = pet_mode_move_furniture(command - 29, (offset >> 8) & 511, offset >> 17);
+                else if (command >= 29 && command <= 31 && requested_generation != 13) status = STATUS_INVALID;
+                else if (command == 28 && requested_generation < 12) status = STATUS_INVALID;
+                else if (command >= 23 && command <= 26 && (requested_generation < 10 || requested_generation > 13)) status = STATUS_INVALID;
                 else if (!decor_supported && (command == 14 || command == 15)) status = STATUS_INVALID;
-                else if (command == 22 && (requested_generation < 5 || requested_generation > 11 || (requested_generation == 5 && value > 4))) status = STATUS_INVALID;
+                else if (command == 22 && (requested_generation < 5 || requested_generation > 13 || (requested_generation == 5 && value > 4))) status = STATUS_INVALID;
                 else if (requested_generation < 7 && command == 3 && value >= PET_STAND_WATCH) status = STATUS_INVALID;
-                else if ((requested_generation < 8 || requested_generation > 11) && command == 3 && value == PET_BINKY) status = STATUS_INVALID;
-                else if ((requested_generation < 9 || requested_generation > 11) && command == 3 && value >= PET_GROOM_FUR) status = STATUS_INVALID;
+                else if ((requested_generation < 8 || requested_generation > 13) && command == 3 && value == PET_BINKY) status = STATUS_INVALID;
+                else if ((requested_generation < 9 || requested_generation > 13) && command == 3 && value >= PET_GROOM_FUR) status = STATUS_INVALID;
                 else if (requested_generation <= 3 && value == 1 && (command == 7 || command == 11 || command == 13))
                     status = pet_mode_control(15, 0); /* Former rabbit_hutch toy now visits the decoration. */
                 else if (command == 24 && value <= 100) status = pet_mode_control(command, 100 - value);
@@ -256,7 +302,7 @@ void screen_readback_poll(void) {
             PetAction action = pet_mode_action();
             pixels[1] = (requested_generation < 7 && action >= PET_STAND_WATCH) ||
                         (requested_generation < 8 && action == PET_BINKY) ||
-                        ((requested_generation < 9 || requested_generation > 11) && action >= PET_GROOM_FUR) ? PET_IDLE : action;
+                        ((requested_generation < 9 || requested_generation > 13) && action >= PET_GROOM_FUR) ? PET_IDLE : action;
             write_u16(pixels + 2, pet_mode_x());
             write_u32(pixels + 4, pet_mode_frames());
             pixels[8] = pet_mode_fruit();
@@ -264,7 +310,7 @@ void screen_readback_poll(void) {
             pixels[10] = pet_mode_season();
             pixels[11] = pet_mode_queue_depth();
             length = screen == PET_STATE ? 11 : 12;
-            if (screen == PET_CONTROL && requested_generation >= 2 && requested_generation <= 11) {
+            if (screen == PET_CONTROL && requested_generation >= 2 && requested_generation <= 13) {
                 const PetCare *care = pet_care_get();
                 pixels[12] = care->satiety;
                 pixels[13] = 100 - care->energy; /* USB control frames encode fatigue. */
@@ -277,7 +323,8 @@ void screen_readback_poll(void) {
                 length = 19;
                 if (requested_generation >= 3) {
                     memcpy(pixels + 19, care->bindings, PET_KEY_COUNT);
-                    pixels[27] = (care->follow_time ? 1u : 0u) | (pet_mode_is_bedtime() ? 2u : 0u);
+                    pixels[27] = (care->follow_time ? 1u : 0u) | (pet_mode_is_bedtime() ? 2u : 0u) |
+                                 (requested_generation >= 12 && care->pendant_lamp ? 4u : 0u);
                     pixels[28] = pet_mode_minute();
                     pixels[29] = care->placed[PET_GARDEN];
                     pixels[30] = care->placed[PET_NURSERY];
@@ -299,13 +346,23 @@ void screen_readback_poll(void) {
                             pixels[length++] = pet_mode_room_drop(other);
                             length += write_room_foods(pixels + length, other);
                             if (requested_generation == 7) pixels[length++] = 7;
-                            if (requested_generation == 11) {
+                            if (requested_generation >= 11) {
                                 write_u16(pixels + length, pet_mode_timed_remaining());
                                 length += 2;
                             }
                             if (requested_generation >= 8) {
                                 write_u16(pixels + length, pet_mode_action_age());
                                 length += 2;
+                                if (requested_generation == 13) {
+                                    write_u16(pixels + length, care->table_x);
+                                    pixels[length + 2] = care->table_y;
+                                    write_u16(pixels + length + 3, care->lamp_x);
+                                    pixels[length + 5] = care->lamp_y;
+                                    write_u16(pixels + length + 6, care->coins);
+                                    memcpy(pixels + length + 8, care->stock, PET_SNACKS);
+                                    pixels[length + 8 + PET_SNACKS] = care->owned_items;
+                                    length += 9 + PET_SNACKS;
+                                }
                                 pixels[length++] = requested_generation;
                             }
                         }

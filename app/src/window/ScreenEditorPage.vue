@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import WindowTitle from '../components/tools/WindowTitle.vue'
 import PopBox from '../components/tools/PopBox.vue'
 import ScreenEditor from '../components/screenPage/screenEditor.vue'
-import PerformanceDisplay from '../components/screenPage/PerformanceDisplay.vue'
 import { encodeOled, renderScreenContent } from '../components/screenPage/screenContent'
 import type { ScreenContent, ScreenFrame } from '../components/screenPage/screenContent'
 
@@ -24,12 +23,7 @@ const preview = ref('')
 const imageMounted = ref(false)
 const busy = ref(false)
 const error = ref('')
-const performanceValues = ref<number[]>([])
-let performanceTimer: number | undefined
-const modes = screen === 0 ? [
-  { value: 'image', label: '图片' },
-  { value: 'performance', label: '电脑性能监测' }
-] as const : [
+const modes = [
   { value: 'image', label: '图片' },
   { value: 'time', label: '时间' },
   { value: 'date', label: '日期' },
@@ -43,7 +37,7 @@ onMounted(async () => {
     const saved = await win.myApi.getMenu('configData')
     initial.value = saved ? JSON.parse(saved)?.[menu]?.screenConfig?.[screen] : undefined
     const content = initial.value?.content
-    if (content && modes.some(option => option.value === content.mode)) {
+    if (screen !== 0 && content && modes.some(option => option.value === content.mode)) {
       mode.value = content.mode
       if (content.mode === 'api') {
         url.value = content.url
@@ -77,20 +71,14 @@ watch([loaded, content], async ([ready, current], _previous, onCleanup) => {
   let cancelled = false
   onCleanup(() => { cancelled = true })
   preview.value = ''
-  if (!ready || !current || current.mode === 'performance' || current.mode === 'api' || (current.mode === 'text' && !current.text)) return
+  if (!ready || !current || current.mode === 'api' || (current.mode === 'text' && !current.text)) return
   const png = await renderScreenContent(current)
   if (!cancelled) preview.value = png
 })
 
 watch([loaded, mode], ([ready, value]) => {
   if (ready && value === 'image') imageMounted.value = true
-  window.clearInterval(performanceTimer)
-  if (value !== 'performance') return
-  const sample = async () => { performanceValues.value = await win.myApi.pcPerformance().catch(() => []) }
-  void sample()
-  performanceTimer = window.setInterval(sample, 2000)
 })
-onUnmounted(() => window.clearInterval(performanceTimer))
 
 const close = () => win.myApi.closeWindow()
 const save = (frame: ScreenFrame) => {
@@ -102,10 +90,6 @@ const generate = async (commit: boolean) => {
   const current = content.value
   if (busy.value || !current) return
   error.value = ''
-  if (current.mode === 'performance') {
-    save({ baseData: initial.value?.baseData ?? '', buffData: [...(initial.value?.buffData ?? [])], content: current })
-    return
-  }
   if (current.mode === 'api' && (!Number.isInteger(current.interval) || current.interval < 15 || current.interval > 3600)) {
     error.value = '刷新间隔须为 15 至 3600 秒'
     return
@@ -132,9 +116,12 @@ const generate = async (commit: boolean) => {
   <PopBox />
   <div class="container">
     <WindowTitle>
-      <template #title>{{ screen ? `小屏 ${screen} · 菜单 ${menu + 1}` : '彩屏编辑' }}</template>
+      <template #title>{{ screen ? `小屏 ${screen} · 菜单 ${menu + 1}` : '彩屏图片编辑' }}</template>
     </WindowTitle>
-    <nav class="screen-modes" aria-label="显示内容">
+    <p v-if="screen === 0 && initial?.content?.mode === 'performance'" class="image-mode-hint">
+      此层彩屏正在显示性能。保存图片后，可在性能监测页面切换为图片。
+    </p>
+    <nav v-if="screen !== 0" class="screen-modes" aria-label="显示内容">
       <button v-for="option in modes" :key="option.value" type="button" :aria-pressed="mode === option.value"
         :disabled="!loaded || busy" @click="mode = option.value; error = ''">{{ option.label }}</button>
     </nav>
@@ -143,8 +130,7 @@ const generate = async (commit: boolean) => {
     </div>
     <form v-if="loaded && mode !== 'image'" class="screen-settings" @submit.prevent="generate(true)">
       <div class="screen-preview">
-        <PerformanceDisplay v-if="mode === 'performance'" :values="performanceValues" />
-        <img v-else-if="preview" :src="preview" alt="小屏预览" />
+        <img v-if="preview" :src="preview" alt="小屏预览" />
         <span v-else>{{ mode === 'api' ? '测试后预览' : '小屏预览' }}</span>
       </div>
       <div class="screen-fields">
@@ -155,8 +141,7 @@ const generate = async (commit: boolean) => {
           <label>刷新间隔（秒）<input v-model.number="interval" type="number" min="15" max="3600" required :disabled="busy" /></label>
         </template>
         <label v-else-if="mode === 'text'">显示文字<textarea v-model="text" rows="2" maxlength="50" placeholder="最多显示两行" required :disabled="busy" /></label>
-        <p v-if="mode === 'performance'" class="screen-hint">显示 CPU 使用率、内存占用率和系统盘容量占用率。初次配置菜单后请点击主页面的「发送到键盘」。实时显示需要配套固件、USB 连接和正在运行的 MultiPad。</p>
-        <p v-else-if="mode !== 'text'" class="screen-hint">首次设置后，请在主页面点击「发送」。动态显示需要支持该功能的固件、USB 连接和正在运行的 MultiPad。</p>
+        <p v-if="mode !== 'text'" class="screen-hint">保存后自动同步。动态显示需要支持该功能的固件、USB 连接和正在运行的 MultiPad。</p>
         <p v-if="error" class="screen-error" role="alert">{{ error }}</p>
         <div class="screen-actions">
           <button type="button" @click="close">取消</button>
@@ -184,6 +169,7 @@ const generate = async (commit: boolean) => {
   flex-direction: column;
 }
 .container :deep(.top-title) { color: #24323a; }
+.image-mode-hint { margin: 2px 0 7px; color: #465e69; font-size: 12px; }
 .screen-modes {
   display: flex;
   gap: 8px;

@@ -14,7 +14,7 @@ export function createLiveScreens(
   paused: () => boolean,
   hasDynamicScreens: () => boolean,
   setConnected: (connected: boolean) => void,
-  updateColor: (menu: number) => Promise<void>,
+  updateColor: (deviceMenu: number) => Promise<void>,
   allowUnconfiguredMenu: () => boolean
 ) {
   const win = window as any
@@ -23,6 +23,9 @@ export function createLiveScreens(
   let lastGeneration: number | undefined
   let running: Promise<void> | undefined
   let nextReconnect = 0
+  let petRefreshQueued = false
+  let petRefreshDeadline = 0
+  let petRetry: ReturnType<typeof setTimeout> | undefined
 
   const update = async () => {
     let device = await win.myApi.liveOled()
@@ -34,7 +37,7 @@ export function createLiveScreens(
       }
     }
     if (device.state === 'ready' || device.state === 'unsupported') setConnected(true)
-    if (device.state === 'busy') return
+    if (device.state === 'busy') return true
     if (device.state !== 'ready') {
       lastGeneration = undefined
       displayed.clear()
@@ -47,6 +50,7 @@ export function createLiveScreens(
     }
 
     const menu = Math.max(0, device.menu - 1)
+    if (device.menu && !paused()) await updateColor(device.menu)
     await Promise.all([1, 2].map(async screen => {
       const config = getScreens(menu)?.[screen]?.content
       if (!config || config.mode === 'text') return
@@ -69,12 +73,12 @@ export function createLiveScreens(
     }))
 
     for (const screen of [1, 2]) {
-      if (paused()) return
+      if (paused()) return true
       const config = getScreens(menu)?.[screen]?.content
       if (!config || config.mode === 'text') {
         if (!(device.mask & (1 << (screen - 1)))) continue
         const result = await win.myApi.liveOled({ screen, generation: device.generation })
-        if (result.state !== 'ready' || result.code !== 0) return
+        if (result.state !== 'ready' || result.code !== 0) return result.state === 'busy' || result.code === 2
         displayed.delete(screen)
         continue
       }
@@ -86,18 +90,52 @@ export function createLiveScreens(
         generation: device.generation,
         pixels: Uint8Array.from(frame.buffData, Number)
       })
-      if (result.state !== 'ready' || result.code !== 0) return
+      if (result.state !== 'ready' || result.code !== 0) return result.state === 'busy' || result.code === 2
       displayed.set(screen, frame.baseData)
     }
-    if (!paused()) await updateColor(menu)
+  }
+
+  function retryPetRefresh() {
+    if (!petRefreshQueued || petRetry !== undefined) return
+    if (!allowUnconfiguredMenu() || Date.now() >= petRefreshDeadline) {
+      petRefreshQueued = false
+      return
+    }
+    petRetry = setTimeout(() => {
+      petRetry = undefined
+      if (petRefreshQueued) tick()
+    }, 60)
+  }
+
+  function tick() {
+    if (paused() || running) {
+      retryPetRefresh()
+      return
+    }
+    const urgent = petRefreshQueued
+    petRefreshQueued = false
+    running = update().then(retry => {
+      if (retry && urgent) petRefreshQueued = true
+    }).catch(() => {
+      displayed.clear()
+    }).finally(() => {
+      running = undefined
+      retryPetRefresh()
+    })
   }
 
   return {
-    tick() {
-      if (paused() || running) return
-      running = update().catch(() => {
-        displayed.clear()
-      }).finally(() => { running = undefined })
+    tick,
+    refreshPet() {
+      petRefreshQueued = true
+      petRefreshDeadline = Date.now() + 900
+      tick()
+    },
+    cancelPetRefresh() {
+      petRefreshQueued = false
+      petRefreshDeadline = 0
+      clearTimeout(petRetry)
+      petRetry = undefined
     },
     wait: () => running,
     forgetDevice() {

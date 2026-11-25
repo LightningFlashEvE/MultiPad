@@ -1,6 +1,6 @@
 import type { PetState } from './petDisplay'
-import { isStatValue, petStats, binkyChance, binkyDuration, binkyMotion, defaultHutchPosition, isHutchPosition,
-  petCareGraceMs, petUnattendedDecayMs, petDaydreamMs, petGazeOwnerMs, petAutoSleepIdleMs, petAutoSleepEnergy, petRecoveredEnergy } from '../../utils/petCatalog'
+import { isStatValue, petStats, binkyChance, binkyDuration, binkyMotion, defaultHutchPosition, isHutchPosition, petFurniture,
+  petCareGraceMs, petUnattendedDecayMs, petLampCommand, petDaydreamMs, petGazeOwnerMs, petAutoSleepIdleMs, petAutoSleepEnergy, petRecoveredEnergy } from '../../utils/petCatalog'
 
 export const previewCare = { satiety: 65, energy: 75, mood: 70, affection: 35 }
 type Food = { id: number; x: number; droppedAt: number }
@@ -12,7 +12,7 @@ type RoomActivity = { item: 1 | 2 | 3; bedtime: boolean; usingAt?: number; garde
 const fallMs = 650
 const clampStat = (value: number) => Math.max(0, Math.min(value, 100))
 
-export function createPetItemPreview(state: () => PetState, setBedtime: (enabled: boolean) => void) {
+export function createPetItemPreview(state: () => PetState, setBedtime: (enabled: boolean) => void, onSnackEaten?: () => void) {
   const rooms: Room[] = [0, 1].map(() => ({ toy: 0, droppedAt: 0, awaitingPlay: false, foods: [] }))
   let food: FoodActivity | undefined
   let play: RoomActivity | undefined
@@ -197,7 +197,7 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
       const hutch = play.item === 1
       if (play.usingAt === undefined) {
         if (hutch || play.item === 3) {
-          const target = hutch ? pet.hutchPosition ?? defaultHutchPosition : { x: 98, y: 116 }
+          const target = hutch ? pet.hutchPosition ?? defaultHutchPosition : pet.tablePosition ?? petFurniture[1].position
           const dx = target.x - play.fromX, dy = target.y - play.fromY
           const distance = Math.max(Math.abs(dx), Math.abs(dy))
           const progress = distance ? Math.min(1, (time - play.walkStart) * .078 / distance) : 1
@@ -219,6 +219,7 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
         room.foods.shift()
         food = undefined
         reward(12, 0, 3, 1)
+        onSnackEaten?.()
         lastInput = time
       }
     }
@@ -275,6 +276,11 @@ export function createPetItemPreview(state: () => PetState, setBedtime: (enabled
       const before = bondDeclining(pet.stats!)
       pet.stats![stat.id] = value
       if (before !== bondDeclining(pet.stats!)) bondMs = 0
+    } else if (command === petLampCommand) {
+      if (value !== 0 && value !== 1) return '无法识别挂灯设置。'
+      pet.pendantLamp = value === 1
+      update()
+      return ''
     } else if (command === 22) {
       if (value < 0 || value > 23 || value === 7 || !Number.isInteger(value)) return '无法识别摸头手势。'
       if (value === 5 || value === 6) {

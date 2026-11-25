@@ -5,16 +5,23 @@
 #include <stdio.h>
 #include <string.h>
 #include "encoder1.h"
+#include "encoder2.h"
 #include "encoder3.h"
+#include "encoder_user.h"
 #include "pet_care.h"
 #include "pet_mode.h"
+#include "screen_readback.h"
+#include "usbd_cdc_if.h"
 
 static uint32_t now, counter, cursor;
 static bool held;
 static uint8_t macro;
-static unsigned macros, pats;
+static unsigned macros, pats, menu_loads, menu_previews;
 static PetEvent last_pat;
 static uint16_t lcd[172][320], before[172][320];
+static unsigned image_restores;
+static uint8_t usb_status;
+static uint16_t held_buttons, pressed_buttons;
 
 uint32_t HAL_GetTick(void) { return now; }
 uint8_t HAL_GPIO_ReadPin(GPIO_TypeDef *port, uint16_t pin) { (void)port; (void)pin; return !held; }
@@ -26,12 +33,40 @@ void encoder1_init(void) {}
 void encoder2_init(void) {}
 void encoder1_scan(void) {}
 void encoder2_scan(void) {}
-void load_menu(uint8_t menu) { (void)menu; }
+void load_menu(uint8_t menu) { (void)menu; menu_loads++; }
 void parse_json_value(uint8_t value) { macro = value; macros++; }
-void oled_42_show_num(uint8_t n, uint8_t mode, uint8_t i) { (void)n; (void)mode; (void)i; }
-void button_readback_record(uint8_t index, bool down) { assert(index == 10 && down == held); }
+void oled_42_show_num(uint8_t n, uint8_t mode, uint8_t i) { (void)n; (void)mode; (void)i; menu_previews++; }
 void live_oled_mode_changed(void) {}
-void restore_menu_color(void) {}
+void restore_menu_color(void) { image_restores++; }
+bool live_oled_read(uint8_t screen, uint32_t offset, uint8_t *pixels, uint16_t size) {
+    (void)screen; (void)offset; (void)pixels; (void)size; return false;
+}
+void load_config(uint8_t *data, uint16_t size) { memset(data, 0, size); }
+void load_menu_from_flash(uint8_t menu, uint8_t *data, uint16_t size, uint8_t mode) {
+    (void)menu; (void)mode; memset(data, 0, size);
+}
+void read_color_screen(uint8_t menu, uint32_t offset, uint8_t *data, uint16_t size) {
+    (void)menu; (void)offset; memset(data, 0, size);
+}
+uint8_t CDC_TransmitReady_FS(void) { return 1; }
+uint8_t CDC_Transmit_FS(uint8_t *buf, uint16_t length) {
+    assert(length >= 21);
+    usb_status = buf[6];
+    if (buf[7] == 0xfe && length >= 25) {
+        held_buttons = (uint16_t)(buf[19] | buf[20] << 8);
+        pressed_buttons = (uint16_t)(buf[21] | buf[22] << 8);
+    }
+    return USBD_OK;
+}
+void lcd_show_string(uint16_t x, uint16_t y, const uint8_t *str, uint16_t fg, uint16_t bg,
+                     uint8_t size, uint8_t mode, uint8_t index) {
+    (void)x; (void)y; (void)str; (void)fg; (void)bg; (void)size; (void)mode; (void)index;
+}
+void lcd_fill(uint16_t x, uint16_t y, uint16_t right, uint16_t bottom, uint16_t color, uint8_t index) {
+    assert(right <= 320 && bottom <= 172 && index == 0);
+    for (unsigned row = y; row < bottom; row++)
+        for (unsigned col = x; col < right; col++) lcd[row][col] = color;
+}
 void erase_flash_sector(uint32_t sector) { (void)sector; assert(0); }
 void write_flash_page(uint8_t *buf, uint32_t addr, uint16_t n) { (void)buf; (void)addr; (void)n; assert(0); }
 void read_flash(uint8_t *buf, uint32_t addr, uint16_t n) { (void)buf; (void)addr; (void)n; assert(0); }
@@ -45,6 +80,38 @@ void lcd_show_pic_index(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint8_t 
 
 static void advance(unsigned duration) { while (duration--) { now++; pet_mode_poll(); } }
 static void scan(bool down, unsigned count) { held = down; counter = count; encoder3_scan(); }
+
+static uint8_t send_screen_request(uint8_t screen, uint8_t menu) {
+    uint8_t request[17] = {0xaa, 0xbb, 0xc1, 0x53, 1, 0, 50, 60, 70, 0, screen, menu};
+    assert(screen_readback_receive(request, sizeof(request)));
+    usb_status = 0xff;
+    screen_readback_poll();
+    assert(usb_status != 0xff);
+    return usb_status;
+}
+
+static uint8_t send_performance(uint8_t menu) { return send_screen_request(0xf9, menu); }
+
+static void restore_performance_without_image(void) {
+    assert(pet_mode_is_active());
+    screen_readback_applied(1);
+    memcpy(before, lcd, sizeof(lcd));
+    unsigned restores = image_restores;
+    assert(send_performance(1) == 0);
+    assert(memcmp(lcd, before, sizeof(lcd)) == 0);
+    assert(pet_mode_control(1, 0) == 0 && image_restores == restores);
+    assert(lcd[53][82] == 0x5f18 && lcd[53][157] == 0x5f18 && lcd[53][158] == 0x324c);
+
+    assert(pet_mode_control(1, 1) == 0);
+    assert(send_performance(2) == 2);
+    assert(send_performance(0) == 0 && image_restores == restores);
+    assert(pet_mode_control(1, 0) == 0 && image_restores == restores + 1);
+    restores = image_restores;
+
+    assert(pet_mode_control(1, 1) == 0 && send_performance(1) == 0);
+    now += 7000;
+    assert(pet_mode_control(1, 0) == 0 && image_restores == restores + 1);
+}
 
 static void read_pats(void) {
     PetEvent events[PET_EVENTS_PER_REPLY];
@@ -168,6 +235,59 @@ static void table_and_food_positions(void) {
     }
 }
 
+static void ambient_light_uses_manual_time_and_synced_minutes(void) {
+    assert(pet_mode_control(6, 1) == 0);
+    assert(pet_mode_control(4, 17) == 0);
+    advance(150);
+    const uint16_t daylight_wall = lcd[45][10], daylight_window = lcd[28][124];
+
+    assert(pet_mode_control(9, 1) == 0);
+    const uint16_t dusk = 17 * 60 + 30;
+    assert(pet_mode_control(16 + (dusk >> 8), dusk & 255) == 0);
+    advance(150);
+    const uint16_t dusk_wall = lcd[45][10];
+    assert(pet_mode_hour() == 17 && pet_mode_minute() == 30);
+    assert(dusk_wall < daylight_wall && lcd[28][124] != daylight_window);
+
+    assert(pet_mode_control(9, 0) == 0);
+    assert(pet_mode_control(4, 23) == 0);
+    advance(150);
+    assert(lcd[45][10] < dusk_wall);
+    assert(pet_mode_control(6, 0) == 0);
+    advance(150);
+    const uint16_t night_garden = lcd[150][10];
+    assert(pet_mode_control(4, 12) == 0);
+    advance(150);
+    assert(lcd[150][10] > night_garden);
+}
+
+static void pendant_lamp_brightens_only_the_room_at_night(void) {
+    assert(pet_mode_control(6, 1) == 0);
+    assert(pet_mode_control(4, 20) == 0);
+    advance(150);
+    const uint16_t dark_wall = lcd[45][10], night_window = lcd[28][124];
+    assert(pet_mode_control(28, 2) == 3);
+    assert(pet_mode_control(28, 1) == 0);
+    advance(150);
+    const uint16_t lit_bulb = lcd[31][222];
+    assert(lcd[45][10] > dark_wall && lcd[28][124] == night_window);
+
+    assert(pet_mode_control(4, 6) == 0);
+    advance(150);
+    const uint16_t unlit_bulb = lcd[31][222], dawn_wall = lcd[45][10];
+    assert(unlit_bulb != lit_bulb);
+    assert(pet_mode_control(4, 18) == 0);
+    advance(150);
+    assert(lcd[31][222] == unlit_bulb);
+    assert(pet_mode_control(4, 19) == 0);
+    advance(150);
+    assert(lcd[31][222] == lit_bulb);
+    assert(pet_mode_control(4, 6) == 0);
+    assert(pet_mode_control(28, 0) == 0);
+    advance(150);
+    assert(lcd[45][10] == dawn_wall && lcd[31][222] != unlit_bulb);
+}
+
 static void dance_and_window(void) {
     assert(pet_mode_control(3, PET_BINKY) == 0);
     const int origin = pet_mode_x(), facing = (pet_mode_room_flags() & 1) ? 1 : -1;
@@ -183,9 +303,62 @@ static void dance_and_window(void) {
     assert(pet_mode_control(4, 10) == 0);
     advance(150);
     const uint16_t sky = lcd[28][124], frame_colour = lcd[28][137];
-    assert(pet_mode_control(4, 18) == 0);
+    assert(pet_mode_control(4, 15) == 0);
     advance(150);
     assert(sky != lcd[28][124] && frame_colour == lcd[28][137]);
+}
+
+static void small_encoders_keep_work_layers_out_of_pet_mode(void) {
+    const unsigned before = macros;
+    assert(pet_mode_control(1, 1) == 0);
+    set_menu_index(3);
+    encoder1_callback(ENCODER_DOWN);
+    encoder1_callback(ENCODER_UP);
+    encoder2_callback(ENCODER_DOWN);
+    encoder2_callback(ENCODER_UP);
+    assert(send_screen_request(0xfe, 0) == 0);
+    assert(macros == before && (pressed_buttons & 0x300) == 0x300 && (held_buttons & 0x300) == 0);
+
+    encoder1_callback(ENCODER_DOWN);
+    encoder1_callback(DOWN_ANTICLOCKWISE);
+    encoder1_callback(UP_CLOCKWISE);
+    encoder1_callback(ENCODER_UP);
+    advance(350);
+    encoder_scan_user();
+    assert(get_menu_index() == 3 && !menu_previews && !menu_loads && macros == before);
+
+    assert(pet_mode_control(9, 0) == 0);
+    const uint8_t season = pet_mode_season();
+    const uint8_t scene = pet_care_get()->scene;
+    assert(pet_mode_control(4, 23) == 0);
+    encoder1_callback(ANTICLOCKWISE); /* Physical clockwise on the left encoder. */
+    assert(pet_mode_hour() == 0);
+    encoder1_callback(CLOCKWISE);
+    assert(pet_mode_hour() == 23);
+    encoder2_callback(CLOCKWISE);
+    assert(pet_mode_season() == (season + 1) % 4);
+    encoder2_callback(ENCODER_DOWN);
+    encoder2_callback(UP_CLOCKWISE);
+    encoder2_callback(ENCODER_UP);
+    assert(pet_care_get()->scene != scene && macros == before);
+
+    encoder1_callback(ENCODER_DOWN);
+    assert(pet_mode_control(1, 0) == 0);
+    encoder1_callback(UP_CLOCKWISE);
+    encoder1_callback(ENCODER_UP);
+    assert(get_menu_index() == 3 && macros == before);
+
+    encoder1_callback(ENCODER_DOWN);
+    encoder1_callback(UP_CLOCKWISE);
+    encoder1_callback(ENCODER_UP);
+    assert(get_menu_index() == 4 && menu_previews == 1 && macros == before + 2);
+    assert(pet_mode_control(1, 1) == 0);
+    advance(350);
+    encoder_scan_user();
+    assert(menu_loads == 0);
+    assert(pet_mode_control(1, 0) == 0);
+    encoder_scan_user();
+    assert(menu_loads == 1);
 }
 
 int main(void) {
@@ -194,6 +367,9 @@ int main(void) {
     concurrent_activities();
     table_and_food_positions();
     dance_and_window();
+    pendant_lamp_brightens_only_the_room_at_night();
+    ambient_light_uses_manual_time_and_synced_minutes();
+    assert(pet_mode_control(6, 1) == 0);
     const PetAction grooming[] = {PET_GROOM_FUR, PET_GROOM_EAR};
     for (unsigned i = 0; i < 2; ++i) {
         int x = pet_mode_x(), affection = pet_care_get()->affection;
@@ -258,6 +434,9 @@ int main(void) {
     advance(23000);
     assert(pet_mode_action() != PET_SLEEP && pet_mode_timed_remaining() == 0);
     assert(pet_care_get()->energy >= 59 && pet_care_get()->energy <= 60);
-    puts("Encoder 3 head-pat tests passed");
+    small_encoders_keep_work_layers_out_of_pet_mode();
+    assert(pet_mode_control(1, 1) == 0);
+    restore_performance_without_image();
+    puts("Pet encoder gesture and performance transition tests passed");
     return 0;
 }

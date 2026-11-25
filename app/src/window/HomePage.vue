@@ -2,13 +2,13 @@
 import WindowTitle from '../components/tools/WindowTitle.vue'
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import PopBox from '../components/tools/PopBox.vue'
-import ProgressBox from '../components/homePage/ProgressBox.vue'
 import AppInfo from '../components/homePage/AppInfo.vue'
 import ContextMenu from '../views/contextMenu.vue'
 import { useRouter } from 'vue-router'
 import { useConfigStore } from '../stores/configStore'
 import { useMenuStore } from '../stores/menuStore'
-import { parseMenuConfig, testConnection, sendMenu, sendColorScreen, sendOledScreen, sendConfigData, loadMenu, resetData } from '../utils/dataHandle'
+import { parseMenuConfig, testConnection, loadMenu, resetData } from '../utils/dataHandle'
+import { sendWorkConfiguration, workLayerPayload, type WorkLayer } from '../utils/workConfigSync'
 // import { setItem, getItem } from '@/utils/storage'
 import { XBox } from 'ilx1-x-box'
 import { renderDeviceScreens, type DeviceScreens } from '../utils/deviceScreenFormat'
@@ -22,10 +22,13 @@ import PetAiActivity from '../components/homePage/PetAiActivity.vue'
 import PetHeadKnob from '../components/homePage/PetHeadKnob.vue'
 import PetItemsPanel from '../components/screenPage/PetItemsPanel.vue'
 import PetDecorationPanel from '../components/screenPage/PetDecorationPanel.vue'
+import PetShopPanel from '../components/screenPage/PetShopPanel.vue'
 import { createPetItemPreview, previewCare } from '../components/screenPage/petItemPreview'
 import PerformanceDisplay from '../components/screenPage/PerformanceDisplay.vue'
 import { petParameters, petParameterContent, petValue, petSeasons, petStats, type HutchPosition, type PetParameter, type PetState } from '../components/screenPage/petDisplay'
-import { invertPetEnergy, petActions, petActionLabels, petScenes, petSceneLabels, petRoomItems, petItems, petStateGeneration, isHutchPosition, defaultHutchPosition } from '../utils/petCatalog'
+import { invertPetEnergy, petActions, petActionLabels, petScenes, petSceneLabels, petRoomItems, petItems, petStateGeneration, petLampCommand, petLampGeneration, petLampInstalledFlag, isHutchPosition, defaultHutchPosition } from '../utils/petCatalog'
+import { furniturePositionValid, newPetWarehouse, petBuySnackCommand, petFruitIds, petFruitLabels, petFurniture, petMaxCoins, petMaxStock,
+  petSnackPack, petSnackPrice, petStarterItems, petWarehouseBytes, readPetWarehouse, type PetFurnitureId, type PetPosition } from '../utils/petCatalog'
 
 const router = useRouter()
 const win = window as any
@@ -58,20 +61,31 @@ let pendingClock: boolean | undefined
 let nextClockRetry = 0
 const currentToy = computed(() => petRoomItems.find(item => item.wireId === petState.value.activeToy))
 let offlineHutch: HutchPosition = { ...defaultHutchPosition }
+let offlineLamp = false
+const offlineWarehouse = ref(newPetWarehouse())
+const warehouse = computed(() => petLinked.value ? petState.value.warehouse : offlineWarehouse.value)
+const offlineFurniture = { table: { ...petFurniture[1].position }, lamp: { ...petFurniture[2].position } } as Record<'table' | 'lamp', PetPosition>
+function saveWarehouse() {
+  win.myApi.storageMenu('petWarehousePreview', JSON.stringify(offlineWarehouse.value))
+}
 type ParamPair = [PetParameter, PetParameter]
 const petParameterIds = ref<[ParamPair, ParamPair]>([['satiety','energy'], ['mood','affection']])
 const petImages = ref(['', ''])
 const performanceValues = ref<number[]>([])
+const performancePreview = ref<{ menu: number; values: number[] }>()
 const performanceUnavailable = ref(false)
 const petDialog = ref<HTMLDialogElement>()
 const petScreen = ref(0)
-const petTab = ref<'scene' | 'items' | 'decor' | 'ai' | 'stats'>('scene')
+const petTab = ref<'scene' | 'items' | 'decor' | 'shop' | 'ai' | 'stats'>('scene')
 const selectedItem = ref(1)
 const isSleeping = computed(() => bedtime.value || (petLinked.value && generation.value < 3 && petState.value.action === 2))
 const clockText = computed(() => [petState.value.hour, petState.value.minute ?? 0].map(n => String(n).padStart(2, '0')).join(':'))
 const pendingScene = new Map<number, number>()
 let offlineBackground: number | undefined
-const previewWorld = createPetItemPreview(() => petState.value, value => { bedtime.value = value })
+const previewWorld = createPetItemPreview(() => petState.value, value => { bedtime.value = value }, () => {
+  offlineWarehouse.value.coins = Math.min(petMaxCoins, offlineWarehouse.value.coins + 2)
+  saveWarehouse()
+})
 const hasPetPayload = (p?: Uint8Array) => p && petStateGeneration(p) !== 0
 watch(petLinked, linked => {
   if (!linked) {
@@ -79,7 +93,8 @@ watch(petLinked, linked => {
     bindings.value = undefined
     bedtime.value = false
     Object.assign(petState.value, { active: false, stats: { ...(petState.value.stats ?? previewCare) }, activeToy: 0, toyPhase: 0, action: 1,
-      deployedToys: [0, 0], foods: [], toyDrop: 100, queue: 0, fruit: 0, headPatRemaining: 0, hutchPosition: { ...offlineHutch } })
+      deployedToys: [0, 0], foods: [], toyDrop: 100, queue: 0, fruit: 0, headPatRemaining: 0, hutchPosition: { ...offlineHutch },
+      tablePosition: offlineFurniture.table, lampPosition: offlineFurniture.lamp, pendantLamp: offlineLamp })
   }
 })
 
@@ -106,6 +121,8 @@ function applyPetReply(reply: { session?: string; payload: Uint8Array }) {
   petLinked.value = true
   petNotice.value = ''
   generation.value = petStateGeneration(p)
+  const savedInventory = readPetWarehouse(p, generation.value)
+  const ageOffset = p.length - 3 - (savedInventory ? petWarehouseBytes : 0)
   const world = generation.value >= 3
   const decorationOffset = 33 + 6 * p[32]
   bindings.value = world ? Array.from(p.slice(19, 27)) : undefined
@@ -122,11 +139,13 @@ function applyPetReply(reply: { session?: string; payload: Uint8Array }) {
     stats: p.length >= 19 ? { satiety: p[12], energy: invertPetEnergy(p[13]), mood: p[14], affection: p[15] } : undefined,
     scene: p.length >= 19 ? p[16] : 0,
     activeToy: p[17] ?? 0, toyPhase: p[18] ?? 0,
+    pendantLamp: generation.value >= petLampGeneration && Boolean(p[27] & petLampInstalledFlag),
+    tablePosition: savedInventory?.table, lampPosition: savedInventory?.lamp, warehouse: savedInventory?.warehouse,
     hutchPosition: generation.value >= 4 ? { x: p[decorationOffset] | p[decorationOffset + 1] << 8, y: p[decorationOffset + 2] } : undefined,
     rabbitY: generation.value >= 4 ? p[decorationOffset + 3] : undefined,
     headPatRemaining: generation.value >= 5 ? p[decorationOffset + 4] * 10 : undefined,
     facing: generation.value >= 6 ? (p[decorationOffset + 7] & 1 ? 1 : -1) : undefined,
-    actionAgeMs: generation.value >= 8 ? p[p.length - 3] + 256 * p[p.length - 2] : undefined,
+    actionAgeMs: generation.value >= 8 ? p[ageOffset] + 256 * p[ageOffset + 1] : undefined,
     headPatPhase: generation.value >= 6 ? p[decorationOffset + 6] : undefined,
     headPatKind: generation.value >= 5 ? p[decorationOffset + 5] : undefined,
     deployedToys: world ? [p[29], p[30]] : undefined, toyDrop: world ? p[31] : undefined,
@@ -207,11 +226,20 @@ function refreshPetDevice() {
     const actualMode = status.payload[0] ? 'pet' : 'work'
     if (requestedMode && actualMode !== requestedMode) {
       const target = requestedMode
+      if (target === 'work' && hasPerformanceScreens()) {
+        const device = await win.myApi.liveOled()
+        if (device.state === 'ready' && device.code === 0 && device.menu > 0 && device.menu <= 10) {
+          if (performanceValues.value.length !== 3) await samplePerformance()
+          await updatePerformanceColor(device.menu)
+        }
+        if (requestedMode !== target) return
+      }
       const result = await win.myApi.petAction(1, target === 'pet' ? 1 : 0)
       if (result.state === 'ready' && result.status === 0 && hasPetPayload(result.payload)) {
         if (requestedMode === target) requestedMode = undefined
         applyPetReply(result)
         if (target === 'pet') await syncClock()
+        else refreshDeviceScreens()
       }
       return
     }
@@ -291,14 +319,23 @@ async function interactWithPet(command: number, value: number) {
     if (conState.value) interactionNotice.value = petNotice.value || '等待读取键盘的宠物状态。'
     else if (command === 8) interactionNotice.value = '连接键盘后即可绑定道具。'
     else if (command === 6) previewWorld.changeScene(value)
+    else if (command === 2 && !offlineWarehouse.value.snacks[value - 1]) interactionNotice.value = '背包里没有这种零食。'
     else {
       const previewError = previewWorld.use(command, value)
       applied = !previewError
       interactionNotice.value = previewError || (stat ? '已更新本机预览。' : '本机宠物预览')
+      if (!previewError && command === 2) {
+        offlineWarehouse.value.snacks[value - 1]--
+        saveWarehouse()
+      }
       if (!previewError && command === 14 && petState.value.hutchPosition) {
         offlineHutch = { ...petState.value.hutchPosition }
         win.myApi.storageMenu('petHutchPreview', JSON.stringify(offlineHutch))
         interactionNotice.value = '已保存预览中的兔窝位置。'
+      }
+      if (!previewError && command === petLampCommand) {
+        offlineLamp = value === 1
+        win.myApi.storageMenu('petPendantLampPreview', JSON.stringify(offlineLamp))
       }
     }
     interacting.value = false
@@ -318,6 +355,10 @@ async function interactWithPet(command: number, value: number) {
       applyPetReply(result)
       applied = !stat || petState.value.stats?.[stat.id] === value
       if (stat) interactionNotice.value = applied ? '键盘已保存' + stat.label + '。' : '键盘尚未确认该数值。'
+      if (command === petLampCommand) {
+        applied = petState.value.pendantLamp === (value === 1)
+        interactionNotice.value = applied ? (value ? '已安装挂灯。' : '已收起挂灯。') : '键盘尚未确认挂灯设置。'
+      }
       if (command === 14) {
         const position = petState.value.hutchPosition
         interactionNotice.value = position && (position.x | (position.y << 9)) === value
@@ -346,9 +387,10 @@ function petContent(index: number) {
   return petParameterContent(petParameterIds.value[index], petState.value)
 }
 
-watch(() => JSON.stringify([appMode.value, petContent(0), petContent(1)]),
+watch(() => JSON.stringify([appMode.value, petLinked.value, petState.value.active, petContent(0), petContent(1)]),
   async (_current, _previous, onCleanup) => {
     if (appMode.value !== 'pet') return
+    if (petLinked.value && petState.value.active) liveScreens.refreshPet()
     let stale = false
     onCleanup(() => { stale = true })
     const images = await Promise.all([renderScreenContent(petContent(0)), renderScreenContent(petContent(1))])
@@ -369,12 +411,42 @@ function setPetParameter(row: number, event: Event) {
   if (pair[1 - row] === selected) pair[1 - row] = pair[row]
   pair[row] = selected
   win.myApi.storageMenu('petScreenParameters', JSON.stringify(petParameterIds.value))
-  liveScreens.tick()
 }
 
 function useItem(id: number) {
   const item = petItems.find(entry => entry.itemId === id)
   if (item) void triggerItem(item)
+}
+
+function moveFurniture(id: PetFurnitureId, position: PetPosition) {
+  const item = petFurniture.find(item => item.id === id)
+  if (!item || !furniturePositionValid(item, position.x, position.y) || interacting.value) return
+  if (!petLinked.value && !conState.value && id !== 'hutch') {
+    offlineFurniture[id] = { ...position }
+    if (id === 'table') petState.value.tablePosition = offlineFurniture.table
+    else petState.value.lampPosition = offlineFurniture.lamp
+    win.myApi.storageMenu('petFurniturePreview', JSON.stringify(offlineFurniture))
+    interactionNotice.value = '已保存' + item.label + '位置。'
+    return
+  }
+  void interactWithPet(item.command, position.x | (position.y << 9)).then(ok => {
+    if (ok && id !== 'hutch') interactionNotice.value = '已保存' + item.label + '位置。'
+  })
+}
+
+async function buySnack(id: number) {
+  const fruit = petFruitIds[id - 1]
+  const stock = warehouse.value
+  if (!fruit || !stock || interacting.value || (conState.value && !petLinked.value) ||
+      stock.coins < petSnackPrice || stock.snacks[id - 1] > petMaxStock - petSnackPack) return
+  if (petLinked.value) {
+    if (!await interactWithPet(petBuySnackCommand, id)) return
+  } else {
+    stock.coins -= petSnackPrice
+    stock.snacks[id - 1] += petSnackPack
+    saveWarehouse()
+  }
+  interactionNotice.value = '已将 ' + petSnackPack + ' 份' + petFruitLabels[fruit] + '放入背包。'
 }
 
 function triggerItem(item: typeof petItems[number]) {
@@ -464,6 +536,28 @@ onMounted(async () => {
       if (!petLinked.value) petState.value.hutchPosition = { ...offlineHutch }
     }
   } catch { /* Use the default layout for a new local preview. */ }
+  offlineLamp = await win.myApi.getMenu('petPendantLampPreview').catch(() => undefined) === 'true'
+  if (!petLinked.value) petState.value.pendantLamp = offlineLamp
+  try {
+    const saved = JSON.parse(await win.myApi.getMenu('petWarehousePreview') || 'null')
+    if (saved && Number.isInteger(saved.coins) && saved.coins >= 0 && saved.coins <= petMaxCoins &&
+        Array.isArray(saved.snacks) && saved.snacks.length === petFruitIds.length &&
+        saved.snacks.every((n: number) => Number.isInteger(n) && n >= 0 && n <= petMaxStock)) {
+      const owned = Number.isInteger(saved.owned) && saved.owned >= 0 && saved.owned <= petStarterItems ? saved.owned : petStarterItems
+      offlineWarehouse.value = { coins: saved.coins, snacks: saved.snacks, owned }
+    }
+  } catch { /* Retain starter inventory. */ }
+  try {
+    const saved = JSON.parse(await win.myApi.getMenu('petFurniturePreview') || 'null')
+    for (const item of [petFurniture[1], petFurniture[2]]) {
+      const point = saved?.[item.id]
+      if (point && furniturePositionValid(item, point.x, point.y)) offlineFurniture[item.id] = { x: point.x, y: point.y }
+    }
+    if (!petLinked.value) {
+      petState.value.tablePosition = offlineFurniture.table
+      petState.value.lampPosition = offlineFurniture.lamp
+    }
+  } catch { /* Retain the starter layout. */ }
   try {
     const savedScene = JSON.parse(await win.myApi.getMenu('petSceneSettings') || 'null')
     followClock.value = savedScene?.followClock === true
@@ -482,15 +576,22 @@ onMounted(async () => {
       pendingScene.set(6, offlineBackground)
     }
   } catch { /* Use the device scene or the default preview. */ }
+  try {
+    const saved = JSON.parse(await win.myApi.getMenu('pendingWorkLayers') || '[]')
+    if (Array.isArray(saved)) pendingWorkLayers.value = [...new Set(saved.filter(index => Number.isInteger(index) && index >= 0 && index < 10))]
+  } catch { /* A missing queue starts empty. */ }
+  workSyncReady = true
   // 连接硬件
   conState.value = await testConnection()
+  scheduleWorkSync()
   refreshDeviceScreens()
   screenPoll = setInterval(refreshDeviceScreens, 1800)
   buttonPoll = setInterval(refreshDeviceButtons, 45)
   liveScreens.tick()
   liveTimer = setInterval(() => {
-    if (appMode.value === 'work' && hasPerformanceScreens()) void samplePerformance()
-    liveScreens.tick()
+    if (hasPerformanceScreens()) void samplePerformance()
+    if (workSyncTimer === undefined && pendingWorkLayers.value.length) void syncWorkConfig()
+    else liveScreens.tick()
   }, 1500)
   if (hasPerformanceScreens()) void samplePerformance()
   refreshPetDevice()
@@ -512,20 +613,18 @@ onMounted(async () => {
       return
     }
     try {
+      if (objData.screenPerformance) {
+        const { menu, enabled } = objData.screenPerformance as { menu: number; enabled: boolean }
+        const existing = configStore.menuConfig[menu]?.screenConfig[0]
+        const { baseData = '', buffData = [] } = existing ?? {}
+        saveWorkScreen(menu, 0, { baseData, buffData, content: enabled ? { mode: 'performance' } : undefined })
+        return
+      }
       if (objData.screenFrame) {
         const { menu, screen, frame } = objData.screenFrame as { menu: number; screen: number; frame: ScreenFrame }
-        if (menu === configStore.curMenu) {
-          configStore.screenData[screen] = frame
-          storageCurMenu()
-        } else {
-          const saved = configStore.menuConfig[menu]
-          const screenConfig = [0, 1, 2].map(index => index === screen ? frame :
-            saved.screenConfig[index] ?? { baseData: '', buffData: [] })
-          configStore.menuConfig[menu] = { ...saved, screenConfig }
-        }
-        closeStorage()
-        if (screen === 0 && frame.content?.mode === 'performance') void samplePerformance()
-        liveScreens.tick()
+        const current = configStore.menuConfig[menu]?.screenConfig[screen]
+        saveWorkScreen(menu, screen, screen === 0 && current?.content?.mode === 'performance'
+          ? { ...frame, content: current.content } : frame)
         return
       }
       // 同步信息
@@ -565,6 +664,9 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener('focus', refreshPetDevice)
   clearInterval(liveTimer)
+  liveScreens.cancelPetRefresh()
+  clearTimeout(workSyncTimer)
+  workSyncReady = false
   clearInterval(petTimer)
   previewWorld.reset()
   clearInterval(screenPoll)
@@ -627,6 +729,8 @@ const titleClick = async () => {
   liveScreens.tick()
   refreshDeviceScreens()
   refreshPetDevice()
+  nextWorkAttempt = 0
+  scheduleWorkSync()
 }
 
 
@@ -648,8 +752,30 @@ const firmwareUpdating = ref(false)
 const hasPerformanceScreens = () => configStore.menuConfig.some(menu => menu.screenConfig[0]?.content?.mode === 'performance')
 const hasDynamicScreens = () => appMode.value === 'pet' || configStore.menuConfig.some(menu => menu.screenConfig.some((screen: ScreenFrame) =>
   screen?.content && screen.content.mode !== 'text'))
-const samplePerformance = async () => { performanceValues.value = await win.myApi.pcPerformance().catch(() => []) }
+let previewRequest = 0
+async function refreshPerformancePreview(menu: number) {
+  const request = ++previewRequest
+  const values = await win.myApi.pcPerformancePreview(menu + 1).catch(() => [])
+  if (request === previewRequest) performancePreview.value = { menu, values }
+}
+const samplePerformance = async () => {
+  performanceValues.value = await win.myApi.pcPerformance().catch(() => [])
+  await refreshPerformancePreview(configStore.curMenu)
+}
 let performanceMenu = 0
+async function updatePerformanceColor(deviceMenu: number) {
+  const menu = deviceMenu - 1
+  const enabled = configStore.menuConfig[menu]?.screenConfig[0]?.content?.mode === 'performance'
+  if (enabled && performanceValues.value.length !== 3) return
+  if (!enabled && !performanceMenu) return
+  const result = await win.myApi.livePerformance(enabled ? deviceMenu : 0,
+    enabled ? [...performanceValues.value] : undefined)
+  if (result === 'ready' || result === 'unsupported') performanceUnavailable.value = result === 'unsupported'
+  if (result === 'ready') {
+    performanceMenu = enabled ? deviceMenu : 0
+    if (configStore.curMenu === menu) await refreshPerformancePreview(menu)
+  }
+}
 const liveScreens = createLiveScreens(menu => appMode.value === 'work' || !petState.value.active
   ? configStore.menuConfig[menu]?.screenConfig
   : [{ baseData: '', buffData: [] }, ...[0, 1].map(index => ({ baseData: '', buffData: [], content: petContent(index) }))],
@@ -661,15 +787,7 @@ const liveScreens = createLiveScreens(menu => appMode.value === 'work' || !petSt
       petSession = undefined
     }
   },
-  async menu => {
-    const enabled = appMode.value === 'work' && configStore.menuConfig[menu]?.screenConfig[0]?.content?.mode === 'performance'
-    if (enabled && performanceValues.value.length !== 3) return
-    if (!enabled && !performanceMenu) return
-    const result = await win.myApi.livePerformance(enabled ? menu + 1 : 0,
-      enabled ? [...performanceValues.value] : undefined)
-    if (result === 'ready' || result === 'unsupported') performanceUnavailable.value = result === 'unsupported'
-    if (result === 'ready') performanceMenu = enabled ? menu + 1 : 0
-  }, () => appMode.value === 'pet' && petState.value.active)
+  updatePerformanceColor, () => appMode.value === 'pet' && petState.value.active)
 const updateFirmware = async () => {
   if (firmwareUpdating.value || progressShow.value) return
   firmwareUpdating.value = true
@@ -692,54 +810,89 @@ const updateFirmware = async () => {
     refreshDeviceScreens()
   }
 }
-// 发送最终数据
-const sendFinalData = async () => {
-  if (progressShow.value || firmwareUpdating.value) return
-  const curMenu = configStore.curMenu
-  configStore.setProgressMes(0)
+const pendingWorkLayers = ref<number[]>([])
+const workSyncFailed = ref(false)
+let workSyncReady = false
+let workSyncTimer: ReturnType<typeof setTimeout> | undefined
+let nextWorkAttempt = 0
+
+function savePendingWorkLayers() {
+  win.myApi.storageMenu('pendingWorkLayers', JSON.stringify(pendingWorkLayers.value))
+}
+
+function scheduleWorkSync() {
+  if (!workSyncReady || !pendingWorkLayers.value.length) return
+  clearTimeout(workSyncTimer)
+  workSyncTimer = setTimeout(() => {
+    workSyncTimer = undefined
+    void syncWorkConfig()
+  }, 400)
+}
+
+const workLayerSignature = (layer: WorkLayer) => JSON.stringify(workLayerPayload(layer))
+watch(() => JSON.stringify(configStore.menuConfig), (current, previous) => {
+  if (!workSyncReady) return
+  win.myApi.storageMenu('configData', current)
+  const before: WorkLayer[] = JSON.parse(previous)
+  const after: WorkLayer[] = JSON.parse(current)
+  const changed = after.flatMap((layer, index) => workLayerSignature(layer) !== workLayerSignature(before[index]) ? [index] : [])
+  if (!changed.length) return
+  pendingWorkLayers.value = [...new Set([...pendingWorkLayers.value, ...changed])]
+  savePendingWorkLayers()
+  workSyncFailed.value = false
+  nextWorkAttempt = 0
+  scheduleWorkSync()
+})
+watch(appMode, mode => { if (mode === 'work') scheduleWorkSync() })
+
+async function syncWorkConfig() {
+  if (!workSyncReady || progressShow.value || firmwareUpdating.value || !pendingWorkLayers.value.length ||
+    appMode.value !== 'work' || petState.value.active || Date.now() < nextWorkAttempt) {
+    liveScreens.tick()
+    return
+  }
+  const layers: WorkLayer[] = JSON.parse(JSON.stringify(configStore.menuConfig))
+  const changed = [...pendingWorkLayers.value]
   progressShow.value = true
   let ownsTransfer = false
   try {
     await Promise.all([screenReadTask, buttonReadTask, petTask, liveScreens.wait()])
     conState.value = await win.myApi.connectHardware()
     if (!conState.value) {
-      XBox.popMes('硬件已经断开连接')
+      nextWorkAttempt = Date.now() + 5000
       return
     }
+    const mode = await win.myApi.petAction(0)
+    if (mode.state === 'ready' && mode.status === 0 && hasPetPayload(mode.payload) && mode.payload[0]) {
+      applyPetReply(mode)
+      return
+    }
+    if (mode.state === 'busy' || mode.state === 'disconnected') return
     await win.myApi.setDeviceConfiguring(true)
     ownsTransfer = true
-    await sendMenu()
-    const activeCount = configStore.activeMenu.filter(Boolean).length
-    let count = 0
-    for (let i = 0; i < 10; i++) {
-      if (!configStore.activeMenu[i]) continue
-      setMenu(i)
-      await sendConfigData()
-      count += 3
-      configStore.setProgressMes(Math.ceil((count / activeCount) * 10))
-      await sendOledScreen()
-      count += 3
-      configStore.setProgressMes(Math.ceil((count / activeCount) * 10))
-      await sendColorScreen()
-      count += 4
-      configStore.setProgressMes(Math.ceil((count / activeCount) * 10))
+    const previous = await win.myApi.readWorkLayout()
+    if (previous.state !== 'ready' && previous.state !== 'unsupported') throw Error('未能读取键盘配置层')
+    const expected = await sendWorkConfiguration(layers, changed, previous.state === 'ready' ? previous : undefined,
+      bytes => win.myApi.sendData(bytes))
+    if (previous.state === 'ready') {
+      const confirmed = await win.myApi.readWorkLayout()
+      if (confirmed.state !== 'ready' || expected.some((value, index) => value !== confirmed.bytes[index]))
+        throw Error('键盘未确认配置层')
     }
-    configStore.setProgressMes(100)
-    await win.myApi.setDeviceConfiguring(false)
-    ownsTransfer = false
-    if (hasDynamicScreens()) {
-      const live = await win.myApi.liveOled().catch(() => undefined)
-      if (live?.state === 'unsupported') XBox.popMes('当前固件需要升级后才能自动刷新小屏')
-    }
-    await new Promise((resolve) => setTimeout(resolve, 110))
+    pendingWorkLayers.value = pendingWorkLayers.value.filter(index => !changed.includes(index) ||
+      workLayerSignature(layers[index]) !== workLayerSignature(configStore.menuConfig[index]))
+    savePendingWorkLayers()
+    workSyncFailed.value = false
+    deviceScreens.value = undefined
   } catch (error) {
     console.error(error)
-    XBox.popMes('发送中断，请检查 USB 连接后重试')
+    workSyncFailed.value = true
+    nextWorkAttempt = Date.now() + 5000
   } finally {
     if (ownsTransfer) await win.myApi.setDeviceConfiguring(false).catch(() => {})
-    if (configStore.curMenu !== curMenu) setMenu(curMenu)
     progressShow.value = false
     liveScreens.tick()
+    refreshDeviceScreens()
   }
 }
 
@@ -771,6 +924,31 @@ const storageCurMenu = () => {
   
 }
 
+function saveWorkScreen(menu: number, screen: number, frame: ScreenFrame) {
+  if (!Number.isInteger(menu) || menu < 0 || menu >= 10 ||
+    !Number.isInteger(screen) || screen < 0 || screen >= 3) return
+  if (menu === configStore.curMenu) {
+    configStore.screenData[screen] = frame
+    storageCurMenu()
+  } else {
+    const saved = configStore.menuConfig[menu]
+    const screenConfig = [0, 1, 2].map(index => index === screen ? frame :
+      saved.screenConfig[index] ?? { baseData: '', buffData: [] })
+    configStore.menuConfig[menu] = { ...saved, screenConfig }
+  }
+  closeStorage()
+  if (screen === 0 && frame.content?.mode === 'performance') void samplePerformance().then(() => liveScreens.tick())
+  else liveScreens.tick()
+}
+
+const showingPerformance = computed(() => configStore.screenData[0].content?.mode === 'performance')
+
+function openPerformancePage() {
+  storageCurMenu()
+  closeStorage()
+  createWindow(`/performance?menu=${configStore.curMenu}`, { width: 510, height: 404, minWidth: 460, minHeight: 390 })
+}
+
 // 显示屏幕编辑
 const openScreenPage = (curScreen: number) => {
   if (appMode.value === 'pet') return configurePetScreen(curScreen)
@@ -779,7 +957,7 @@ const openScreenPage = (curScreen: number) => {
   createWindow(`/screen?screen=${curScreen}&menu=${configStore.curMenu}`)
 }
 
-const deviceScreens = shallowRef<{ generation: number; images: string[] }>()
+const deviceScreens = shallowRef<{ generation: number; menu: number; images: string[] }>()
 let screenPoll: ReturnType<typeof setInterval> | undefined
 let screenReadTask: Promise<void> | undefined
 
@@ -790,6 +968,7 @@ async function readDeviceScreens() {
     if (result.state === 'ready') {
       deviceScreens.value = {
         generation: result.generation,
+        menu: result.menu,
         images: renderDeviceScreens(result.pixels)
       }
     } else if (result.state !== 'unchanged') {
@@ -803,12 +982,13 @@ async function readDeviceScreens() {
 }
 
 function refreshDeviceScreens() {
-  if (!conState.value || appMode.value === 'pet' || progressShow.value || firmwareUpdating.value || screenReadTask) return
+  if (!conState.value || appMode.value === 'pet' || petState.value.active || progressShow.value || firmwareUpdating.value || screenReadTask) return
   screenReadTask = readDeviceScreens().finally(() => { screenReadTask = undefined })
 }
 
 const screenPreviews = computed(() => {
-  if (conState.value && deviceScreens.value) return deviceScreens.value.images
+  if (conState.value && deviceScreens.value?.menu === configStore.curMenu + 1 &&
+    !pendingWorkLayers.value.includes(configStore.curMenu)) return deviceScreens.value.images
   return configStore.screenData.map((saved, screen) => {
     const baseData = liveScreens.current(configStore.curMenu, screen, saved)?.frame?.baseData ?? saved.baseData
     return baseData ? `data:image/png;base64,${baseData}` : ''
@@ -903,6 +1083,11 @@ const showAppInfo = () => {
             <button type="button" :aria-pressed="appMode === 'work'" :disabled="progressShow || firmwareUpdating" @click="setAppMode('work')">工作模式</button>
             <button type="button" :aria-pressed="appMode === 'pet'" :disabled="progressShow || firmwareUpdating" @click="setAppMode('pet')">养宠模式</button>
           </div>
+          <span v-if="appMode === 'work' && pendingWorkLayers.length" class="work-sync-status" role="status">
+            {{ progressShow ? '正在同步' : workSyncFailed ? '同步中断，正在重试' : conState ? '等待同步' : '连接后自动同步' }}
+          </span>
+          <span v-else-if="appMode === 'work' && performanceUnavailable && showingPerformance"
+            class="work-sync-status" role="status">性能监测需升级固件</span>
         </div>
       </template>
     </WindowTitle>
@@ -915,23 +1100,26 @@ const showAppInfo = () => {
       </div>
       <div class="screen-panel">
         <button v-for="(label, index) in screenLabels" :key="label" class="screen-card" type="button"
-          :title="appMode === 'pet' ? (index ? `设置${label}宠物参数` : '打开宠物设置') : `编辑${label}内容`" @click="openScreenPage(index)">
+          :title="appMode === 'pet' ? (index ? `设置${label}宠物参数` : '打开宠物设置') : (!index && showingPerformance ? '打开电脑性能监测' : `编辑${label}内容`)"
+          @click="appMode === 'work' && !index && showingPerformance ? openPerformancePage() : openScreenPage(index)">
           <span class="screen-image">
             <PetDisplay v-if="appMode === 'pet' && index === 0" :state="petState" :connected="petLinked && petState.active" />
             <img v-else-if="appMode === 'pet' && index && petImages[index - 1]" :src="petImages[index - 1]" alt="" />
-            <PerformanceDisplay v-else-if="appMode === 'work' && !(conState && deviceScreens) && index === 0 && configStore.screenData[0].content?.mode === 'performance'"
-              :values="performanceValues" />
+            <PerformanceDisplay v-else-if="appMode === 'work' && index === 0 && showingPerformance"
+              :values="performancePreview?.menu === configStore.curMenu ? performancePreview.values : performanceValues" />
             <img v-else-if="appMode === 'work' && screenPreviews[index]" :src="screenPreviews[index]" alt="" />
           </span>
-          <span>{{ appMode === 'pet' ? (index ? petContent(index - 1).rows.map(row => row.label).join(' · ') : '宠物设置') : label }}</span>
+          <span>{{ appMode === 'pet' ? (index ? petContent(index - 1).rows.map(row => row.label).join(' · ') : '宠物设置') : (index ? label : showingPerformance ? '彩屏 · 性能监测' : '彩屏 · 图片') }}</span>
         </button>
         <PetAiActivity @step-accepted="refreshAfterAiStep" v-if="appMode === 'pet'" :session="petLinked && petState.active ? petSession : undefined" />
         <div v-if="appMode === 'pet'" class="mode-status" role="status">
           {{ petNotice || interactionNotice || (petLinked && petState.active ? '键盘养宠模式已同步' : '本机宠物预览') }}
         </div>
         <div v-else class="layer-actions">
-          <button id="send-box" type="button" :disabled="progressShow || firmwareUpdating"
-            @click="sendFinalData">发送到键盘</button>
+          <div class="display-entry-points" role="group" aria-label="彩屏设置">
+            <button type="button" @click="openScreenPage(0)">编辑图片</button>
+            <button type="button" :class="{ selected: showingPerformance }" @click="openPerformancePage">性能监测</button>
+          </div>
           <div id="menu-box" role="group" aria-label="本机配置层">
             <button class="layer-arrow" type="button" title="上一层" aria-label="上一层"
               @click="menuChange(0)"></button>
@@ -957,8 +1145,6 @@ const showAppInfo = () => {
         :class="{ 'device-active': isDeviceButtonActive(10) }"
         @click.stop="openConfigWindow(10)">旋钮 3</button>
     </div>
-    <p v-if="appMode === 'work' && performanceUnavailable && configStore.screenData[0].content?.mode === 'performance'"
-      class="firmware-hint" role="status">彩屏性能监测需要升级键盘固件。</p>
     <dialog ref="petDialog" class="pet-dialog" :class="{ 'param-dialog': petScreen > 0 }">
       <form method="dialog">
         <header>
@@ -967,7 +1153,7 @@ const showAppInfo = () => {
         </header>
         <template v-if="petScreen === 0">
           <nav class="pet-tabs" aria-label="宠物设置">
-            <button v-for="tab in ([['scene','场景与作息'],['stats','属性数值'],['items','道具与按键'],['decor','装饰布置'],['ai','AI 控制']] as const)" :key="tab[0]"
+            <button v-for="tab in ([['scene','场景与作息'],['stats','属性数值'],['items','道具'],['decor','装修'],['shop','商店'],['ai','AI 控制']] as const)" :key="tab[0]"
               type="button" :aria-pressed="petTab === tab[0]" @click="petTab = tab[0]; interactionNotice = ''">{{ tab[1] }}</button>
           </nav>
           <PetAiSettings v-if="petTab === 'ai'" :device-ready="petLinked && petState.active" />
@@ -975,13 +1161,16 @@ const showAppInfo = () => {
             :stats="petState.stats" :connected="petLinked" :supported="!petLinked || generation >= 10"
             :busy="interacting || progressShow || firmwareUpdating || (conState && !petLinked)"
             :save="interactWithPet" />
-          <PetDecorationPanel v-else-if="petTab === 'decor'" :state="petState" :connected="petLinked" :generation="generation"
+          <PetDecorationPanel v-else-if="petTab === 'decor'" :state="petState" :connected="petLinked" :generation="generation" :warehouse="warehouse"
             :busy="interacting || (conState && !petLinked)" @enter="interactWithPet(6, 1)"
-            @move="p => interactWithPet(14, p.x | (p.y << 9))" @rest="interactWithPet(15, 0)" @inspect="interactWithPet(3, 14)" />
+            @lamp="installed => interactWithPet(petLampCommand, Number(installed))"
+            @move="moveFurniture" @rest="interactWithPet(15, 0)" @inspect="interactWithPet(3, 14)" />
+          <PetShopPanel v-else-if="petTab === 'shop'" :warehouse="warehouse" :linked="petLinked"
+            :busy="interacting || (conState && !petLinked)" @buy="buySnack" />
           <PetItemsPanel v-else-if="petTab === 'items'" :selected="selectedItem" :bindings="bindings" :generation="generation"
             :connected="petLinked" :busy="interacting" :occupied="!!currentToy" :scene="petState.scene"
             :deployed-toys="petState.deployedToys" :toy-drop="petState.toyDrop" :food-count="petState.foods?.length ?? 0"
-            :full="petState.stats?.satiety === 100" @play="id => interactWithPet(11, id)"
+            :full="petState.stats?.satiety === 100" :warehouse="warehouse" @play="id => interactWithPet(11, id)"
             @select="id => { selectedItem = id; interactionNotice = '' }"
             @bind="(key, id) => interactWithPet(8, (key << 4) | id)" @use="useItem" />
           <div v-else class="scene-settings">
@@ -1043,7 +1232,6 @@ const showAppInfo = () => {
         </template>
       </form>
     </dialog>
-    <ProgressBox v-if="progressShow" />
   </div>
 </template>
 
@@ -1052,7 +1240,6 @@ const showAppInfo = () => {
 .home-toolbar .mode-switch button { padding: 5px 7px; border: 0; border-radius: 6px; font-size: 13px; white-space: nowrap; color: #263d46; background: transparent; cursor: pointer; }
 .home-toolbar .mode-switch button[aria-pressed="true"] { color: white; background: #263d46; }
 .mode-status { grid-column: 1 / -1; align-self: center; font-size: 12px; color: #405058; }
-.firmware-hint { position: absolute; bottom: 0; left: 22px; margin: 0; font-size: 12px; }
 .pet-dialog { box-sizing: border-box; width: min(640px, 96%); max-height: calc(100vh - 28px); overflow: auto; margin: auto; padding: 18px; color: #24323a; border: 1px solid #aab7bd; border-radius: 14px; background: #f7fafb; }
 .pet-dialog.param-dialog { width: min(330px, 94%); }
 .pet-tabs { display:flex; flex-wrap:wrap; gap:4px; margin:0 0 14px; padding-bottom:8px; border-bottom:1px solid #d3dfdd; }
@@ -1268,19 +1455,21 @@ const showAppInfo = () => {
   gap: 8px;
 }
 
-#home-content #send-box {
-  min-height: 36px;
-  padding: 0 12px;
-  border-radius: 8px;
-  background: #244c49;
-  color: #fff;
-  font-size: 14px;
-  font-weight: 600;
-  white-space: nowrap;
-
-  &:hover:not(:disabled) { background: #32645e; }
-  &:disabled { background: #506a68; }
+.display-entry-points {
+  display: flex;
+  gap: 4px;
 }
+#home-content .display-entry-points button {
+  padding: 6px;
+  border-radius: 6px;
+  background: #e9efed;
+  color: #273d45;
+  font-size: 11px;
+  white-space: nowrap;
+}
+#home-content .display-entry-points button:hover { background: #f6f9f8; }
+#home-content .display-entry-points button.selected { background: #214c49; color: #f0fcf8; }
+.work-sync-status { color: #324a54; font-size: 11px; font-weight: 500; }
 
 #menu-box {
   display: flex;

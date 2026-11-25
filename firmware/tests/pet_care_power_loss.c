@@ -9,7 +9,7 @@
 #include "flash.h"
 #include "pet_care.h"
 
-enum { SECTOR = 4096, FIRST = 319, RECORD = 32 };
+enum { SECTOR = 4096, FIRST = 319, RECORD = 64 };
 static uint8_t flash[2 * SECTOR];
 static uint32_t now, programs, erases;
 static unsigned program_bytes = RECORD;
@@ -208,7 +208,7 @@ static void exercise_charges_both_stats(void) {
     stats(65, 75, 70, 35);
     pet_care_tick(1, false, 2, false);
     stats(64, 74, 70, 35);
-    assert(flash[9] == 26); /* Old V3 readers still see the corresponding fatigue. */
+    assert(flash[9] == 26); /* The record keeps the existing fatigue encoding. */
     pet_care_init(W25Q128);
     stats(64, 74, 70, 35);
     pet_care_tick(20000, true, 0, false);
@@ -231,7 +231,51 @@ static void unattended_care_declines_slowly(void) {
     stats(63, 73, 68, 33);
 }
 
+static void pendant_lamp_persists(void) {
+    new_flash();
+    assert(!pet_care_get()->pendant_lamp);
+    pet_care_set_pendant_lamp(true);
+    pet_care_init(W25Q128);
+    assert(pet_care_get()->pendant_lamp);
+    pet_care_set_pendant_lamp(false);
+    pet_care_init(W25Q128);
+    assert(!pet_care_get()->pendant_lamp);
+}
+
+static void legacy_furniture_and_warehouse_survive_reboot(void) {
+    new_flash();
+    uint8_t *old = flash + 32;
+    memset(old, 0, 32);
+    memcpy(old, "PET\3", 4);
+    old[4] = 1; old[8] = 25; old[9] = 40; old[10] = 52; old[11] = 48;
+    old[24] = 241; old[26] = 140; old[28] = 1;
+    uint16_t crc = 0xffff;
+    for (unsigned i = 0; i < 30; i++) {
+        crc ^= (uint16_t)old[i] << 8;
+        for (unsigned j = 0; j < 8; j++) crc = (uint16_t)((crc << 1) ^ ((crc & 0x8000) ? 0x1021u : 0));
+    }
+    old[30] = (uint8_t)crc; old[31] = (uint8_t)(crc >> 8);
+    pet_care_init(W25Q128);
+    stats(25, 60, 52, 48);
+    const PetCare *care = pet_care_get();
+    assert(care->hutch_x == 241 && care->pendant_lamp && care->coins == 100 && care->stock[0] == 8);
+    assert(pet_care_move_furniture(PET_TABLE, 175, 126) && pet_care_move_furniture(PET_LAMP, 259, 12));
+    assert(!pet_care_move_furniture(PET_LAMP, 500, 0));
+    program_bytes = 40;
+    assert(pet_care_buy_snacks(1));
+    pet_care_init(W25Q128);
+    assert(care->coins == 100 && care->stock[0] == 8);
+    program_bytes = RECORD;
+    assert(pet_care_buy_snacks(1) && pet_care_take_snack(1));
+    pet_care_eat_fruit(true);
+    pet_care_init(W25Q128);
+    assert(care->table_x == 175 && care->table_y == 126 && care->lamp_x == 259 && care->lamp_y == 12);
+    assert(care->coins == 92 && care->stock[0] == 12);
+}
+
 int main(void) {
+    legacy_furniture_and_warehouse_survive_reboot();
+    pendant_lamp_persists();
     unattended_care_declines_slowly();
     exercise_charges_both_stats();
     actual_changes_survive_unplug();

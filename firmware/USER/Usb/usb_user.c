@@ -90,6 +90,12 @@ uint8_t cdc_event_cb(uint8_t *Buf, uint32_t *Len) {
         }
         // ≤Àµ•…Ë÷√
         else if (Buf[2] == 0xDD) {
+            /* A fresh configuration header supersedes any interrupted upload. */
+            if (!upper_data_p) return USBD_FAIL;
+            sign_data_p->sign_byte = 0;
+            upper_data_p->package_num = 0;
+            upper_data_p->package_size = 0;
+            upper_data_p->color_package_count = 0;
             set_sign(menu_config, SIGN_SET);
         }
         // «–ªª–¥»Î
